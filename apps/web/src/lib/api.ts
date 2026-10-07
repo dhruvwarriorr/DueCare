@@ -1,0 +1,88 @@
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public fields?: Record<string, string>,
+  ) {
+    super(message);
+  }
+}
+let csrfRequest: Promise<string> | undefined;
+async function token() {
+  if (!csrfRequest)
+    csrfRequest = fetch("/auth/csrf", { cache: "no-store" })
+      .then(async (r) => {
+        if (!r.ok) throw new Error("Could not secure this request");
+        return (await r.json()).token as string;
+      })
+      .catch((e) => {
+        csrfRequest = undefined;
+        throw e;
+      });
+  return csrfRequest;
+}
+export async function api<T>(
+  path: string,
+  method = "GET",
+  body?: unknown,
+): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (method !== "GET") {
+    headers["X-CSRF-Token"] = await token();
+    headers["Idempotency-Key"] = crypto.randomUUID();
+  }
+  const response = await fetch(
+    path.startsWith("/auth") ? path : "/api/v1" + path,
+    {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: "no-store",
+    },
+  );
+  const data = await response.json();
+  if (!response.ok) {
+    // A full navigation clears in-memory private query data after session expiry.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    if (response.status === 401) window.location.assign("/sign-in");
+    throw new ApiError(
+      data.message || "Please try again",
+      response.status,
+      data.fieldErrors,
+    );
+  }
+  return data as T;
+}
+export const datetimeFields = [
+  "dueAt",
+  "submissionOpensAt",
+  "availabilityOpensAt",
+  "availabilityClosesAt",
+  "loginByAt",
+  "reportingAt",
+  "startsAt",
+  "endsAt",
+] as const;
+export function localTime(value: string | null | undefined) {
+  if (!value) return "";
+  return new Date(new Date(value).getTime() + 330 * 60000)
+    .toISOString()
+    .slice(0, 16);
+}
+export function utcTime(value: string) {
+  return value ? new Date(value + ":00+05:30").toISOString() : null;
+}
+export function formatTime(value: string | null | undefined) {
+  return value
+    ? new Intl.DateTimeFormat("en-IN", {
+        timeZone: "Asia/Kolkata",
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(new Date(value))
+    : "No precise cutoff";
+}

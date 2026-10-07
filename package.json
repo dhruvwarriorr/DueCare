@@ -1,0 +1,20 @@
+{
+  "name": "duecare",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "npm run dev -w apps/web",
+    "build": "npm run build -w apps/web",
+    "typecheck": "npm run typecheck -w apps/web",
+    "test:web": "npm run test -w apps/web",
+    "test:e2e": "npm run test:e2e -w apps/web",
+    "test:api": "cd apps/api && uv run pytest",
+    "lint": "npm run lint -w apps/web"
+  }
+}

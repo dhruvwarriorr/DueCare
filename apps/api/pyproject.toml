@@ -1,0 +1,15 @@
+[project]
+name = "duecare-api"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = ["fastapi>=0.115", "uvicorn>=0.34", "pydantic-settings>=2.8", "sqlalchemy>=2.0", "alembic>=1.15", "psycopg[binary]>=3.2", "PyJWT[crypto]>=2.10", "httpx>=0.28", "cryptography>=44"]
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.11"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

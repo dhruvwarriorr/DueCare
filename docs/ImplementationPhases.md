@@ -1,6 +1,6 @@
 # DueCare implementation phases
 
-This plan groups the implementation into **four phases**. It organizes the approved requirements in [ProjectDocumentation.md](ProjectDocumentation.md); it does not introduce new product decisions or claim any phase is implemented. The detailed specification remains authoritative for behavior, database fields, APIs, and evidence cases.
+This plan groups the implementation into **four phases**. It organizes the approved requirements in [ProjectDocumentation.md](ProjectDocumentation.md); it does not introduce new product decisions. Phase 1 implementation and local verification are recorded in [Phase1Validation.md](Phase1Validation.md); hosted acceptance is still pending Supabase configuration. The detailed specification remains authoritative for behavior, database fields, APIs, and evidence cases.
 
 Complete each phase's acceptance checks before building dependent functionality. Local automated checks and live integration checks are separate evidence. No calendar estimates are assigned.
 
