@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 const config: NextConfig = {
   poweredByHeader: false,
+  // Browser tests use a separate build directory so they can run beside a developer's dev server.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
+  // The development badge overlapped the sidebar's sign-out control.
+  devIndicators: false,
   async headers() {
     return [
       {

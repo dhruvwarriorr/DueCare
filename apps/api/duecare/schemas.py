@@ -126,7 +126,7 @@ class TaskPatch(Input):
 
 
 class AuthorizeInput(Input):
-    service: Literal["gmail", "classroom"]
+    service: Literal["gmail", "classroom", "both"] = "both"
     account_id: UUID | None = None
 
 

@@ -66,8 +66,16 @@ export type Task = {
   durationMinutes: number | null;
   completedAt: string | null;
   completionOrigin: string | null;
+  completion: {
+    origin: string;
+    sourceTime?: string | null;
+    recordedAt?: string;
+  } | null;
   createdAt: string;
   source: string;
+  sources: string[];
+  mergedInto: string | null;
+  timingProvenance?: Record<string, { basis?: string; phrase?: string }>;
 };
 export type Slot = {
   id?: string;
@@ -86,6 +94,8 @@ export type History = {
   id: string;
   action: string;
   actor: string;
+  eventId?: string | null;
+  sourceTime?: string | null;
   changes: Record<string, unknown>;
   recordedAt: string;
 };
@@ -138,6 +148,9 @@ export type Connection = {
   lastJob: SyncJob | null;
   records: {
     awaitingInterpretation: number;
+    interpreted: number;
+    needsReview: number;
+    aiPaused: number;
     duplicates: number;
     blocked: number;
     ignored: number;
@@ -158,4 +171,87 @@ export type SenderPreference = {
   revision: number;
   createdAt: string;
   updatedAt: string;
+};
+export type ReviewItem = {
+  id: string;
+  issueType:
+    | "confirm_applicability"
+    | "choose_subject"
+    | "timing_unresolved"
+    | "possible_duplicate"
+    | "association"
+    | "conflict"
+    | "confirm_completion"
+    | "receipt_unverified"
+    | "returned_ambiguous"
+    | "unsubmission"
+    | "withdrawal";
+  status: string;
+  question: string;
+  taskId: string | null;
+  taskTitle: string | null;
+  senderEmail: string | null;
+  observed: {
+    course?: Record<string, unknown>;
+    activity?: Record<string, unknown>;
+  } | null;
+  student: Record<string, string | number | null> | null;
+  proposal: Record<string, string | number | null> | null;
+  conflicts: Record<
+    string,
+    { current: unknown; proposed: unknown; reason: string }
+  > | null;
+  window: [string, string] | null;
+  alternatives: string[] | null;
+  subjectChoices: string[];
+  courseLabel: string | null;
+  excerpt: string | null;
+  sourceTitle: string | null;
+  sourceKind: string | null;
+  links: string[];
+  evidenceCount: number;
+  revision: number;
+  createdAt: string;
+};
+export type Rule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  position: number;
+  revision: number;
+  instruction?: string | null;
+  match: "all" | "any";
+  conditions: RuleCondition[];
+  exceptions: RuleCondition[];
+  action: {
+    type: "include" | "exclude" | "priority";
+    priority?: string | null;
+  };
+};
+export type RuleCondition = {
+  field:
+    | "source"
+    | "sender"
+    | "subjectId"
+    | "subjectKind"
+    | "taskType"
+    | "keyword"
+    | "assessmentLabel";
+  op: "equals" | "contains" | "in";
+  value: string | string[];
+};
+export type Evidence = {
+  id: string;
+  eventId: string;
+  eventType: string;
+  method: string;
+  state: "active" | "reassigned";
+  occurredAt: string | null;
+  sourceKind: string;
+  sender: string | null;
+  sourceTitle: string | null;
+  links: string[];
+  excerpt: string | null;
+  validation: Record<string, unknown> | null;
+  outcome: string;
 };

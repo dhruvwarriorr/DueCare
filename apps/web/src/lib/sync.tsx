@@ -132,13 +132,27 @@ export function SyncProvider({
   }, [client, drive, enabled]);
   const reprocess = useCallback(
     async (id: string) => {
+      // Reprocessing starts after this connection's current sync finishes, rather than failing.
+      for (let i = 0; i < 600; i++) {
+        if (!running.current.has(id)) {
+          const latest = await client.fetchQuery({
+            queryKey: ["connections"],
+            queryFn: () => api<{ items: Connection[] }>("/connections"),
+          });
+          const active = latest.items.find((c) => c.id === id)?.activeJob;
+          if (!active || active.mode === "reprocess") break;
+          await drive(id, "manual", active);
+          if (!running.current.has(id)) continue;
+        }
+        await sleep(500);
+      }
       const { job } = await api<{ job: SyncJob }>(
         "/connections/" + id + "/reprocess",
         "POST",
       );
       await drive(id, "manual", job);
     },
-    [drive],
+    [client, drive],
   );
   return (
     <Context.Provider

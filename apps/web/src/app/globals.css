@@ -998,9 +998,14 @@ time {
   color: var(--primary);
   margin-top: 2px;
 }
+.connect-option {
+  /* Keep the connect buttons aligned across cards whose descriptions wrap differently. */
+  grid-template-rows: 1fr auto;
+}
 .connect-option > button {
   grid-column: 2;
   justify-self: start;
+  align-self: end;
 }
 .connection-list {
   display: grid;
@@ -1165,6 +1170,12 @@ time {
   align-items: end;
   padding: 0 24px 18px;
 }
+.sender-form .field {
+  margin: 0;
+}
+.sender-form > button {
+  min-height: 42px;
+}
 .sender-list {
   list-style: none;
   padding: 0;
@@ -1282,5 +1293,248 @@ time {
   }
   .sync-rows li {
     padding: 14px 18px;
+  }
+}
+
+/* Phase 3: Needs attention, rules, evidence. */
+.nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-grid;
+  place-items: center;
+}
+.attention-banner {
+  margin: 0 0 28px;
+}
+.review-list,
+.rule-editor {
+  display: grid;
+  gap: 18px;
+}
+.rule-editor {
+  padding: 24px;
+  margin-bottom: 20px;
+}
+.review-card {
+  padding: 24px;
+  display: grid;
+  gap: 12px;
+}
+.review-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+.review-excerpt {
+  margin: 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--line);
+  background: var(--muted);
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.review-context {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+.review-context dt {
+  font-size: 11px;
+  color: var(--secondary);
+}
+.review-context dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+.review-times {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.review-links a {
+  text-decoration: underline;
+}
+.conflicts {
+  border-collapse: collapse;
+  font-size: 13px;
+  width: 100%;
+}
+.conflicts th,
+.conflicts td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 400;
+}
+.check-row input {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+}
+.nl-rule {
+  padding: 20px 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+  margin-bottom: 20px;
+}
+.nl-rule .field {
+  margin: 0;
+}
+.nl-rule > button {
+  min-height: 42px;
+}
+.rule-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px;
+}
+.rule-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+}
+.rule-list li:first-child {
+  border-top: 0;
+}
+.rule-list li.disabled .rule-text {
+  opacity: 0.55;
+}
+.rule-order {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--muted);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.rule-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+}
+.rule-text span {
+  font-size: 12px;
+  color: var(--secondary);
+}
+.timeline li.muted {
+  opacity: 0.6;
+}
+.merge-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  align-items: center;
+}
+.merge-row select {
+  font-size: 12px;
+}
+@media (max-width: 760px) {
+  .review-card,
+  .rule-editor {
+    padding: 18px;
+  }
+  .review-context,
+  .nl-rule {
+    grid-template-columns: 1fr;
+  }
+  .rule-list li {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+  }
+  .rule-text {
+    flex-basis: calc(100% - 40px);
+  }
+  .merge-row {
+    flex-wrap: wrap;
+  }
+}
+
+/* Sign-in access status (Gmail and Classroom are granted at Google sign-in). */
+.access-panel {
+  padding: 22px 24px;
+  margin-bottom: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px 20px;
+  align-items: center;
+  border-left: 4px solid var(--line);
+}
+.access-panel.ok {
+  border-left-color: #2f9d5b;
+}
+.access-panel.missing {
+  border-left-color: #c9822b;
+}
+.access-panel > button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+.access-status {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.access-status li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--muted);
+}
+.access-status li strong {
+  font-weight: 600;
+}
+.access-status li.active strong {
+  color: #246a3c;
+}
+.access-status li.needs_reauth strong,
+.access-status li.none strong {
+  color: #a5521b;
+}
+.dark .access-status li.active strong {
+  color: #9de1b3;
+}
+.dark .access-status li.needs_reauth strong,
+.dark .access-status li.none strong {
+  color: #f4b27b;
+}
+@media (max-width: 760px) {
+  .access-panel {
+    grid-template-columns: 1fr;
+    padding: 18px;
   }
 }

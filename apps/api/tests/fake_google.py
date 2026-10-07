@@ -20,8 +20,11 @@ def eml(
     to="student@somaiya.edu",
     attachment=None,
     received="from relay.example.test by mx.google.com",
+    headers=(),
 ):
     msg = EmailMessage()
+    for name, value in headers:
+        msg[name] = value
     msg["Received"] = received
     msg["From"] = sender
     msg["To"] = to
@@ -48,6 +51,7 @@ class FakeGoogle(GoogleSource):
         self.omit_refresh = False
         self.on_raw = None
         self.refresh_error = None
+        self.token_details = {}
 
     def fail(self, method, kind="retryable", times=1):
         self.failures += [(method, kind)] * times
@@ -71,7 +75,13 @@ class FakeGoogle(GoogleSource):
     def exchange(self, code, verifier):
         self._call("exchange")
         self.last_verifier = verifier
-        scopes = self.scopes or ["openid", "email", "profile", *SERVICE_SCOPES[self.service]]
+        services = ["gmail", "classroom"] if self.service == "both" else [self.service]
+        scopes = self.scopes or [
+            "openid",
+            "email",
+            "profile",
+            *[s for svc in services for s in SERVICE_SCOPES[svc]],
+        ]
         response = {
             "access_token": "access-" + code,
             "expires_in": 3600,
@@ -84,6 +94,10 @@ class FakeGoogle(GoogleSource):
 
     def identity(self, token):
         return dict(self.identity_claims)
+
+    def token_info(self, access_token):
+        self._call("token_info")
+        return dict(self.token_details)
 
     def refresh(self, refresh_token):
         self._call("refresh")
@@ -183,3 +197,19 @@ class FakeGoogle(GoogleSource):
         self._call("submissions:" + course_id)
         self._course(course_id)
         return self._page(self.submissions.get(course_id, []), page_token, "studentSubmissions")
+
+    def classroom_coursework_item(self, token, course_id, item_id):
+        self._call("coursework_item:" + item_id)
+        self._course(course_id)
+        for item in self.coursework.get(course_id, []):
+            if item["id"] == item_id:
+                return item
+        raise SourceError("not_found", "Missing coursework")
+
+    def classroom_announcement_item(self, token, course_id, item_id):
+        self._call("announcement_item:" + item_id)
+        self._course(course_id)
+        for item in self.announcements.get(course_id, []):
+            if item["id"] == item_id:
+                return item
+        raise SourceError("not_found", "Missing announcement")

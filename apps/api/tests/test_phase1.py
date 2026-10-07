@@ -64,6 +64,22 @@ def test_gateway_and_revoked_session(client, headers, student):
     assert client.get("/api/v1/me", headers=headers).json()["code"] == "SESSION_REVOKED"
 
 
+def test_unreadable_session_requires_sign_in(client, headers, student):
+    from cryptography.fernet import Fernet
+
+    # An environment override or old encryption key must not trap the UI in a 500 retry loop.
+    with transaction() as db:
+        entry = db.get(WebSession, auth.digest(student.handle))
+        entry.tokens = Fernet(Fernet.generate_key()).encrypt(b"private session tokens").decode()
+        db.commit()
+
+    response = client.get("/api/v1/me", headers=headers)
+    assert response.status_code == 401
+    assert response.json()["code"] == "SIGN_IN_REQUIRED"
+    assert "private session tokens" not in response.text
+    assert client.get("/api/v1/me", headers=account().headers).status_code == 200
+
+
 def test_owned_resources_rls_foreign_keys(client, headers, student):
     other = account()
     s = client.post("/api/v1/subjects", headers=headers, json={"name": "Private lab", "kind": "lab"}).json()

@@ -91,8 +91,11 @@ def effective_status(task, at):
 
 
 def priority(task, at):
+    # Precedence: student override, first matching priority rule, deadline-based default.
     if task.data.get("priorityOverride"):
         return task.data["priorityOverride"]
+    if (task.data.get("rulePriority") or {}).get("value"):
+        return task.data["rulePriority"]["value"]
     hours = (task.due_at - at).total_seconds() / 3600 if task.due_at else None
     return (
         "critical"

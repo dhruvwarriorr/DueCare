@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 
 import httpx
 import jwt
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi import Request
 from sqlalchemy import select, text
 
@@ -116,7 +116,16 @@ class SupabaseAuth:
 provider = SupabaseAuth()
 
 
-def login_start():
+# Sign-in also grants read-only Gmail and Classroom access for the Somaiya account.
+SOURCE_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/classroom.courses.readonly",
+    "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
+    "https://www.googleapis.com/auth/classroom.announcements.readonly",
+]
+
+
+def login_start(consent=False):
     if not settings().supabase_url or not settings().supabase_publishable_key:
         raise ApiError(503, "AUTH_CONFIGURATION", "Google sign-in is not configured yet")
     state, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(48)
@@ -135,6 +144,11 @@ def login_start():
                 "code_challenge": challenge,
                 "code_challenge_method": "s256",
                 "hd": "somaiya.edu",
+                "scopes": " ".join(["openid", "email", "profile", *SOURCE_SCOPES]),
+                # Forwarded to Google: an offline grant so syncing works between visits.
+                "access_type": "offline",
+                "include_granted_scopes": "true",
+                "prompt": "consent" if consent else "select_account",
             }
         )
     )
@@ -168,7 +182,9 @@ def login_finish(state, code):
             )
         )
         db.commit()
-    return handle
+    # Google tokens are returned once, at this exchange; the caller stores them for source syncing.
+    google_tokens = {k: tokens.get(k) for k in ("provider_token", "provider_refresh_token")}
+    return handle, identity, google_tokens
 
 
 def current_user(request: Request):
@@ -179,7 +195,10 @@ def current_user(request: Request):
         entry = db.scalar(select(WebSession).where(WebSession.id == digest(handle)).with_for_update())
         if not entry:
             raise ApiError(401, "SIGN_IN_REQUIRED", "Please sign in")
-        tokens = json.loads(crypt().decrypt(entry.tokens.encode()))
+        try:
+            tokens = json.loads(crypt().decrypt(entry.tokens.encode()))
+        except InvalidToken:
+            raise ApiError(401, "SIGN_IN_REQUIRED", "Your session cannot be restored. Please sign in again")
         unverified = jwt.decode(tokens["access_token"], options={"verify_signature": False})
         if float(unverified.get("exp", 0)) <= now().timestamp() + 30:
             tokens = provider.exchange("refresh_token", {"refresh_token": tokens["refresh_token"]})

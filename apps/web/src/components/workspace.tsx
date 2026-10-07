@@ -22,6 +22,8 @@ import {
   ArrowRight,
   Clock3,
   Plug,
+  Inbox,
+  SlidersHorizontal,
 } from "lucide-react";
 import { api, formatTime } from "@/lib/api";
 import { useCutoffRefresh } from "@/lib/use-cutoff-refresh";
@@ -35,12 +37,16 @@ import { Subjects } from "./subjects";
 import { Calendar } from "./calendar";
 import { Connections, SyncOverview } from "./connections";
 import { SyncProvider } from "@/lib/sync";
+import { NeedsAttention } from "./needs-attention";
+import { Rules } from "./rules";
 const views = [
   ["dashboard", "Overview", LayoutDashboard],
   ["tasks", "Tasks", ListTodo],
   ["calendar", "Calendar", CalendarDays],
+  ["attention", "Needs attention", Inbox],
   ["subjects", "Subjects", BookOpen],
   ["connections", "Sources", Plug],
+  ["rules", "Rules", SlidersHorizontal],
   ["settings", "Settings", Settings],
 ] as const;
 type View = (typeof views)[number][0];
@@ -97,18 +103,23 @@ function Dashboard({
   onTasks,
   onAdd,
   onSources,
+  onAttention,
 }: {
   onOpen: (id: string) => void;
   onTasks: (status: string) => void;
   onAdd: () => void;
   onSources: () => void;
+  onAttention: () => void;
 }) {
   const query = useQuery({
     queryKey: ["overview"],
     queryFn: () =>
-      api<{ counts: Record<string, number>; undated: number; tasks: Task[] }>(
-        "/overview",
-      ),
+      api<{
+        counts: Record<string, number>;
+        undated: number;
+        tasks: Task[];
+        reviewCount: number;
+      }>("/overview"),
   });
   const client = useQueryClient();
   useEffect(() => {
@@ -150,6 +161,22 @@ function Dashboard({
           </button>
         ))}
       </div>
+      {(query.data?.reviewCount || 0) > 0 && (
+        <button
+          className="undated-banner attention-banner"
+          onClick={onAttention}
+        >
+          <Inbox size={20} />
+          <span>
+            <strong>
+              {query.data?.reviewCount} item
+              {query.data?.reviewCount === 1 ? "" : "s"} need your attention
+            </strong>
+            <small>Imported work DueCare could not settle without you.</small>
+          </span>
+          <ArrowRight size={18} />
+        </button>
+      )}
       <SyncOverview onOpen={onSources} />
       <section className="panel">
         <div className="panel-heading">
@@ -256,8 +283,8 @@ function TaskList({
         <div>
           <h2>All tasks</h2>
           <p className="text-secondary">
-            Your assignments and tests. Batch {batch || "not set"} · manual
-            source.
+            Your assignments and tests. Batch {batch || "not set"} applies to
+            every subject.
           </p>
         </div>
       </div>
@@ -332,6 +359,8 @@ function TaskList({
           <select value={source} onChange={(e) => setSource(e.target.value)}>
             <option value="">All sources</option>
             <option value="manual">Student entered</option>
+            <option value="gmail">Gmail</option>
+            <option value="classroom">Classroom</option>
           </select>
         </label>
         <label>
@@ -415,6 +444,12 @@ function App() {
     enabled: Boolean(profile.data?.onboardingComplete),
   });
   const [view, setView] = useState<View>("dashboard");
+  const overview = useQuery({
+    queryKey: ["overview"],
+    queryFn: () => api<{ reviewCount: number }>("/overview"),
+    enabled: Boolean(profile.data?.onboardingComplete),
+  });
+  const reviewCount = overview.data?.reviewCount || 0;
   const [menu, setMenu] = useState(false);
   const [taskStatus, setTaskStatus] = useState("");
   const [editor, setEditor] = useState<Task | null | undefined>(undefined);
@@ -502,6 +537,14 @@ function App() {
               >
                 <Icon size={19} />
                 {label}
+                {key === "attention" && reviewCount > 0 && (
+                  <span
+                    className="nav-badge"
+                    aria-label={reviewCount + " open"}
+                  >
+                    {reviewCount}
+                  </span>
+                )}
               </button>
             ))}
           </nav>
@@ -572,6 +615,7 @@ function App() {
                 {view === "dashboard" && (
                   <Dashboard
                     onSources={() => navigate("connections")}
+                    onAttention={() => navigate("attention")}
                     onAdd={() => setEditor(null)}
                     onOpen={setDetail}
                     onTasks={(s) => {
@@ -596,6 +640,10 @@ function App() {
                     batch={p.generalBatch}
                   />
                 )}
+                {view === "attention" && (
+                  <NeedsAttention subjects={subjects.data || []} />
+                )}
+                {view === "rules" && <Rules subjects={subjects.data || []} />}
                 {view === "connections" && (
                   <Connections
                     notice={notice}

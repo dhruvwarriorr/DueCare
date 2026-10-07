@@ -33,6 +33,28 @@ SERVICE_SCOPES = {
         "https://www.googleapis.com/auth/classroom.announcements.readonly",
     ],
 }
+# Google reports some Classroom scopes under equivalent legacy names in token responses.
+SCOPE_ALIASES = {
+    "https://www.googleapis.com/auth/classroom.student-submissions.me.readonly": (
+        "https://www.googleapis.com/auth/classroom.coursework.me.readonly"
+    ),
+}
+
+
+def granted_scopes(scope_string):
+    granted = set((scope_string or "").split())
+    return granted | {SCOPE_ALIASES[s] for s in granted if s in SCOPE_ALIASES}
+
+
+def services_for(choice):
+    """One consent can authorize Gmail and Classroom together; each stays a separate connection."""
+    return ["gmail", "classroom"] if choice == "both" else [choice]
+
+
+def missing_scopes(service, granted):
+    return [s for s in SERVICE_SCOPES[service] if s not in granted]
+
+
 AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
@@ -128,7 +150,9 @@ class GoogleSource:
             "client_id": settings().google_oauth_client_id,
             "redirect_uri": callback_url(),
             "response_type": "code",
-            "scope": " ".join(IDENTITY_SCOPES + SERVICE_SCOPES[service]),
+            "scope": " ".join(
+                IDENTITY_SCOPES + [s for svc in services_for(service) for s in SERVICE_SCOPES[svc]]
+            ),
             "access_type": "offline",
             "include_granted_scopes": "true",
             "prompt": "consent select_account",
@@ -185,6 +209,20 @@ class GoogleSource:
         # 400 means the token is already invalid or revoked: the desired end state.
         if response.status_code >= 500 or response.status_code == 429:
             raise SourceError("retryable", "Google is temporarily unavailable. Try disconnecting again")
+
+    def token_info(self, access_token):
+        """Google's own description of an access token: audience, account, and granted scopes."""
+        try:
+            response = httpx.get(
+                "https://oauth2.googleapis.com/tokeninfo",
+                params={"access_token": access_token},
+                timeout=settings().google_request_timeout_seconds,
+            )
+        except httpx.HTTPError:
+            raise SourceError("retryable", "Google could not be reached")
+        if response.status_code >= 400:
+            raise SourceError("auth", "Google did not accept this access token")
+        return response.json()
 
     def identity(self, token):
         try:
@@ -253,6 +291,13 @@ class GoogleSource:
             .list(courseId=course_id, courseWorkId="-", userId="me", pageToken=page_token, pageSize=100)
         )
         return _call(request, token)
+
+    # Single-item reads used to re-fetch content for interpretation instead of storing bodies.
+    def classroom_coursework_item(self, token, course_id, item_id):
+        return _call(_classroom().courseWork().get(courseId=course_id, id=item_id), token)
+
+    def classroom_announcement_item(self, token, course_id, item_id):
+        return _call(_classroom().announcements().get(courseId=course_id, id=item_id), token)
 
 
 def _gmail():

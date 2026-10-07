@@ -10,6 +10,10 @@ const routes = [
   "connections",
   "sync-jobs",
   "sender-preferences",
+  "review-items",
+  "rules",
+  "task-merges",
+  "evidence",
 ];
 async function proxy(
   request: Request,

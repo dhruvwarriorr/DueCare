@@ -73,6 +73,10 @@ function jobSummary(job: SyncJob | null) {
     count(p.blocked, "blocked", "blocked"),
     count(p.ignored, "not academic", "not academic"),
     count(p.courses, "course found", "courses found"),
+    count(p.tasksCreated, "task added", "tasks added"),
+    count(p.tasksUpdated, "task updated", "tasks updated"),
+    count(p.completed, "completed from evidence", "completed from evidence"),
+    count(p.reviews, "needs attention", "need attention"),
   ].filter(Boolean);
   return parts.length ? parts.join(" · ") : "Nothing new";
 }
@@ -281,7 +285,7 @@ function ConnectionCard({
   onConnect,
 }: {
   c: Connection;
-  onConnect: (service: Connection["service"], accountId?: string) => void;
+  onConnect: () => void;
 }) {
   const client = useQueryClient();
   const sync = useSync();
@@ -327,12 +331,22 @@ function ConnectionCard({
             ))}
           </ul>
           <p className="text-xs text-secondary">
-            {c.records.awaitingInterpretation} imported item
-            {c.records.awaitingInterpretation === 1 ? "" : "s"} waiting for
-            academic interpretation. Imported items are not added to your tasks
-            yet.
-            {c.records.blocked > 0 &&
-              ` ${c.records.blocked} from blocked senders.`}
+            {[
+              c.records.interpreted > 0 &&
+                `${c.records.interpreted} interpreted`,
+              c.records.needsReview > 0 &&
+                `${c.records.needsReview} need your attention`,
+              c.records.awaitingInterpretation - c.records.aiPaused > 0 &&
+                `${c.records.awaitingInterpretation - c.records.aiPaused} waiting to be interpreted`,
+              c.records.aiPaused > 0 &&
+                `${c.records.aiPaused} waiting for AI interpretation (retried on a later sync)`,
+              c.records.ignored > 0 &&
+                `${c.records.ignored} not academic or not for you`,
+              c.records.blocked > 0 &&
+                `${c.records.blocked} from blocked senders`,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "Nothing imported yet."}
           </p>
         </>
       )}
@@ -348,11 +362,11 @@ function ConnectionCard({
           </Button>
         )}
         {c.status !== "active" && (
-          <Button size="sm" onClick={() => onConnect(c.service, c.account.id)}>
+          <Button size="sm" onClick={() => onConnect()}>
             Reconnect
           </Button>
         )}
-        {c.status === "active" && c.service === "gmail" && (
+        {c.status === "active" && (
           <Button
             size="sm"
             variant="outline"
@@ -360,7 +374,7 @@ function ConnectionCard({
             onClick={() => reprocess.mutate()}
           >
             <RotateCcw size={14} />
-            Reprocess ignored mail
+            Reprocess
           </Button>
         )}
         {c.status !== "disconnected" && (
@@ -547,8 +561,9 @@ function SenderPreferences() {
       )}
       <p className="form-help px-6 pb-6">
         Blocking applies inside DueCare only; it does not change Gmail.
-        Unblocking affects future mail. Use “Reprocess ignored mail” on a Gmail
-        connection to reconsider earlier messages.
+        Unblocking affects future mail. Use “Reprocess” on a source to
+        reconsider earlier items with your current senders, profile, subjects,
+        and rules.
       </p>
     </section>
   );
@@ -562,35 +577,30 @@ export function Connections({
   onDismiss: () => void;
 }) {
   const sync = useSync();
-  const authorize = useMutation({
-    mutationFn: ({
-      service,
-      accountId,
-    }: {
-      service: Connection["service"];
-      accountId?: string;
-    }) =>
-      api<{ url: string }>("/connections/authorize", "POST", {
-        service,
-        accountId,
-      }),
+  // Gmail and Classroom access is granted at Google sign-in; re-asking means signing in with consent.
+  const grant = useMutation({
+    mutationFn: () =>
+      api<{ url: string }>("/auth/start", "POST", { consent: true }),
     onSuccess: ({ url }) => window.location.assign(url),
   });
-  const onConnect = (service: Connection["service"], accountId?: string) =>
-    authorize.mutate({ service, accountId });
+  const onConnect = () => grant.mutate();
   const visible = sync.connections.filter((c) => c.status !== "disconnected");
   const disconnected = sync.connections.filter(
     (c) => c.status === "disconnected",
   );
+  const status = (service: Connection["service"]) =>
+    visible.find((c) => c.service === service)?.status;
+  const allActive =
+    status("gmail") === "active" && status("classroom") === "active";
+  const account = visible[0]?.account.email;
   return (
     <>
       <div className="section-bar">
         <div>
           <h2>Sources</h2>
           <p className="text-secondary">
-            Connect Gmail and Classroom as read-only sources. Your Somaiya
-            sign-in stays separate; personal Google accounts can be added as
-            sources.
+            DueCare reads your Gmail and Google Classroom (read-only) using the
+            access you granted when you signed in with Google.
           </p>
         </div>
       </div>
@@ -601,7 +611,12 @@ export function Connections({
         >
           <p>
             {notice.connected
-              ? `${services[notice.connected as Connection["service"]]?.label || "Source"} connected. Syncing will start now.`
+              ? `${notice.connected
+                  .split(",")
+                  .map((s) => services[s as Connection["service"]]?.label || s)
+                  .join(
+                    " and ",
+                  )} ${notice.connected.includes(",") ? "are" : "is"} connected. Syncing will start now.`
               : errorText[notice.error || ""] ||
                 "The connection could not be completed."}
           </p>
@@ -610,42 +625,62 @@ export function Connections({
           </button>
         </div>
       )}
-      <div className="connect-grid">
-        {(Object.keys(services) as Connection["service"][]).map((service) => {
-          const meta = services[service];
-          const Icon = meta.icon;
-          return (
-            <div className="panel connect-option" key={service}>
-              <Icon size={22} />
-              <div>
-                <h3>{meta.label}</h3>
-                <p className="text-secondary text-sm">{meta.detail}</p>
-              </div>
-              <Button
-                variant="outline"
-                disabled={authorize.isPending}
-                onClick={() => onConnect(service)}
-              >
-                Connect {meta.label}
-              </Button>
-            </div>
-          );
-        })}
-      </div>
-      <ErrorNotice error={authorize.error} />
+      {!sync.isPending && (
+        <section
+          className={"panel access-panel " + (allActive ? "ok" : "missing")}
+          aria-labelledby="access-heading"
+        >
+          <div className="access-text">
+            <h3 id="access-heading">
+              {allActive
+                ? "Gmail and Classroom are connected"
+                : "Gmail and Classroom access is needed"}
+            </h3>
+            <p className="text-secondary text-sm">
+              {allActive
+                ? `Granted at sign-in for ${account}. DueCare syncs while this app is open.`
+                : "Allow read-only access on Google's sign-in screen so your assignments and tests appear automatically. Your password is never shared with DueCare."}
+            </p>
+          </div>
+          <ul className="access-status">
+            {(Object.keys(services) as Connection["service"][]).map(
+              (service) => {
+                const meta = services[service];
+                const Icon = meta.icon;
+                const state = status(service);
+                return (
+                  <li key={service} className={state || "none"}>
+                    <Icon size={16} />
+                    {meta.label}
+                    <strong>
+                      {state === "active"
+                        ? "Connected"
+                        : state === "needs_reauth"
+                          ? "Reconnect needed"
+                          : "Not connected"}
+                    </strong>
+                  </li>
+                );
+              },
+            )}
+          </ul>
+          {!allActive && (
+            <Button disabled={grant.isPending} onClick={onConnect}>
+              Allow Gmail and Classroom access
+            </Button>
+          )}
+        </section>
+      )}
+      <ErrorNotice error={grant.error} />
       <ErrorNotice error={sync.error} retry={sync.refetch} />
       {sync.isPending ? (
         <p className="empty-small" role="status">
           Loading connections…
         </p>
       ) : visible.length === 0 ? (
-        <div className="empty panel mb-8">
-          <Mail size={28} />
-          <h3>No sources connected</h3>
-          <p>
-            Connections are optional. Manual tasks keep working without them.
-          </p>
-        </div>
+        <p className="empty-small">
+          Manual tasks keep working without Gmail or Classroom.
+        </p>
       ) : (
         <div className="connection-list">
           {visible.map((c) => (
@@ -679,8 +714,8 @@ export function SyncOverview({ onOpen }: { onOpen: () => void }) {
         <div>
           <h2 id="sync-heading">Sources</h2>
           <p className="text-secondary text-sm">
-            Imported items wait for academic interpretation before they become
-            tasks.
+            Imported mail and Classroom work become tasks after academic checks;
+            unclear items go to Needs attention.
           </p>
         </div>
         <Button variant="ghost" size="sm" onClick={onOpen}>

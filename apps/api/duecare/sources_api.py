@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import logging
 import re
 import secrets
 import uuid
@@ -12,6 +13,7 @@ from sqlalchemy import func, or_, select
 
 from . import auth, google, sync
 from .common import User, finish, owned, page, replay, revision, work
+from .config import settings
 from .db import transaction
 from .errors import ApiError
 from .mail import normalize_email
@@ -31,6 +33,7 @@ from .models import (
 from .schemas import AuthorizeInput, SenderPreferenceInput, SyncInput
 
 router = APIRouter(prefix="/api/v1")
+log = logging.getLogger("duecare.sources")
 STATE_TTL = timedelta(minutes=10)
 COURSE_ID = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 
@@ -65,6 +68,15 @@ def connection_out(db, conn):
             .group_by(SourceRecord.processing_state)
         ).all()
     )
+    paused = db.scalar(
+        select(func.count())
+        .select_from(SourceRecord)
+        .where(
+            SourceRecord.connection_id == conn.id,
+            SourceRecord.processing_state == "awaiting_interpretation",
+            SourceRecord.data["aiPausedReason"].astext.is_not(None),
+        )
+    )
     return {
         "id": str(conn.id),
         "service": conn.service,
@@ -80,6 +92,9 @@ def connection_out(db, conn):
         "lastJob": sync.job_out(last) if last else None,
         "records": {
             "awaitingInterpretation": counts.get("awaiting_interpretation", 0),
+            "interpreted": counts.get("interpreted", 0),
+            "needsReview": counts.get("needs_review", 0),
+            "aiPaused": paused,
             "duplicates": counts.get("duplicate", 0),
             "blocked": counts.get("blocked", 0),
             "ignored": counts.get("ignored", 0),
@@ -164,76 +179,134 @@ def oauth_callback(
         or not normalize_email(claims.get("email"))
     ):
         raise ApiError(400, "ACCOUNT_UNVERIFIED", "Connect a Google account with a verified email address")
-    granted = set((tokens.get("scope") or "").split())
-    needed = google.SERVICE_SCOPES[service]
-    vault = google.vault()
-    result = {}
+    profile = {"name": claims.get("name"), "picture": claims.get("picture")}
     with work(user) as db:
-        uid = uuid.UUID(user["id"])
-        account = db.scalar(
-            select(GoogleAccount)
-            .where(GoogleAccount.user_id == uid, GoogleAccount.google_sub == claims["sub"])
-            .with_for_update()
+        result = link_account(
+            db, user["id"], claims["sub"], claims["email"], profile, tokens, google.services_for(service)
         )
-        if account is None:
-            account = GoogleAccount(user_id=uid, google_sub=claims["sub"], email="")
-            db.add(account)
-        account.email = normalize_email(claims["email"])
-        account.data = {"name": claims.get("name"), "picture": claims.get("picture"), "emailVerified": True}
-        db.flush()
-        grant = db.scalar(select(OAuthGrant).where(OAuthGrant.account_id == account.id).with_for_update())
-        refresh = tokens.get("refresh_token")
-        if not refresh and grant and grant.status == "active" and grant.refresh_token:
-            # Google can omit a replacement refresh token; preserve the existing one.
-            refresh = vault.decrypt(grant.refresh_token, grant.key_version)
-        if not refresh:
-            raise ApiError(
-                400, "OFFLINE_ACCESS_REQUIRED", "Reconnect and allow DueCare to keep read-only access"
-            )
-        if grant is None:
-            grant = OAuthGrant(user_id=uid, account_id=account.id, key_version=vault.current)
-            db.add(grant)
-        previous = set(grant.scopes or []) if grant.status == "active" else set()
-        grant.scopes = sorted(granted | previous)
-        grant.refresh_token = vault.encrypt(refresh)
-        grant.access_token = vault.encrypt(tokens["access_token"])
-        grant.access_expires_at = google.expiry(tokens)
-        grant.key_version, grant.status = vault.current, "active"
-        conn = db.scalar(
-            select(Connection)
-            .where(Connection.account_id == account.id, Connection.service == service)
-            .with_for_update()
-        )
-        if not set(needed) <= granted:
-            in_use = db.scalar(
-                select(func.count())
-                .select_from(Connection)
-                .where(Connection.account_id == account.id, Connection.status == "active")
-            )
-            if not in_use:
-                try:
-                    google.provider.revoke(refresh)
-                except google.SourceError:
-                    pass
-                grant.refresh_token = grant.access_token = grant.access_expires_at = None
-                grant.status, grant.scopes = "revoked", []
-            result["error"] = (
-                "PERMISSION_NOT_GRANTED",
-                "Allow every requested read-only permission to connect",
-            )
-        else:
-            if conn is None:
-                conn = Connection(user_id=uid, account_id=account.id, service=service, checkpoint={}, data={})
-                db.add(conn)
-            elif conn.status != "active":
-                conn.revision += 1
-            conn.status, conn.scopes = "active", needed
-            conn.data = {**(conn.data or {}), "lastError": None, "connectedAt": now().isoformat()}
-            db.flush()
-            result = {"connectionId": str(conn.id), "service": service, "accountEmail": account.email}
     if "error" in result:
         raise ApiError(403, *result["error"])
     return result
+
+
+def link_account(db, uid, sub, email, profile, tokens, services):
+    """Store an encrypted grant for a verified Google account and activate each fully granted service."""
+    granted = google.granted_scopes(tokens.get("scope"))
+    vault = google.vault()
+    uid = uuid.UUID(str(uid))
+    account = db.scalar(
+        select(GoogleAccount)
+        .where(GoogleAccount.user_id == uid, GoogleAccount.google_sub == sub)
+        .with_for_update()
+    )
+    if account is None:
+        account = GoogleAccount(user_id=uid, google_sub=sub, email="")
+        db.add(account)
+    account.email = normalize_email(email)
+    account.data = {**profile, "emailVerified": True}
+    db.flush()
+    grant = db.scalar(select(OAuthGrant).where(OAuthGrant.account_id == account.id).with_for_update())
+    refresh = tokens.get("refresh_token")
+    if not refresh and grant and grant.status == "active" and grant.refresh_token:
+        # Google can omit a replacement refresh token; preserve the existing one.
+        refresh = vault.decrypt(grant.refresh_token, grant.key_version)
+    if not refresh:
+        return {
+            "error": ("OFFLINE_ACCESS_REQUIRED", "Sign in again and allow DueCare to keep read-only access")
+        }
+    if grant is None:
+        grant = OAuthGrant(user_id=uid, account_id=account.id, key_version=vault.current)
+        db.add(grant)
+    previous = set(grant.scopes or []) if grant.status == "active" else set()
+    grant.scopes = sorted(granted | previous)
+    granted = set(grant.scopes)
+    grant.refresh_token = vault.encrypt(refresh)
+    grant.access_token = vault.encrypt(tokens["access_token"])
+    grant.access_expires_at = google.expiry(tokens)
+    grant.key_version, grant.status = vault.current, "active"
+    connected, missing = [], {}
+    for svc in services:
+        gaps = google.missing_scopes(svc, granted)
+        if gaps:
+            missing[svc] = [g.rsplit("/", 1)[-1] for g in gaps]
+            continue
+        conn = db.scalar(
+            select(Connection)
+            .where(Connection.account_id == account.id, Connection.service == svc)
+            .with_for_update()
+        )
+        if conn is None:
+            conn = Connection(user_id=uid, account_id=account.id, service=svc, checkpoint={}, data={})
+            db.add(conn)
+        elif conn.status != "active":
+            conn.revision += 1
+        conn.status, conn.scopes = "active", google.SERVICE_SCOPES[svc]
+        conn.data = {**(conn.data or {}), "lastError": None, "connectedAt": now().isoformat()}
+        db.flush()
+        connected.append({"connectionId": str(conn.id), "service": svc})
+    if not connected:
+        in_use = db.scalar(
+            select(func.count())
+            .select_from(Connection)
+            .where(Connection.account_id == account.id, Connection.status == "active")
+        )
+        if not in_use:
+            # Nothing usable was granted: do not keep an unused grant.
+            try:
+                google.provider.revoke(refresh)
+            except google.SourceError:
+                pass
+            grant.refresh_token = grant.access_token = grant.access_expires_at = None
+            grant.status, grant.scopes = "revoked", []
+        labels = ", ".join(x for gaps in missing.values() for x in gaps)
+        return {
+            "error": (
+                "PERMISSION_NOT_GRANTED",
+                f"Allow every requested read-only permission to connect (missing: {labels})",
+            )
+        }
+    return {
+        "connections": connected,
+        "services": [c["service"] for c in connected],
+        "missing": missing,
+        "accountEmail": account.email,
+        "connectionId": connected[0]["connectionId"],
+        "service": connected[0]["service"],
+    }
+
+
+def attach_login_grant(identity, provider):
+    """Turn the Google tokens returned at Somaiya sign-in into Gmail and Classroom connections.
+
+    Never blocks sign-in: on any problem the student can still use DueCare and grant access later."""
+    token = provider.get("provider_token")
+    if not token:
+        return None
+    try:
+        google.configured()
+        info = google.provider.token_info(token)
+        # The grant must belong to DueCare's OAuth client (so it can be refreshed) and to this account.
+        if (
+            info.get("aud") != settings().google_oauth_client_id
+            or str(info.get("email", "")).lower() != identity["email"]
+        ):
+            log.warning("sign-in Google token not usable for sources")
+            return None
+        tokens = {
+            "access_token": token,
+            "refresh_token": provider.get("provider_refresh_token"),
+            "expires_in": info.get("expires_in", 0),
+            "scope": info.get("scope", ""),
+        }
+        profile = {"name": identity.get("name"), "picture": identity.get("photo")}
+        with work(identity) as db:
+            result = link_account(
+                db, identity["id"], info["sub"], identity["email"], profile, tokens, ["gmail", "classroom"]
+            )
+        return result
+    except (ApiError, google.SourceError, KeyError):
+        log.warning("could not attach sign-in Google grant")
+        return None
 
 
 @router.delete("/connections/{id}")

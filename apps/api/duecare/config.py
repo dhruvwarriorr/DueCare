@@ -21,6 +21,23 @@ class Settings(BaseSettings):
     sync_work_budget_seconds: float = 90
     google_request_timeout_seconds: float = 15
     academic_sender_domains: str = "somaiya.edu"
+    # Phase 3 interpretation. Model IDs are deployment configuration, never hard-coded.
+    # Provider order: Groq, then the Groq fallback model, then OpenAI, then Gemini (when configured).
+    groq_api_key: str = ""
+    groq_model: str = ""
+    groq_fallback_model: str = ""
+    openai_api_key: str = ""
+    openai_model: str = ""
+    gemini_api_key: str = ""
+    gemini_model: str = ""
+    ai_timeout_seconds: float = 45
+    # Recognized college LMS notification sender(s) and activity hosts for template parsing.
+    # The college LMS sender is the same for every Somaiya student.
+    lms_senders: str = "lms-kjsse@somaiya.edu"
+    lms_hosts: str = "lms-kjsce.somaiya.edu"
+    # Automatic completion is enabled per validated path only after live checks pass:
+    # lms_assignment_receipt, classroom_turned_in. Otherwise evidence asks the student to confirm.
+    auto_completion_paths: str = ""
 
 
 @lru_cache

@@ -14,6 +14,7 @@ const child = spawn(
       WEB_ORIGIN: "http://localhost:3001",
       API_URL: "http://127.0.0.1:8001",
       GATEWAY_SECRET: config.GATEWAY_SECRET,
+      NEXT_DIST_DIR: ".next-e2e",
     },
   },
 );

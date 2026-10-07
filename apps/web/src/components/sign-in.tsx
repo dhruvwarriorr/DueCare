@@ -72,7 +72,9 @@ export function SignIn({ callbackError = false }: { callbackError?: boolean }) {
         </Button>
         <ErrorNotice error={error} />
         <p className="text-xs text-secondary">
-          Access is available to verified @somaiya.edu accounts.
+          Access is available to verified @somaiya.edu accounts. Google will
+          also ask to let DueCare read your Gmail and Classroom (read-only) so
+          your assignments and tests appear automatically.
         </p>
       </section>
     </main>

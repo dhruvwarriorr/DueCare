@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, quote, urlparse
 import pytest
 from sqlalchemy import create_engine, func, select, text
 
-from duecare import google, mail, sync
+from duecare import auth, google, mail, sync
 from duecare.config import settings
 from duecare.db import transaction
 from duecare.models import (
@@ -299,7 +299,8 @@ def test_gmail_initial_import_pagination_sender_rules_and_no_tasks(client, heade
         assert db.get(Connection, conn).checkpoint["historyId"] == "107"
         assert "Due 21 Sept" not in json.dumps(original.data)
     summary = client.get("/api/v1/connections", headers=headers).json()["items"][0]["records"]
-    assert summary == {"awaitingInterpretation": 2, "duplicates": 1, "blocked": 1, "ignored": 1}
+    assert {k: summary[k] for k in ("duplicates", "blocked")} == {"duplicates": 1, "blocked": 1}
+    assert summary["awaitingInterpretation"] + summary["ignored"] + summary["interpreted"] == 3
     overview = client.get("/api/v1/overview", headers=headers).json()
     assert overview["sync"][0]["lastJob"]["status"] == "completed" and overview["counts"]["due"] == 0
 
@@ -718,5 +719,103 @@ def test_reference_eml_through_import_pipeline(client, headers, student, fake):
     assert job["status"] == "completed"
     states = [r.processing_state for r in records(student.uid)]
     # 22 exports are 11 distinct messages; each repeated export is detected as a duplicate occurrence.
-    assert states.count("awaiting_interpretation") == 11 and states.count("duplicate") == 11
+    assert len(states) == 22 and states.count("duplicate") == 11
     assert datetime.now(UTC) - records(student.uid)[0].created_at < timedelta(minutes=5)
+
+
+def test_single_consent_connects_gmail_and_classroom_and_reports_partial_grants(client, headers, fake):
+    fake.service = "both"
+    r = client.post("/api/v1/connections/authorize", headers=headers, json={})
+    q = parse_qs(urlparse(r.json()["url"]).query)
+    assert set(q["scope"][0].split()) == {
+        "openid", "email", "profile", *google.SERVICE_SCOPES["gmail"], *google.SERVICE_SCOPES["classroom"]
+    }  # fmt: skip
+    state = q["state"][0]
+    out = client.get(f"/api/v1/connections/oauth/callback?state={state}&code=both", headers=headers).json()
+    assert out["services"] == ["gmail", "classroom"] and out["missing"] == {}
+    listed = client.get("/api/v1/connections", headers=headers).json()["items"]
+    assert sorted(c["service"] for c in listed) == ["classroom", "gmail"]
+    assert len({c["account"]["id"] for c in listed}) == 1  # One Google account and grant, two connections.
+    # Unchecking Classroom on Google's consent screen still connects Gmail and names what is missing.
+    other = account()
+    fake.scopes = ["openid", "email", "profile", *google.SERVICE_SCOPES["gmail"]]
+    fake.identity_claims = {"sub": "partial-sub", "email": "p@somaiya.edu", "email_verified": True}
+    state = parse_qs(
+        urlparse(
+            client.post("/api/v1/connections/authorize", headers=other.headers, json={}).json()["url"]
+        ).query
+    )["state"][0]
+    out = client.get(
+        f"/api/v1/connections/oauth/callback?state={state}&code=partial", headers=other.headers
+    ).json()
+    assert out["services"] == ["gmail"] and set(out["missing"]) == {"classroom"}
+    assert fake.revoked == []
+
+
+def test_sign_in_grants_gmail_and_classroom_without_separate_connect(client, student, fake):
+    gateway = {"x-gateway-secret": config["GATEWAY_SECRET"]}
+    start = client.post("/internal/auth/start", headers=gateway, json={}).json()
+    q = parse_qs(urlparse(start["url"]).query)
+    assert {*google.SERVICE_SCOPES["gmail"], *google.SERVICE_SCOPES["classroom"]} <= set(
+        q["scopes"][0].split()
+    )
+    assert q["access_type"] == ["offline"] and q["prompt"] == ["select_account"]
+    assert parse_qs(
+        urlparse(
+            client.post("/internal/auth/start", headers=gateway, json={"consent": True}).json()["url"]
+        ).query
+    )["prompt"] == ["consent"]
+    scopes = " ".join(["openid", *google.SERVICE_SCOPES["gmail"], *google.SERVICE_SCOPES["classroom"]])
+    fake.token_details = {
+        "aud": config["GOOGLE_OAUTH_CLIENT_ID"],
+        "sub": "somaiya-sub",
+        "email": "student@somaiya.edu",
+        "scope": scopes,
+        "expires_in": 3500,
+    }
+
+    def sign_in(provider_refresh):
+        start = client.post("/internal/auth/start", headers=gateway, json={}).json()
+        auth.provider.next_tokens = {
+            "access_token": student.token,
+            "refresh_token": "supabase-refresh",
+            "provider_token": "google-access",
+            "provider_refresh_token": provider_refresh,
+        }
+        r = client.post(
+            "/internal/auth/callback", headers=gateway, json={"state": start["state"], "code": "c"}
+        )
+        assert r.status_code == 200
+        return {**gateway, "x-session": r.json()["session"]}
+
+    h = sign_in("google-refresh")
+    items = client.get("/api/v1/connections", headers=h).json()["items"]
+    assert sorted((c["service"], c["status"]) for c in items) == [
+        ("classroom", "active"),
+        ("gmail", "active"),
+    ]
+    with transaction(student.uid) as db:
+        grant = db.scalar(select(OAuthGrant))
+        assert google.vault().decrypt(grant.refresh_token, grant.key_version) == "google-refresh"
+    # A later sign-in without a new refresh token keeps the stored grant.
+    h = sign_in(None)
+    with transaction(student.uid) as db:
+        grant = db.scalar(select(OAuthGrant))
+        assert google.vault().decrypt(grant.refresh_token, grant.key_version) == "google-refresh"
+    # A token for another OAuth client cannot be used for syncing; sign-in still succeeds.
+    other = account("second@somaiya.edu")
+    fake.token_details = {
+        **fake.token_details,
+        "aud": "someone-else.apps.googleusercontent.com",
+        "email": "second@somaiya.edu",
+    }
+    start = client.post("/internal/auth/start", headers=gateway, json={}).json()
+    auth.provider.next_tokens = {
+        "access_token": other.token,
+        "refresh_token": "r",
+        "provider_token": "t",
+        "provider_refresh_token": "x",
+    }
+    r = client.post("/internal/auth/callback", headers=gateway, json={"state": start["state"], "code": "c"})
+    assert r.status_code == 200
+    assert client.get("/api/v1/connections", headers=other.headers).json()["items"] == []

@@ -1,8 +1,8 @@
 # DueCare
 
-Phase 1 is the manual academic workspace: Somaiya Google sign-in, academic onboarding, subjects, weekly timetable context, tasks, calendar, dashboard, and settings. Phase 2 adds read-only Gmail and Classroom source connections, explicit Classroom-to-subject links, sender inclusion/blocking, and resumable browser-driven imports into source records. Academic interpretation, task creation from sources, review, and submission reconciliation belong to Phase 3.
+Phase 1 is the manual academic workspace: Somaiya Google sign-in, academic onboarding, subjects, weekly timetable context, tasks, calendar, dashboard, and settings. Phase 2 adds read-only Gmail and Classroom source connections, explicit Classroom-to-subject links, sender inclusion/blocking, and resumable browser-driven imports into source records. Phase 3 interprets imported items into tasks with academic targeting, Needs attention review, ordered rules, merges, and completion reconciliation. Privacy workflows and the web release belong to Phase 4.
 
-The approved behavior lives in [the specification](docs/ProjectDocumentation.md) and [four-phase plan](docs/ImplementationPhases.md). [Phase 1 verification](docs/Phase1Validation.md) and [Phase 2 verification](docs/Phase2Validation.md) distinguish tested local behavior from pending live acceptance.
+The approved behavior lives in [the specification](docs/ProjectDocumentation.md) and [four-phase plan](docs/ImplementationPhases.md). [Phase 1 verification](docs/Phase1Validation.md), [Phase 2 verification](docs/Phase2Validation.md), and [Phase 3 verification](docs/Phase3Validation.md) distinguish tested local behavior from pending live acceptance.
 
 ## Repository
 
@@ -36,6 +36,16 @@ Source authorization is separate from Supabase login and never adds a Supabase i
 3. Create (or reuse) a **Web application** OAuth client and add the exact authorized redirect URI `http://localhost:3000/connections/callback` (and the HTTPS production equivalent later). This is different from the Supabase login callback.
 4. Put the client ID/secret in `apps/api/.env` as `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`. Generate a Fernet key for `SOURCE_TOKEN_KEYS=v1:<key>` with `SOURCE_TOKEN_KEY_VERSION=v1`. To rotate, add `v2:<new key>`, switch the current version, and keep `v1` listed: tokens are re-encrypted under the current version as they refresh.
 5. Apply migration `0002` (`uv run alembic upgrade head`).
+
+**Access is granted at sign-in (student decision).** Google sign-in through Supabase also requests the read-only Gmail and Classroom scopes, with offline access. Supabase returns Google's tokens once, at the PKCE exchange. The API then:
+
+1. Verifies them with Google's tokeninfo endpoint. The audience must be `GOOGLE_OAUTH_CLIENT_ID` and the email must be the signed-in Somaiya account.
+2. Encrypts the grant.
+3. Activates both connections. Any service whose permissions were not granted is skipped.
+
+This requires the Supabase Google provider to use the **same OAuth client** as `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`, so the grant can be refreshed, and the scopes to be listed on the consent screen. Sign-in never fails because of this step. If access is missing or revoked, **Allow Gmail and Classroom access** on the Sources page signs in again with `prompt=consent`.
+
+This supersedes the specification's separate per-service connect step. The older per-service authorization endpoint remains for adding other Google accounts, but the UI no longer offers it.
 
 Each service requests only its own permissions when connected. Authorization uses one-use state bound to the signed-in student, PKCE (S256), offline access, and incremental scopes; the callback requires the DueCare session. A verified Google ID token identifies the source account, which may be a personal account. Refresh and access tokens are encrypted server-side and never returned. If Google omits a new refresh token, the existing one is kept. Disconnecting one service keeps a grant still used by the other; the Google grant is revoked when no service on that account remains connected.
 
@@ -132,5 +142,21 @@ There is no scheduled sync. The open browser starts syncing on app open, on refo
 Gmail imports the last 90 days, then continues incrementally from the mailbox history ID (relisting the gap if history expires). The complete sender blocklist is checked from metadata before any body is fetched, and again under a per-sender lock when results are committed, so a block added mid-import cannot commit content. Non-academic senders (outside `ACADEMIC_SENDER_DOMAINS`, unless included) are not fetched. Blocked and ignored mail keeps only identifiers, sender, and reason, with 30-day expiry. Eligible mail is MIME-decoded safely (plain text preferred unless HTML tables would be flattened; no remote content or scripts), split into authored/quoted/forwarded/signature/footer sections, and stored as identifiers, timestamps, a content hash, section structure, attachment metadata, and links—never the full body. Identical Message-ID and content in the same account is marked as a duplicate occurrence.
 
 Classroom discovers courses as metadata only; nothing creates subjects. Students explicitly link a course to one or more existing subjects (theory/lab/tutorial remain separate; no batch override). Only linked courses are read: own submissions, coursework (initially the last 90 days, older work with future deadlines, and older outstanding work), and announcements (90 days), then incrementally by update time. Changed content increments the source record's revision. Imported records stay `awaiting_interpretation` and are not tasks until Phase 3.
+
+### Interpretation, review, and completion (Phase 3)
+
+Apply migration `0003` (`uv run alembic upgrade head`). After each import, the same browser-driven job interprets new records, oldest first, with receipts after the notices they confirm:
+
+1. **Sender block recheck** under the per-sender lock; blocked mail never reaches AI or tasks.
+2. **Content**: Gmail bodies and Classroom text are re-fetched for the step, never stored.
+3. **Recognized LMS templates** from `lms-kjsse@somaiya.edu` (always recognized; `LMS_SENDERS` can add others) (submission confirmations, due/overdue notices, quiz open/close windows, digests, `[LMS-Reminder]` tables) are parsed deterministically from labelled absolute dates and activity links. Everything else with an academic signal goes to **AI**: Groq first (`GROQ_MODEL`), one repair attempt on invalid output, then `GROQ_FALLBACK_MODEL`, then OpenAI/Gemini if configured. Mail with no academic signal (events, clubs, placements) is ignored without an AI call. If both providers fail or none is configured, only AI items pause; templates and Classroom states continue.
+4. **Academic targeting** compares observed class/year, semester, divisions, and batches with the profile (Division B + batch 2 = B2; SY = second year; III = 3; `A-B-C-D` includes B; room codes are not batches). Explicit mismatches are ignored silently with minimal metadata. Missing or ambiguous targeting goes to **Needs attention**. An explicitly linked Classroom course or a personal LMS notification for an enrolled course establishes course membership; lab work still needs batch evidence unless it comes from such a trusted context.
+5. **Subjects** come only from the student's own subjects. A course name matching both a theory and a lab subject is asked, never guessed; confirming it can remember the LMS course label for that subject.
+6. **Rules** (ordered, allowlisted conditions) decide inclusion and priority for new tasks only. Natural-language rules are AI-interpreted into a preview that must be saved explicitly.
+7. **Reconciliation**: exact activity/coursework identities link notices, revisions, and receipts to one task. Older notices never roll back newer values. Student-edited fields win; conflicts are asked. Similar-looking work is asked, never merged. Quiz closing notices do not overwrite an established classroom session. Windows, tentative alternatives, and unknown test start times are asked and never invented.
+
+**Completion precedence** is enforced in the applying transaction. Due/overdue notices, digests, countdowns, deadline passage, and late-submission warnings never clear completion. A student's newer reopen survives replay of older receipts. Receipts are validated: recognized template, configured sender, Gmail-observed DKIM+DMARC pass for the sender domain, addressed to the connected account, not forwarded, and an exact activity link to an existing task. Classroom uses only the connected student's own `TURNED_IN`; a newer `RECLAIMED_BY_STUDENT` reopens. Automatic completion runs only for paths listed in `AUTO_COMPLETION_PATHS`; otherwise validated evidence asks **Mark completed?** in Needs attention. Enable a path only after checking it live.
+
+**Needs attention** shows the question, observed versus profile context, the proposal, and source excerpt. You can accept (with subject/time corrections), link to an existing task, keep current values, confirm completion, reopen, remove withdrawn work, or dismiss. The server rechecks sender blocks, current academic context, and revision first. Task detail shows source evidence, completion origin, and change history by actor. It also supports moving evidence to another task and merging duplicates with undo (different subjects never merge). **Reprocess** on a source reconsiders earlier ignored, unmatched, and interpreted items under current senders, profile, subjects, timetable, and rules, without duplicating evidence.
 
 See [verification evidence and remaining live checks](docs/Phase1Validation.md) before treating Phase 1 as hosted-accepted. No commit, push, deployment, or hosted data mutation is performed automatically. Phase 2 local evidence and pending live Google acceptance are recorded in [Phase2Validation.md](docs/Phase2Validation.md).

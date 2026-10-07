@@ -53,8 +53,7 @@ export async function api<T>(
         ? "DueCare returned an unexpected response. Please try again"
         : "DueCare is temporarily unavailable. Please try again",
     };
-    if (response.ok)
-      throw new ApiError(data.message as string, 502, undefined);
+    if (response.ok) throw new ApiError(data.message as string, 502, undefined);
   }
   if (!response.ok) {
     // A full navigation clears in-memory private query data after session expiry.

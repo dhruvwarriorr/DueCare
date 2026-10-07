@@ -75,7 +75,7 @@ test("sources connect, sync in the browser, honour blocks, and link Classroom co
   await page.goto("/?view=connections");
   await expect(page.getByRole("heading", { name: "Sources" })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "No sources connected" }),
+    page.getByRole("heading", { name: "Gmail and Classroom access is needed" }),
   ).toBeVisible();
   await page
     .getByLabel("Sender email", { exact: true })
@@ -87,12 +87,12 @@ test("sources connect, sync in the browser, honour blocks, and link Classroom co
   await connect(page, "gmail", "gmail-e2e");
   await expect(page).toHaveURL(/view=connections$/);
   await expect(
-    page.getByText("Gmail connected. Syncing will start now."),
+    page.getByText("Gmail is connected. Syncing will start now."),
   ).toBeVisible();
   const gmail = page.locator(".connection-card", { hasText: "Gmail" });
   await expect(gmail).toContainText("personal.gmail@example.com");
   await expect(gmail).toContainText("Last synced", { timeout: 15000 });
-  await expect(gmail).toContainText("1 imported item waiting");
+  await expect(gmail).toContainText("1 waiting for AI interpretation");
   await expect(gmail).toContainText("1 from blocked senders");
 
   // Imported source content is not an accepted task until Phase 3 interpretation.
@@ -118,9 +118,13 @@ test("sources connect, sync in the browser, honour blocks, and link Classroom co
   await classroom.getByRole("button", { name: "Link", exact: true }).click();
   await expect(classroom.locator(".chip")).toContainText("Databases · theory");
   await classroom.getByRole("button", { name: "Sync now" }).click();
-  await expect(classroom).toContainText("1 imported item waiting", {
+  await expect(classroom).toContainText("1 waiting for AI interpretation", {
     timeout: 15000,
   });
+  await page.goto("/?view=connections");
+  await expect(
+    page.getByRole("heading", { name: "Gmail and Classroom are connected" }),
+  ).toBeVisible();
   await page.goto("/?view=subjects");
   await expect(
     page.getByText("Linked to Classroom: Synthetic Databases Div B"),

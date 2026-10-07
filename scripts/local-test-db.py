@@ -55,6 +55,17 @@ config = {
     "SOURCE_TOKEN_KEY_VERSION": "v2",
     "SYNC_WORK_BUDGET_SECONDS": "5",
     "ACADEMIC_SENDER_DOMAINS": "somaiya.edu",
+    # Never reach real AI providers from tests, even if the developer's .env has keys.
+    "GROQ_API_KEY": "",
+    "GROQ_MODEL": "",
+    "GROQ_FALLBACK_MODEL": "",
+    "OPENAI_API_KEY": "",
+    "OPENAI_MODEL": "",
+    "GEMINI_API_KEY": "",
+    "GEMINI_MODEL": "",
+    "AUTO_COMPLETION_PATHS": "",
+    "LMS_SENDERS": "lms-kjsse@somaiya.edu",
+    "LMS_HOSTS": "lms-kjsce.somaiya.edu",
 }
 (root / ".local").mkdir(exist_ok=True)
 (root / ".local/test-config.json").write_text(json.dumps(config))

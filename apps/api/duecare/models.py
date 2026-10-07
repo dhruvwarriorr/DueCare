@@ -207,7 +207,9 @@ class SourceRecord(Owned, Base):
         UniqueConstraint("connection_id", "provider_id"),
         owner_fk("connection_id", "connections"),
         CheckConstraint(
-            "processing_state in ('awaiting_interpretation','duplicate','blocked','ignored','unavailable')"
+            "processing_state in ('awaiting_interpretation','duplicate','blocked','ignored','unavailable',"
+            "'interpreted','needs_review')",
+            name="source_records_state",
         ),
         {"schema": "duecare"},
     )
@@ -285,3 +287,84 @@ class OAuthState(Base):
     service: Mapped[str] = mapped_column(String(20))
     verifier: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+# Phase 3: interpretation, review, rules, evidence, and merges.
+class SourceEvent(Owned, Base):
+    __tablename__ = "source_events"
+    __table_args__ = (
+        UniqueConstraint("id", "user_id"),
+        UniqueConstraint("source_record_id", "event_key"),
+        owner_fk("source_record_id", "source_records"),
+        CheckConstraint(
+            "event_type in ('new_work','revision','due_notice','supporting','submission','unsubmission',"
+            "'withdrawal','unknown')"
+        ),
+        {"schema": "duecare"},
+    )
+    source_record_id: Mapped[uuid.UUID] = mapped_column(UUID, index=True)
+    event_key: Mapped[str] = mapped_column(String(200))
+    event_type: Mapped[str] = mapped_column(String(20))
+    identity_key: Mapped[str | None] = mapped_column(String(600), nullable=True, index=True)
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    outcome: Mapped[str] = mapped_column(String(30))
+    task_id: Mapped[uuid.UUID | None] = mapped_column(UUID, nullable=True, index=True)
+    processing_version: Mapped[str] = mapped_column(String(50))
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class TaskEvidence(Owned, Base):
+    __tablename__ = "task_evidence"
+    __table_args__ = (
+        UniqueConstraint("id", "user_id"),
+        UniqueConstraint("task_id", "event_id"),
+        owner_fk("task_id", "tasks"),
+        owner_fk("event_id", "source_events"),
+        CheckConstraint("state in ('active','reassigned')"),
+        {"schema": "duecare"},
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(UUID, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID, index=True)
+    method: Mapped[str] = mapped_column(String(30))
+    state: Mapped[str] = mapped_column(String(20), default="active")
+
+
+class ReviewItem(Owned, Base):
+    __tablename__ = "review_items"
+    __table_args__ = (
+        UniqueConstraint("id", "user_id"),
+        owner_fk("source_record_id", "source_records"),
+        CheckConstraint("status in ('open','resolved','dismissed','suppressed')"),
+        {"schema": "duecare"},
+    )
+    issue_type: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    task_id: Mapped[uuid.UUID | None] = mapped_column(UUID, nullable=True, index=True)
+    source_record_id: Mapped[uuid.UUID | None] = mapped_column(UUID, nullable=True, index=True)
+    event_id: Mapped[uuid.UUID | None] = mapped_column(UUID, nullable=True)
+    sender_email: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
+    question: Mapped[str] = mapped_column(String(500))
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Rule(Owned, Base):
+    __tablename__ = "rules"
+    __table_args__ = (UniqueConstraint("id", "user_id"), {"schema": "duecare"})
+    name: Mapped[str] = mapped_column(String(200))
+    enabled: Mapped[bool] = mapped_column(default=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class MergeOperation(Owned, Base):
+    __tablename__ = "merge_operations"
+    __table_args__ = (
+        owner_fk("surviving_task_id", "tasks"),
+        owner_fk("absorbed_task_id", "tasks"),
+        {"schema": "duecare"},
+    )
+    surviving_task_id: Mapped[uuid.UUID] = mapped_column(UUID, index=True)
+    absorbed_task_id: Mapped[uuid.UUID] = mapped_column(UUID, index=True)
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

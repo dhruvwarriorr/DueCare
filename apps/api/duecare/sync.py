@@ -21,7 +21,8 @@ from types import SimpleNamespace
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 
-from . import google, mail
+from . import google, interpret, mail
+from .classroom_time import due_at
 from .common import owned, work
 from .config import settings
 from .errors import ApiError
@@ -142,6 +143,7 @@ def suppress_sender(db, uid, email):
     ).all()
     for record in rows:
         minimize(db, record, "blocked", "sender_blocked")
+    interpret.suppress_reviews(db, uid, email)
     return len(rows)
 
 
@@ -326,7 +328,11 @@ def step(user, job_id, lease):
             conn_checkpoint=json.loads(json.dumps(conn.checkpoint)),
             last_success_at=conn.last_success_at,
         )
-    unit = gmail_unit if snap.service == "gmail" else classroom_unit
+    unit = (
+        interpretation_unit
+        if snap.checkpoint.get("stage") in ("interpret", "reinterpret")
+        else (gmail_unit if snap.service == "gmail" else classroom_unit)
+    )
     try:
         try:
             apply = unit(snap, access_token(user, snap.connection_id))
@@ -354,6 +360,50 @@ def step(user, job_id, lease):
                 conn.last_success_at = now()
             conn.data = {**conn.data, "lastError": None}
         return not done
+
+
+def to_interpretation(job):
+    """Imports are followed by interpretation; explicit reprocessing first re-queues records."""
+    stage = "reinterpret" if job.mode == "reprocess" else "interpret"
+    set_checkpoint(job, {**job.checkpoint, "stage": stage}, "interpreting")
+    return False
+
+
+REQUEUE = ("ignored", "interpreted", "needs_review")
+
+
+def interpretation_unit(snap, token):
+    if snap.checkpoint.get("stage") == "reinterpret":
+
+        def requeue(db, job, conn):
+            # Explicit reprocessing reconsiders ignored, unmatched, and earlier interpretations under the
+            # current profile, subjects, timetable, and rules. Blocked mail stays blocked.
+            run = job.checkpoint.get("run", 0) + 1
+            count = 0
+            for record in db.scalars(
+                select(SourceRecord).where(
+                    SourceRecord.connection_id == conn.id,
+                    SourceRecord.processing_state.in_(REQUEUE),
+                    SourceRecord.reason.is_distinct_from("sender_not_academic"),
+                    SourceRecord.reason.is_distinct_from("sender_missing"),
+                )
+            ):
+                record.processing_state, record.expires_at = "awaiting_interpretation", None
+                record.data = {
+                    k: v for k, v in record.data.items() if k not in ("aiPausedUntil", "aiPausedReason")
+                }
+                count += 1
+            set_checkpoint(
+                job,
+                {**job.checkpoint, "stage": "interpret", "run": run},
+                "interpreting",
+                bump(job.progress, "requeued", count),
+            )
+            return False
+
+        return requeue
+    apply = interpret.unit(snap, token)
+    return apply or (lambda db, job, conn: True)
 
 
 def set_checkpoint(job, checkpoint, phase=None, progress=None):
@@ -427,7 +477,7 @@ def gmail_unit(snap, token):
 
     def finished(db, job, conn):
         conn.checkpoint = {**conn.checkpoint, "historyId": final}
-        return True
+        return to_interpretation(job)
 
     return finished
 
@@ -456,7 +506,7 @@ def gmail_reconsider(snap, token):
             stmt = stmt.where(SourceRecord.id > uuid.UUID(cp["after"]))
         row = db.execute(stmt.order_by(SourceRecord.id).limit(1)).first()
     if not row:
-        return lambda db, job, conn: True
+        return lambda db, job, conn: to_interpretation(job)
     gid = row.provider_id.split(":", 2)[2]
 
     def moved(c):
@@ -648,7 +698,7 @@ def classroom_unit(snap, token):
             **conn.checkpoint,
             "courses": {k: {**known.get(k, {}), **v} for k, v in {**known, **marks}.items()},
         }
-        return True
+        return to_interpretation(job)
 
     return finished
 
@@ -835,16 +885,6 @@ def course_unit(snap, token):
 def future_due(item):
     due = due_at(item)
     return bool(due and due > now())
-
-
-def due_at(item):
-    date, clock = item.get("dueDate"), item.get("dueTime")
-    if not date or not clock or not all(k in date for k in ("year", "month", "day")):
-        return None
-    # Classroom due dates and times are UTC values.
-    return datetime(
-        date["year"], date["month"], date["day"], clock.get("hours", 0), clock.get("minutes", 0), tzinfo=UTC
-    )
 
 
 def materials(item):

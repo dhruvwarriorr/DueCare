@@ -18,7 +18,10 @@ export async function GET(request: Request) {
   target.searchParams.set("view", "connections");
   if (response.ok) {
     const body = await response.json();
-    target.searchParams.set("connected", body.service);
+    target.searchParams.set(
+      "connected",
+      (body.services || [body.service]).join(","),
+    );
   } else {
     const body = await response.json().catch(() => ({}));
     if (response.status === 401)

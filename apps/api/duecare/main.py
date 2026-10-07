@@ -10,13 +10,14 @@ from pydantic import ValidationError
 from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from . import auth, sources_api
+from . import auth, phase3_api, sources_api
 from .common import User, finish, owned, page, replay, revision, work
 from .db import transaction
-from .domain import effective_status, priority, task_data
+from .domain import effective_status, task_data
 from .errors import ApiError
-from .models import History, Profile, Slot, Subject, Task, now
+from .models import History, ReviewItem, Slot, Subject, Task, now
 from .schemas import ProfilePatch, SubjectInput, TaskInput, TaskPatch, TimetableInput
+from .views import profile, task_out
 
 app = FastAPI(title="DueCare API", version="0.2.0", openapi_url="/api/v1/openapi.json")
 
@@ -100,8 +101,8 @@ def ready():
 
 
 @app.post("/internal/auth/start", dependencies=[Depends(auth.gateway)])
-def start():
-    return auth.login_start()
+def start(body: dict | None = None):
+    return auth.login_start(consent=bool((body or {}).get("consent")))
 
 
 @app.post("/internal/auth/callback", dependencies=[Depends(auth.gateway)])
@@ -109,27 +110,15 @@ def callback(body: dict):
     state, code = body.get("state"), body.get("code")
     if not isinstance(state, str) or not isinstance(code, str) or len(state) > 100 or len(code) > 3000:
         raise ApiError(422, "INVALID_CALLBACK", "Invalid sign-in callback")
-    return {"session": auth.login_finish(state, code)}
+    handle, identity, provider = auth.login_finish(state, code)
+    sources_api.attach_login_grant(identity, provider)
+    return {"session": handle}
 
 
 @app.post("/internal/auth/logout")
 def logout(request: Request):
     auth.logout(request)
     return {"ok": True}
-
-
-def profile(db, uid):
-    p = db.get(Profile, uuid.UUID(uid))
-    if not p:
-        db.execute(
-            text(
-                "insert into duecare.profiles (user_id,revision,data,created_at,updated_at) "
-                "values (:id,1,'{}',now(),now()) on conflict do nothing"
-            ),
-            {"id": uid},
-        )
-        p = db.get(Profile, uuid.UUID(uid))
-    return p
 
 
 def profile_out(p, user):
@@ -162,30 +151,6 @@ def subject_out(s, mappings=()):
         "kind": s.kind,
         "revision": s.revision,
         "classroomMappings": list(mappings),
-    }
-
-
-def task_out(t, db, uid):
-    s = db.get(Subject, t.subject_id) if t.subject_id else None
-    p = profile(db, uid)
-    return {
-        **t.data,
-        "id": str(t.id),
-        "title": t.title,
-        "type": t.type,
-        "subjectId": str(t.subject_id) if t.subject_id else None,
-        "subjectName": s.name if s else None,
-        "subjectKind": s.kind if s else None,
-        "generalBatch": p.data.get("generalBatch"),
-        "dueAt": t.due_at.isoformat() if t.due_at else None,
-        "status": effective_status(t, now()),
-        "priority": priority(t, now()),
-        "completedAt": t.completed_at.isoformat() if t.completed_at else None,
-        "completionOrigin": "manual" if t.completed_at else None,
-        "revision": t.revision,
-        "createdAt": t.created_at.isoformat(),
-        "updatedAt": t.updated_at.isoformat(),
-        "source": "manual",
     }
 
 
@@ -349,7 +314,7 @@ def tasks(
     user=User,
 ):
     with work(user) as db:
-        stmt = select(Task).where(Task.user_id == user["id"])
+        stmt = select(Task).where(Task.user_id == user["id"], Task.data["mergedInto"].astext.is_(None))
         for value in (date_from, date_to):
             if value and value.tzinfo is None:
                 raise ApiError(422, "INVALID_TIME", "Date filters must include a timezone")
@@ -382,8 +347,12 @@ def tasks(
             stmt = stmt.where(Task.due_at >= date_from)
         if date_to:
             stmt = stmt.where(Task.due_at < date_to)
-        if source and source != "manual":
-            stmt = stmt.where(False)
+        if source == "manual":
+            stmt = stmt.where(Task.data["sources"].is_(None))
+        elif source in ("gmail", "classroom"):
+            stmt = stmt.where(Task.data["sources"].contains([source]))
+        elif source:
+            raise ApiError(422, "INVALID_SOURCE", "Invalid source filter")
         if batch and profile(db, user["id"]).data.get("generalBatch") != batch:
             stmt = stmt.where(False)
         if priority_filter:
@@ -395,7 +364,10 @@ def tasks(
                 else_="low",
             )
             stmt = stmt.where(
-                func.coalesce(Task.data["priorityOverride"].astext, computed) == priority_filter
+                func.coalesce(
+                    Task.data["priorityOverride"].astext, Task.data["rulePriority"]["value"].astext, computed
+                )
+                == priority_filter
             )
         rows, c = page(db, stmt, Task, limit, cursor)
         return {"items": [task_out(t, db, user["id"]) for t in rows], "nextCursor": c}
@@ -467,8 +439,11 @@ def edit_task(id: uuid.UUID, body: TaskPatch, request: Request, user=User):
             **t.data.get("manualFieldOverrides", {}),
             **{k: {"recordedAt": now().isoformat()} for k in changes},
         }
-        if "latestManualDecision" in t.data:
-            d["latestManualDecision"] = t.data["latestManualDecision"]
+        # Source metadata and decisions survive ordinary edits.
+        for key in ("latestManualDecision", "completion", "sources", "sourceLinks", "observedTargeting",
+                    "groupWork", "rulePriority", "mergedInto"):  # fmt: skip
+            if key in t.data:
+                d[key] = t.data[key]
         accepted_changes = {
             k: v
             for k, v in d.items()
@@ -482,7 +457,16 @@ def edit_task(id: uuid.UUID, body: TaskPatch, request: Request, user=User):
         if body.status is not None:
             t.completed_at = now() if body.status == "completed" else None
             action = "completed" if body.status == "completed" else "reopened"
-            t.data = {**d, "latestManualDecision": {"action": action, "recordedAt": now().isoformat()}}
+            completion = (
+                {"origin": "manual", "recordedAt": now().isoformat(), "basis": "student decision"}
+                if body.status == "completed"
+                else None
+            )
+            t.data = {
+                **d,
+                "latestManualDecision": {"action": action, "recordedAt": now().isoformat()},
+                "completion": completion,
+            }
         t.status = effective_status(t, now())
         t.revision += 1
         db.flush()
@@ -522,8 +506,10 @@ def task_history(id: uuid.UUID, limit: int = Query(50, ge=1, le=100), cursor: st
                 {
                     "id": str(h.id),
                     "action": h.action,
-                    "actor": "student",
-                    "changes": h.changes,
+                    "actor": h.changes.get("_actor", "student"),
+                    "eventId": h.changes.get("_eventId"),
+                    "sourceTime": h.changes.get("_sourceTime"),
+                    "changes": {k: v for k, v in h.changes.items() if not k.startswith("_")},
                     "recordedAt": h.created_at.isoformat(),
                 }
                 for h in rows
@@ -543,21 +529,24 @@ def overview(user=User):
             else_="due",
         )
         counts = {k: 0 for k in ("due", "completed", "overdue", "missed")}
+        visible = Task.data["mergedInto"].astext.is_(None)
         counts.update(
             dict(
                 db.execute(
-                    select(effective, func.count()).where(Task.user_id == user["id"]).group_by(effective)
+                    select(effective, func.count())
+                    .where(Task.user_id == user["id"], visible)
+                    .group_by(effective)
                 ).all()
             )
         )
         undated = db.scalar(
             select(func.count())
             .select_from(Task)
-            .where(Task.user_id == user["id"], Task.completed_at.is_(None), Task.due_at.is_(None))
+            .where(Task.user_id == user["id"], Task.completed_at.is_(None), Task.due_at.is_(None), visible)
         )
         items = db.scalars(
             select(Task)
-            .where(Task.user_id == user["id"], Task.completed_at.is_(None))
+            .where(Task.user_id == user["id"], Task.completed_at.is_(None), visible)
             .order_by(Task.due_at.asc().nulls_last(), Task.created_at.desc())
             .limit(8)
         )
@@ -565,9 +554,14 @@ def overview(user=User):
             "counts": counts,
             "undated": undated,
             "tasks": [task_out(t, db, user["id"]) for t in items],
-            "reviewCount": 0,
+            "reviewCount": db.scalar(
+                select(func.count())
+                .select_from(ReviewItem)
+                .where(ReviewItem.user_id == user["id"], ReviewItem.status == "open")
+            ),
             "sync": sources_api.sync_summary(db, user["id"]),
         }
 
 
 app.include_router(sources_api.router)
+app.include_router(phase3_api.router)
