@@ -1,8 +1,5 @@
-import base64
-import hashlib
-import json
+import logging
 import uuid
-from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -13,14 +10,15 @@ from pydantic import ValidationError
 from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from . import auth
+from . import auth, sources_api
+from .common import User, finish, owned, page, replay, revision, work
 from .db import transaction
 from .domain import effective_status, priority, task_data
 from .errors import ApiError
-from .models import History, Operation, Profile, Slot, Subject, Task, now
+from .models import History, Profile, Slot, Subject, Task, now
 from .schemas import ProfilePatch, SubjectInput, TaskInput, TaskPatch, TimetableInput
 
-app = FastAPI(title="DueCare API", version="0.1.0", openapi_url="/api/v1/openapi.json")
+app = FastAPI(title="DueCare API", version="0.2.0", openapi_url="/api/v1/openapi.json")
 
 
 @app.middleware("http")
@@ -75,6 +73,20 @@ async def database_error(request, exc):
     )
 
 
+@app.exception_handler(Exception)
+async def unexpected_error(request, exc):
+    # Unexpected failures still return the structured error contract; details stay in server logs.
+    logging.getLogger("duecare").exception("unhandled error", extra={"requestId": request.state.request_id})
+    return JSONResponse(
+        status_code=500,
+        content={
+            "code": "INTERNAL_ERROR",
+            "message": "Something went wrong. Please try again",
+            "requestId": request.state.request_id,
+        },
+    )
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -104,33 +116,6 @@ def callback(body: dict):
 def logout(request: Request):
     auth.logout(request)
     return {"ok": True}
-
-
-User = Depends(auth.current_user)
-
-
-def owned(db, model, id, uid, lock=False):
-    stmt = select(model).where(model.id == id, model.user_id == uid)
-    obj = db.scalar(stmt.with_for_update() if lock else stmt)
-    if obj is None:
-        raise ApiError(404, "NOT_FOUND", "This item is unavailable")
-    return obj
-
-
-def revision(obj, value):
-    if value is None or obj.revision != value:
-        raise ApiError(409, "REVISION_CONFLICT", "This item changed. Refresh it before saving again")
-
-
-@contextmanager
-def work(user):
-    with transaction(user["id"]) as db:
-        try:
-            yield db
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
 
 
 def profile(db, uid):
@@ -169,8 +154,15 @@ def profile_out(p, user):
     }
 
 
-def subject_out(s):
-    return {**s.data, "id": str(s.id), "name": s.name, "kind": s.kind, "revision": s.revision}
+def subject_out(s, mappings=()):
+    return {
+        **s.data,
+        "id": str(s.id),
+        "name": s.name,
+        "kind": s.kind,
+        "revision": s.revision,
+        "classroomMappings": list(mappings),
+    }
 
 
 def task_out(t, db, uid):
@@ -201,48 +193,6 @@ def history(db, t, action, changes):
     db.add(History(user_id=t.user_id, task_id=t.id, action=action, changes=changes))
 
 
-# Compound writes use a transaction-scoped lock and durable idempotency result.
-def replay(db, request, user, payload):
-    key = request.headers.get("idempotency-key", "")
-    if not key or len(key) > 100:
-        raise ApiError(422, "IDEMPOTENCY_REQUIRED", "An idempotency key is required")
-    fingerprint = hashlib.sha256(
-        (request.method + request.url.path + json.dumps(payload, sort_keys=True, default=str)).encode()
-    ).hexdigest()
-    db.execute(text("select pg_advisory_xact_lock(hashtextextended(:key,0))"), {"key": user["id"] + key})
-    existing = db.scalar(select(Operation).where(Operation.user_id == user["id"], Operation.key == key))
-    if existing:
-        if existing.fingerprint != fingerprint:
-            raise ApiError(409, "IDEMPOTENCY_CONFLICT", "This key was already used for another operation")
-        return existing.result, None
-    return None, Operation(user_id=uuid.UUID(user["id"]), key=key, fingerprint=fingerprint, result={})
-
-
-def finish(db, op, result):
-    op.result = result
-    db.add(op)
-    return result
-
-
-def page(db, stmt, model, limit, cursor):
-    if cursor:
-        try:
-            stamp, id = json.loads(base64.urlsafe_b64decode(cursor.encode()))
-            stamp = datetime.fromisoformat(stamp)
-            id = uuid.UUID(id)
-            stmt = stmt.where(or_(model.created_at < stamp, and_(model.created_at == stamp, model.id < id)))
-        except (ValueError, TypeError, KeyError):
-            raise ApiError(422, "INVALID_CURSOR", "Invalid page cursor")
-    rows = list(db.scalars(stmt.order_by(model.created_at.desc(), model.id.desc()).limit(limit + 1)))
-    next_cursor = None
-    if len(rows) > limit:
-        last = rows[limit - 1]
-        next_cursor = base64.urlsafe_b64encode(
-            json.dumps([last.created_at.isoformat(), str(last.id)]).encode()
-        ).decode()
-    return rows[:limit], next_cursor
-
-
 @app.get("/api/v1/me")
 def me(user=User):
     with work(user) as db:
@@ -268,7 +218,8 @@ def update_me(body: ProfilePatch, user=User):
 def subjects(limit: int = Query(50, ge=1, le=100), cursor: str | None = None, user=User):
     with work(user) as db:
         rows, c = page(db, select(Subject).where(Subject.user_id == user["id"]), Subject, limit, cursor)
-        return {"items": [subject_out(s) for s in rows], "nextCursor": c}
+        mappings = sources_api.mappings_for(db, [s.id for s in rows])
+        return {"items": [subject_out(s, mappings.get(s.id, [])) for s in rows], "nextCursor": c}
 
 
 @app.post("/api/v1/subjects", status_code=201)
@@ -288,7 +239,8 @@ def add_subject(body: SubjectInput, user=User):
 @app.get("/api/v1/subjects/{id}")
 def get_subject(id: uuid.UUID, user=User):
     with work(user) as db:
-        return subject_out(owned(db, Subject, id, user["id"]))
+        s = owned(db, Subject, id, user["id"])
+        return subject_out(s, sources_api.mappings_for(db, [s.id]).get(s.id, []))
 
 
 @app.patch("/api/v1/subjects/{id}")
@@ -299,7 +251,7 @@ def edit_subject(id: uuid.UUID, body: SubjectInput, user=User):
         s.name, s.kind = body.name, body.kind
         s.data = body.model_dump(mode="json", by_alias=True, exclude={"name", "kind", "revision"})
         s.revision += 1
-        return subject_out(s)
+        return subject_out(s, sources_api.mappings_for(db, [s.id]).get(s.id, []))
 
 
 @app.delete("/api/v1/subjects/{id}")
@@ -614,5 +566,8 @@ def overview(user=User):
             "undated": undated,
             "tasks": [task_out(t, db, user["id"]) for t in items],
             "reviewCount": 0,
-            "sync": None,
+            "sync": sources_api.sync_summary(db, user["id"]),
         }
+
+
+app.include_router(sources_api.router)

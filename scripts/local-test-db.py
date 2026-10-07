@@ -22,9 +22,10 @@ with psycopg.connect(admin.replace("+psycopg", ""), autocommit=True) as db:
     db.execute(
         "create table if not exists auth.identities (user_id uuid references auth.users,provider text,identity_data jsonb)"
     )
-    db.execute(
-        "do $$ begin if not exists (select from pg_roles where rolname='supabase_auth_admin') then create role supabase_auth_admin; end if; end $$"
-    )
+    for role in ("supabase_auth_admin", "anon", "authenticated"):
+        db.execute(
+            f"do $$ begin if not exists (select from pg_roles where rolname='{role}') then create role {role}; end if; end $$"
+        )
     db.execute(
         "do $$ begin if not exists (select from pg_roles where rolname='duecare_test_app') then create role duecare_test_app login nosuperuser nobypassrls; end if; end $$"
     )
@@ -47,6 +48,13 @@ config = {
     "SUPABASE_URL": "https://auth.example.test",
     "SUPABASE_PUBLISHABLE_KEY": "test-only",
     "WEB_ORIGIN": "http://localhost:3001",
+    # Synthetic source settings: tests use a fake Google provider and never call Google.
+    "GOOGLE_OAUTH_CLIENT_ID": "test-client.apps.googleusercontent.com",
+    "GOOGLE_OAUTH_CLIENT_SECRET": "test-only",
+    "SOURCE_TOKEN_KEYS": "v1:" + Fernet.generate_key().decode() + ",v2:" + Fernet.generate_key().decode(),
+    "SOURCE_TOKEN_KEY_VERSION": "v2",
+    "SYNC_WORK_BUDGET_SECONDS": "5",
+    "ACADEMIC_SENDER_DOMAINS": "somaiya.edu",
 }
 (root / ".local").mkdir(exist_ok=True)
 (root / ".local/test-config.json").write_text(json.dumps(config))

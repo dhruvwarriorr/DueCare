@@ -26,7 +26,11 @@ export async function csrf(request: Request) {
     token && equal(token, request.headers.get("x-csrf-token") || ""),
   );
 }
-export async function backend(path: string, init: RequestInit = {}) {
+export async function backend(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs = 25000,
+) {
   if (!process.env.API_URL || !process.env.GATEWAY_SECRET) {
     return Response.json(
       {
@@ -47,7 +51,7 @@ export async function backend(path: string, init: RequestInit = {}) {
         "X-Session": store.get(sessionCookie)?.value || "",
         ...init.headers,
       },
-      signal: AbortSignal.timeout(25000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     return Response.json(

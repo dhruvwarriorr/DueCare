@@ -21,6 +21,7 @@ import {
   Menu,
   ArrowRight,
   Clock3,
+  Plug,
 } from "lucide-react";
 import { api, formatTime } from "@/lib/api";
 import { useCutoffRefresh } from "@/lib/use-cutoff-refresh";
@@ -32,11 +33,14 @@ import { TaskEditor } from "./task-editor";
 import { TaskDetail } from "./task-detail";
 import { Subjects } from "./subjects";
 import { Calendar } from "./calendar";
+import { Connections, SyncOverview } from "./connections";
+import { SyncProvider } from "@/lib/sync";
 const views = [
   ["dashboard", "Overview", LayoutDashboard],
   ["tasks", "Tasks", ListTodo],
   ["calendar", "Calendar", CalendarDays],
   ["subjects", "Subjects", BookOpen],
+  ["connections", "Sources", Plug],
   ["settings", "Settings", Settings],
 ] as const;
 type View = (typeof views)[number][0];
@@ -92,10 +96,12 @@ function Dashboard({
   onOpen,
   onTasks,
   onAdd,
+  onSources,
 }: {
   onOpen: (id: string) => void;
   onTasks: (status: string) => void;
   onAdd: () => void;
+  onSources: () => void;
 }) {
   const query = useQuery({
     queryKey: ["overview"],
@@ -144,6 +150,7 @@ function Dashboard({
           </button>
         ))}
       </div>
+      <SyncOverview onOpen={onSources} />
       <section className="panel">
         <div className="panel-heading">
           <div>
@@ -413,6 +420,9 @@ function App() {
   const [editor, setEditor] = useState<Task | null | undefined>(undefined);
   const [detail, setDetail] = useState<string | null>(null);
   const [logoutError, setLogoutError] = useState<Error | null>(null);
+  const [notice, setNotice] = useState<{ connected?: string; error?: string }>(
+    {},
+  );
   const theme = profile.data?.theme || "system";
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -427,8 +437,16 @@ function App() {
   }, [theme]);
   useEffect(() => {
     const restore = () => {
-      const v = new URLSearchParams(window.location.search).get("view");
+      const params = new URLSearchParams(window.location.search);
+      const v = params.get("view");
       if (views.some(([k]) => k === v)) setView(v as View);
+      // Source authorization returns here; keep the notice, then drop it from the address bar.
+      const connected = params.get("connected") || undefined;
+      const error = params.get("connectionError") || undefined;
+      if (connected || error) {
+        setNotice({ connected, error });
+        window.history.replaceState(null, "", "/?view=" + (v || "connections"));
+      }
     };
     restore();
     window.addEventListener("popstate", restore);
@@ -467,143 +485,170 @@ function App() {
       </main>
     );
   return (
-    <div className="app-shell">
-      <aside className={"sidebar " + (menu ? "open" : "")}>
-        <Link href="/" className="brand">
-          DueCare<span className="brand-mark">d.</span>
-        </Link>
-        <p className="sidebar-caption">Your academic workspace</p>
-        <nav aria-label="Main navigation">
-          {views.map(([key, label, Icon]) => (
-            <button
-              key={key}
-              onClick={() => navigate(key)}
-              className={view === key ? "active" : ""}
-              aria-current={view === key ? "page" : undefined}
-            >
-              <Icon size={19} />
-              {label}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="profile-mini">
-            <span className="avatar">
-              {p.identity.name?.slice(0, 1) || "S"}
-            </span>
-            <div>
-              <strong>{p.identity.name || "Student"}</strong>
-              <span>
-                {p.classYear || "Complete your profile"}
-                {p.division ? " · " + p.division : ""}
+    <SyncProvider enabled={p.onboardingComplete}>
+      <div className="app-shell">
+        <aside className={"sidebar " + (menu ? "open" : "")}>
+          <Link href="/" className="brand">
+            DueCare<span className="brand-mark">d.</span>
+          </Link>
+          <p className="sidebar-caption">Your academic workspace</p>
+          <nav aria-label="Main navigation">
+            {views.map(([key, label, Icon]) => (
+              <button
+                key={key}
+                onClick={() => navigate(key)}
+                className={view === key ? "active" : ""}
+                aria-current={view === key ? "page" : undefined}
+              >
+                <Icon size={19} />
+                {label}
+              </button>
+            ))}
+          </nav>
+          <div className="sidebar-bottom">
+            <div className="profile-mini">
+              <span className="avatar">
+                {p.identity.name?.slice(0, 1) || "S"}
               </span>
+              <div>
+                <strong>{p.identity.name || "Student"}</strong>
+                <span>
+                  {p.classYear || "Complete your profile"}
+                  {p.division ? " · " + p.division : ""}
+                </span>
+              </div>
             </div>
-          </div>
-          <Button variant="ghost" disabled={signingOut} onClick={logout}>
-            <LogOut size={16} />
-            Sign out
-          </Button>
-          <ErrorNotice error={logoutError} />
-        </div>
-      </aside>
-      {menu && (
-        <button
-          aria-label="Close navigation"
-          className="nav-overlay"
-          onClick={() => setMenu(false)}
-        />
-      )}
-      <div className="main-wrap">
-        <header className="topbar">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="mobile-menu"
-              aria-label="Open navigation"
-              onClick={() => setMenu(!menu)}
-            >
-              <Menu size={20} />
+            <Button variant="ghost" disabled={signingOut} onClick={logout}>
+              <LogOut size={16} />
+              Sign out
             </Button>
-            <span>{views.find(([k]) => k === view)?.[1]}</span>
+            <ErrorNotice error={logoutError} />
           </div>
-          <div className="flex items-center gap-4">
-            <span className="term-label">
-              {p.currentSemester
-                ? "Semester " + p.currentSemester
-                : "Let’s get started"}
-            </span>
-            {p.onboardingComplete && (
-              <Button onClick={() => setEditor(null)}>
-                <Plus size={17} />
-                Add task
+        </aside>
+        {menu && (
+          <button
+            aria-label="Close navigation"
+            className="nav-overlay"
+            onClick={() => setMenu(false)}
+          />
+        )}
+        <div className="main-wrap">
+          <header className="topbar">
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="mobile-menu"
+                aria-label="Open navigation"
+                onClick={() => setMenu(!menu)}
+              >
+                <Menu size={20} />
               </Button>
+              <span>{views.find(([k]) => k === view)?.[1]}</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <span className="term-label">
+                {p.currentSemester
+                  ? "Semester " + p.currentSemester
+                  : "Let’s get started"}
+              </span>
+              {p.onboardingComplete && (
+                <Button onClick={() => setEditor(null)}>
+                  <Plus size={17} />
+                  Add task
+                </Button>
+              )}
+            </div>
+          </header>
+          <main id="main" className="main-content">
+            {!p.onboardingComplete ? (
+              <ProfileForm profile={p} />
+            ) : (
+              <>
+                <ErrorNotice
+                  error={subjects.error}
+                  retry={() => subjects.refetch()}
+                />
+                {view === "dashboard" && (
+                  <Dashboard
+                    onSources={() => navigate("connections")}
+                    onAdd={() => setEditor(null)}
+                    onOpen={setDetail}
+                    onTasks={(s) => {
+                      setTaskStatus(s);
+                      navigate("tasks");
+                    }}
+                  />
+                )}
+                {view === "tasks" && (
+                  <TaskList
+                    key={taskStatus}
+                    initialStatus={taskStatus}
+                    subjects={subjects.data || []}
+                    batch={p.generalBatch}
+                    onOpen={setDetail}
+                  />
+                )}
+                {view === "calendar" && <Calendar onOpen={setDetail} />}
+                {view === "subjects" && (
+                  <Subjects
+                    subjects={subjects.data || []}
+                    batch={p.generalBatch}
+                  />
+                )}
+                {view === "connections" && (
+                  <Connections
+                    notice={notice}
+                    onDismiss={() => setNotice({})}
+                  />
+                )}
+                {view === "settings" && (
+                  <>
+                    <ProfileForm key={p.revision} profile={p} />
+                    <section className="panel settings-link">
+                      <div>
+                        <h2>Sources and senders</h2>
+                        <p className="text-secondary text-sm">
+                          Manage Gmail and Classroom connections, Classroom
+                          course links, and included or blocked senders.
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        onClick={() => navigate("connections")}
+                      >
+                        <Plug size={16} />
+                        Open sources
+                      </Button>
+                    </section>
+                  </>
+                )}
+              </>
             )}
-          </div>
-        </header>
-        <main id="main" className="main-content">
-          {!p.onboardingComplete ? (
-            <ProfileForm profile={p} />
-          ) : (
-            <>
-              <ErrorNotice
-                error={subjects.error}
-                retry={() => subjects.refetch()}
-              />
-              {view === "dashboard" && (
-                <Dashboard
-                  onAdd={() => setEditor(null)}
-                  onOpen={setDetail}
-                  onTasks={(s) => {
-                    setTaskStatus(s);
-                    navigate("tasks");
-                  }}
-                />
-              )}
-              {view === "tasks" && (
-                <TaskList
-                  key={taskStatus}
-                  initialStatus={taskStatus}
-                  subjects={subjects.data || []}
-                  batch={p.generalBatch}
-                  onOpen={setDetail}
-                />
-              )}
-              {view === "calendar" && <Calendar onOpen={setDetail} />}
-              {view === "subjects" && (
-                <Subjects
-                  subjects={subjects.data || []}
-                  batch={p.generalBatch}
-                />
-              )}
-              {view === "settings" && (
-                <ProfileForm key={p.revision} profile={p} />
-              )}
-            </>
-          )}
-        </main>
-        <footer className="app-footer">
-          Your pace. Your progress.<span>All times in IST</span>
-        </footer>
+          </main>
+          <footer className="app-footer">
+            Your pace. Your progress.<span>All times in IST</span>
+          </footer>
+        </div>
+        {editor !== undefined && (
+          <TaskEditor
+            task={editor || undefined}
+            subjects={subjects.data || []}
+            onClose={() => setEditor(undefined)}
+          />
+        )}
+        {detail && (
+          <TaskDetail
+            id={detail}
+            onClose={() => setDetail(null)}
+            onEdit={(t) => {
+              setDetail(null);
+              setEditor(t);
+            }}
+          />
+        )}
       </div>
-      {editor !== undefined && (
-        <TaskEditor
-          task={editor || undefined}
-          subjects={subjects.data || []}
-          onClose={() => setEditor(undefined)}
-        />
-      )}
-      {detail && (
-        <TaskDetail
-          id={detail}
-          onClose={() => setDetail(null)}
-          onEdit={(t) => {
-            setDetail(null);
-            setEditor(t);
-          }}
-        />
-      )}
-    </div>
+    </SyncProvider>
   );
 }
 export function Workspace() {

@@ -1,12 +1,25 @@
 import { NextResponse } from "next/server";
 import { backend, csrf, sessionCookie, cookieOptions } from "@/lib/server";
+// A sync advance uses a 90-second work budget plus provider and response overhead.
+export const maxDuration = 150;
+const routes = [
+  "me",
+  "overview",
+  "tasks",
+  "subjects",
+  "connections",
+  "sync-jobs",
+  "sender-preferences",
+];
 async function proxy(
   request: Request,
   { params }: { params: Promise<{ path: string[] }> },
 ) {
   const { path } = await params;
   if (
-    !["me", "overview", "tasks", "subjects"].includes(path[0]) ||
+    !routes.includes(path[0]) ||
+    // OAuth callbacks arrive only through /connections/callback, which redirects the browser.
+    (path[0] === "connections" && path[1] === "oauth") ||
     path.some((p) => p === ".." || p.includes("/"))
   ) {
     return NextResponse.json({ message: "Not found" }, { status: 404 });
@@ -27,6 +40,7 @@ async function proxy(
         "Idempotency-Key": request.headers.get("idempotency-key") || "",
       },
     },
+    path[0] === "sync-jobs" && path[2] === "advance" ? 140000 : 25000,
   );
   const res = new NextResponse(await response.text(), {
     status: response.status,

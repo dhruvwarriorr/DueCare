@@ -42,7 +42,20 @@ export async function api<T>(
       cache: "no-store",
     },
   );
-  const data = await response.json();
+  // A proxy, restart, or crash can return non-JSON; report it as a normal request error.
+  const text = await response.text();
+  let data: { message?: string; fieldErrors?: Record<string, string> } = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = {
+      message: response.ok
+        ? "DueCare returned an unexpected response. Please try again"
+        : "DueCare is temporarily unavailable. Please try again",
+    };
+    if (response.ok)
+      throw new ApiError(data.message as string, 502, undefined);
+  }
   if (!response.ok) {
     // A full navigation clears in-memory private query data after session expiry.
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination

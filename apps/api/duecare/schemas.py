@@ -123,3 +123,17 @@ class TaskPatch(Input):
     date_window_end: date | None = None
     duration_minutes: int | None = None
     status: Literal["due", "completed"] | None = None
+
+
+class AuthorizeInput(Input):
+    service: Literal["gmail", "classroom"]
+    account_id: UUID | None = None
+
+
+class SyncInput(Input):
+    trigger: Literal["open", "focus", "manual"] = "manual"
+
+
+class SenderPreferenceInput(Input):
+    action: Literal["include", "block"]
+    revision: int | None = Field(None, ge=1)

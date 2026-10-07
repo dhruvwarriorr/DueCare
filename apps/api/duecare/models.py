@@ -112,3 +112,176 @@ class Operation(Owned, Base):
     key: Mapped[str] = mapped_column(String(100))
     fingerprint: Mapped[str] = mapped_column(String(64))
     result: Mapped[dict] = mapped_column(JSONB)
+
+
+# Phase 2: source authorization and resumable imports.
+def owner_fk(columns, table, ondelete="CASCADE"):
+    return ForeignKeyConstraint(
+        [columns, "user_id"], [f"duecare.{table}.id", f"duecare.{table}.user_id"], ondelete=ondelete
+    )
+
+
+class GoogleAccount(Owned, Base):
+    __tablename__ = "google_accounts"
+    __table_args__ = (
+        UniqueConstraint("id", "user_id"),
+        UniqueConstraint("user_id", "google_sub"),
+        {"schema": "duecare"},
+    )
+    google_sub: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str] = mapped_column(String(320))
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class OAuthGrant(Owned, Base):
+    __tablename__ = "oauth_grants"
+    __table_args__ = (
+        UniqueConstraint("account_id"),
+        owner_fk("account_id", "google_accounts"),
+        CheckConstraint("status in ('active','revoked','invalid')"),
+        {"schema": "duecare"},
+    )
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID)
+    scopes: Mapped[list] = mapped_column(JSONB, default=list)
+    refresh_token: Mapped[str | None] = mapped_column(String, nullable=True)
+    access_token: Mapped[str | None] = mapped_column(String, nullable=True)
+    access_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    key_version: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(String(20), default="active")
+
+
+class Connection(Owned, Base):
+    __tablename__ = "connections"
+    __table_args__ = (
+        UniqueConstraint("id", "user_id"),
+        UniqueConstraint("account_id", "service"),
+        owner_fk("account_id", "google_accounts"),
+        CheckConstraint("service in ('gmail','classroom')"),
+        CheckConstraint("status in ('active','needs_reauth','disconnected')"),
+        {"schema": "duecare"},
+    )
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID, index=True)
+    service: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    scopes: Mapped[list] = mapped_column(JSONB, default=list)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    checkpoint: Mapped[dict] = mapped_column(JSONB, default=dict)
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class SourceCourse(Owned, Base):
+    __tablename__ = "source_courses"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "external_course_id"),
+        owner_fk("connection_id", "connections"),
+        {"schema": "duecare"},
+    )
+    connection_id: Mapped[uuid.UUID] = mapped_column(UUID, index=True)
+    external_course_id: Mapped[str] = mapped_column(String(100))
+    name: Mapped[str] = mapped_column(String(500))
+    available: Mapped[bool] = mapped_column(default=True)
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class SubjectMapping(Owned, Base):
+    __tablename__ = "subject_mappings"
+    __table_args__ = (
+        UniqueConstraint("subject_id", "connection_id", "external_course_id"),
+        owner_fk("subject_id", "subjects"),
+        owner_fk("connection_id", "connections"),
+        {"schema": "duecare"},
+    )
+    subject_id: Mapped[uuid.UUID] = mapped_column(UUID, index=True)
+    connection_id: Mapped[uuid.UUID] = mapped_column(UUID, index=True)
+    external_course_id: Mapped[str] = mapped_column(String(100))
+    source_available: Mapped[bool] = mapped_column(default=True)
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class SourceRecord(Owned, Base):
+    __tablename__ = "source_records"
+    __table_args__ = (
+        UniqueConstraint("id", "user_id"),
+        UniqueConstraint("connection_id", "provider_id"),
+        owner_fk("connection_id", "connections"),
+        CheckConstraint(
+            "processing_state in ('awaiting_interpretation','duplicate','blocked','ignored','unavailable')"
+        ),
+        {"schema": "duecare"},
+    )
+    connection_id: Mapped[uuid.UUID] = mapped_column(UUID, index=True)
+    provider_id: Mapped[str] = mapped_column(String(600))
+    kind: Mapped[str] = mapped_column(String(40))
+    external_course_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    sender_email: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
+    title: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    message_id: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    thread_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    processing_state: Mapped[str] = mapped_column(String(30))
+    processing_version: Mapped[str] = mapped_column(String(50))
+    targeting_outcome: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    excerpt: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class SourceAttachment(Owned, Base):
+    __tablename__ = "source_attachments"
+    __table_args__ = (owner_fk("source_record_id", "source_records"), {"schema": "duecare"})
+    source_record_id: Mapped[uuid.UUID] = mapped_column(UUID, index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    title: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    reference: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    media_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class SenderPreference(Owned, Base):
+    __tablename__ = "sender_preferences"
+    __table_args__ = (
+        UniqueConstraint("user_id", "email"),
+        CheckConstraint("action in ('include','block')"),
+        {"schema": "duecare"},
+    )
+    email: Mapped[str] = mapped_column(String(320))
+    action: Mapped[str] = mapped_column(String(10))
+
+
+class SyncJob(Owned, Base):
+    __tablename__ = "sync_jobs"
+    __table_args__ = (
+        owner_fk("connection_id", "connections"),
+        CheckConstraint("mode in ('import','reprocess')"),
+        CheckConstraint("status in ('queued','running','waiting_retry','completed','failed','cancelled')"),
+        {"schema": "duecare"},
+    )
+    connection_id: Mapped[uuid.UUID] = mapped_column(UUID, index=True)
+    mode: Mapped[str] = mapped_column(String(20))
+    phase: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    checkpoint: Mapped[dict] = mapped_column(JSONB, default=dict)
+    progress: Mapped[dict] = mapped_column(JSONB, default=dict)
+    lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class OAuthState(Base):
+    __tablename__ = "oauth_states"
+    __table_args__ = {"schema": "duecare_internal"}
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID)
+    service: Mapped[str] = mapped_column(String(20))
+    verifier: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

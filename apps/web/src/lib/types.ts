@@ -28,6 +28,7 @@ export type Subject = {
   aliases: string[];
   term?: string | null;
   classCode?: string | null;
+  classroomMappings?: ClassroomMapping[];
 };
 export type Task = {
   id: string;
@@ -87,4 +88,74 @@ export type History = {
   actor: string;
   changes: Record<string, unknown>;
   recordedAt: string;
+};
+export type ClassroomMapping = {
+  connectionId: string;
+  externalCourseId: string;
+  courseName: string | null;
+  section: string | null;
+  sourceAvailable: boolean;
+  subjectKind: string | null;
+  accountEmail: string | null;
+};
+export type SyncJob = {
+  id: string;
+  connectionId: string;
+  mode: "import" | "reprocess";
+  phase: string;
+  status:
+    | "queued"
+    | "running"
+    | "waiting_retry"
+    | "completed"
+    | "failed"
+    | "cancelled";
+  progress: Record<string, number>;
+  attempts: number;
+  nextRetryAt: string | null;
+  error: { code: string; message: string; at?: string } | null;
+  leased: boolean;
+  createdAt: string;
+  finishedAt: string | null;
+};
+export type Connection = {
+  id: string;
+  service: "gmail" | "classroom";
+  status: "active" | "needs_reauth" | "disconnected";
+  revision: number;
+  account: {
+    id: string;
+    email: string;
+    name: string | null;
+    photo: string | null;
+  };
+  permissions: string[];
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  retryAt: string | null;
+  lastError: { code: string; message: string; at?: string } | null;
+  activeJob: SyncJob | null;
+  lastJob: SyncJob | null;
+  records: {
+    awaitingInterpretation: number;
+    duplicates: number;
+    blocked: number;
+    ignored: number;
+  };
+};
+export type ClassroomCourse = {
+  externalCourseId: string;
+  name: string;
+  section: string | null;
+  courseState: string | null;
+  alternateLink: string | null;
+  available: boolean;
+  mappings: { subjectId: string; subjectName: string; subjectKind: string }[];
+};
+export type SenderPreference = {
+  email: string;
+  action: "include" | "block";
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
 };

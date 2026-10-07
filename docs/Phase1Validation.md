@@ -34,7 +34,7 @@ Supabase-managed tables are read for authorization but are not owned or recreate
 - FastAPI's current TestClient adapter emits an upstream HTTPX deprecation warning. Tests pass; future test-tool upgrades should address it. No runtime warning suppression was added.
 - An unconfigured production API entry point returns process health and a structured database-setup error without enabling synthetic authentication.
 
-CI configuration is included in `.github/workflows/phase1.yml`. It performs local verification with a disposable PostgreSQL service and no hosted secrets. The GitHub-hosted workflow itself has **not** run, because nothing was committed or pushed.
+CI configuration is included in `.github/workflows/verify.yml` (renamed from `phase1.yml` in Phase 2). It performs local verification with a disposable PostgreSQL service and no hosted secrets. The GitHub-hosted workflow itself has **not** run, because nothing was committed or pushed.
 
 ## Hosted database setup verified on 7 October 2026
 

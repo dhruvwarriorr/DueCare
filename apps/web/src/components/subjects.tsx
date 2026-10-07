@@ -339,6 +339,15 @@ export function Subjects({
               {s.aliases.length > 0 && (
                 <p className="text-sm">Also known as {s.aliases.join(", ")}</p>
               )}
+              {s.classroomMappings?.map((m) => (
+                <p
+                  key={m.connectionId + m.externalCourseId}
+                  className="text-xs text-secondary"
+                >
+                  Linked to Classroom: {m.courseName || m.externalCourseId}
+                  {m.sourceAvailable ? "" : " (no longer available)"}
+                </p>
+              ))}
               <div className="subject-actions">
                 <Button
                   variant="outline"

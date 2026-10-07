@@ -1,8 +1,8 @@
 # DueCare
 
-Phase 1 is the manual academic workspace: Somaiya Google sign-in, academic onboarding, subjects, weekly timetable context, tasks, calendar, dashboard, and settings. Gmail and Classroom source connections belong to Phase 2; interpretation and submission reconciliation belong to Phase 3.
+Phase 1 is the manual academic workspace: Somaiya Google sign-in, academic onboarding, subjects, weekly timetable context, tasks, calendar, dashboard, and settings. Phase 2 adds read-only Gmail and Classroom source connections, explicit Classroom-to-subject links, sender inclusion/blocking, and resumable browser-driven imports into source records. Academic interpretation, task creation from sources, review, and submission reconciliation belong to Phase 3.
 
-The approved behavior lives in [the specification](docs/ProjectDocumentation.md) and [four-phase plan](docs/ImplementationPhases.md). [Phase 1 verification](docs/Phase1Validation.md) distinguishes tested local behavior from pending hosted acceptance.
+The approved behavior lives in [the specification](docs/ProjectDocumentation.md) and [four-phase plan](docs/ImplementationPhases.md). [Phase 1 verification](docs/Phase1Validation.md) and [Phase 2 verification](docs/Phase2Validation.md) distinguish tested local behavior from pending live acceptance.
 
 ## Repository
 
@@ -27,7 +27,19 @@ uv sync --frozen
 4. Use Supabase asymmetric JWT signing keys (**ES256 or RS256**) so the API can verify signatures through the project's JWKS. This implementation deliberately does not accept legacy HS256 JWTs. Keep Supabase's default session lifetime behavior.
 5. Apply the database migration and restricted Auth access script described below. Enable the installed `duecare_internal.before_user_created` function in **Authentication → Hooks → Before user created**. It rejects non-Somaiya and non-Google account creation. The API additionally checks the confirmed email, Google provider identity, verified identity email, and native session on every request. A hosted Google round-trip is still required to validate the hook payload for the actual project.
 
-Google client credentials stay in Supabase's provider configuration. The API needs the Supabase project URL and publishable key, a restricted runtime database URL, and application-generated gateway/encryption secrets. It does **not** need a Supabase service-role/admin API key for Phase 1. A separate privileged **database migration** connection is required. Do not put secrets in chat or browser-prefixed variables.
+### Gmail and Classroom source authorization (Phase 2)
+
+Source authorization is separate from Supabase login and never adds a Supabase identity.
+
+1. In the Somaiya-owned Google Cloud project, enable the **Gmail API** and **Google Classroom API**.
+2. Configure the OAuth consent screen with an **external** audience and these scopes: `openid`, `email`, `profile`, `gmail.readonly`, `classroom.courses.readonly`, `classroom.coursework.me.readonly`, `classroom.announcements.readonly`. `gmail.readonly` is a restricted scope: production use requires Google verification and the applicable security assessment (Phase 4). While in testing, add each eligible student and any personal source account as a test user.
+3. Create (or reuse) a **Web application** OAuth client and add the exact authorized redirect URI `http://localhost:3000/connections/callback` (and the HTTPS production equivalent later). This is different from the Supabase login callback.
+4. Put the client ID/secret in `apps/api/.env` as `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`. Generate a Fernet key for `SOURCE_TOKEN_KEYS=v1:<key>` with `SOURCE_TOKEN_KEY_VERSION=v1`. To rotate, add `v2:<new key>`, switch the current version, and keep `v1` listed: tokens are re-encrypted under the current version as they refresh.
+5. Apply migration `0002` (`uv run alembic upgrade head`).
+
+Each service requests only its own permissions when connected. Authorization uses one-use state bound to the signed-in student, PKCE (S256), offline access, and incremental scopes; the callback requires the DueCare session. A verified Google ID token identifies the source account, which may be a personal account. Refresh and access tokens are encrypted server-side and never returned. If Google omits a new refresh token, the existing one is kept. Disconnecting one service keeps a grant still used by the other; the Google grant is revoked when no service on that account remains connected.
+
+Google client credentials for login stay in Supabase's provider configuration. The API needs the Supabase project URL and publishable key, a restricted runtime database URL, and application-generated gateway/encryption secrets. It does **not** need a Supabase service-role/admin API key for Phase 1. A separate privileged **database migration** connection is required. Do not put secrets in chat or browser-prefixed variables.
 
 References: [Google with Supabase](https://supabase.com/docs/guides/auth/social-login/auth-google), [PKCE](https://supabase.com/docs/guides/auth/sessions/pkce-flow), [Auth hooks](https://supabase.com/docs/guides/auth/auth-hooks/before-user-created-hook), [sessions](https://supabase.com/docs/guides/auth/sessions), [signing keys](https://supabase.com/docs/guides/auth/signing-keys).
 
@@ -109,8 +121,16 @@ For migration recovery, test `alembic downgrade base` followed by `upgrade head`
 
 ## API behavior
 
-The web gateway exposes `/api/v1/me`, `/overview`, `/subjects`, `/subjects/{id}`, `/subjects/{id}/timetable`, `/tasks`, `/tasks/{id}`, and `/tasks/{id}/history`. All require the verified eligible server session. Mutation requests require an exact Origin and CSRF header. Edits require the current `revision`; conflicts return `409`. Inaccessible IDs return `404`. Timetable replacement, task edits, and deletions additionally use durable idempotency keys. Lists use bounded, stable cursor pagination.
+The web gateway exposes `/api/v1/me`, `/overview`, `/subjects`, `/subjects/{id}`, `/subjects/{id}/timetable`, `/subjects/{id}/classroom-mappings/{connectionId}/{courseId}`, `/tasks`, `/tasks/{id}`, `/tasks/{id}/history`, `/connections`, `/connections/authorize`, `/connections/{id}`, `/connections/{id}/sync`, `/connections/{id}/reprocess`, `/connections/{id}/classroom-courses`, `/sync-jobs/{id}`, `/sync-jobs/{id}/advance`, and `/sender-preferences/{email}`. The OAuth callback is reachable only through the `/connections/callback` browser route. All require the verified eligible server session. Mutation requests require an exact Origin and CSRF header. Edits require the current `revision`; conflicts return `409`. Inaccessible IDs return `404`. Timetable replacement, task edits, and deletions additionally use durable idempotency keys. Lists use bounded, stable cursor pagination.
 
 Only title and type are required for a task. Precise times are stored in UTC and displayed/entered in IST. A date-only assignment uses a labeled 23:59 IST default; an unspecified exam start remains unresolved. Incomplete assignments become `overdue`; incomplete tests become `missed` at their applicable cutoff, including attempt-window closing. Completion is recorded independently and wins over elapsed deadlines and ordinary edits. Reopening is explicit. All subject kinds inherit the one profile batch.
 
-See [verification evidence and remaining live checks](docs/Phase1Validation.md) before treating Phase 1 as hosted-accepted. No commit, push, deployment, or hosted data mutation is performed automatically.
+### Source imports
+
+There is no scheduled sync. The open browser starts syncing on app open, on refocus when the last attempt was at least 15 minutes ago (unfinished work always resumes), and on **Sync now**. Each `advance` request holds a lease and works for at most `SYNC_WORK_BUDGET_SECONDS` (90 s); the gateway allows 140 s and the route declares `maxDuration = 150`. Every unit commits its results and the advanced checkpoint together, so partial results persist and an interrupted request resumes from the last committed unit. One active job exists per connection; other tabs observe it rather than duplicating work. Temporary Google failures back off (15 s doubling, capped at 30 min); revoked grants mark the connection for reconnection. No work starts while the page is hidden.
+
+Gmail imports the last 90 days, then continues incrementally from the mailbox history ID (relisting the gap if history expires). The complete sender blocklist is checked from metadata before any body is fetched, and again under a per-sender lock when results are committed, so a block added mid-import cannot commit content. Non-academic senders (outside `ACADEMIC_SENDER_DOMAINS`, unless included) are not fetched. Blocked and ignored mail keeps only identifiers, sender, and reason, with 30-day expiry. Eligible mail is MIME-decoded safely (plain text preferred unless HTML tables would be flattened; no remote content or scripts), split into authored/quoted/forwarded/signature/footer sections, and stored as identifiers, timestamps, a content hash, section structure, attachment metadata, and links—never the full body. Identical Message-ID and content in the same account is marked as a duplicate occurrence.
+
+Classroom discovers courses as metadata only; nothing creates subjects. Students explicitly link a course to one or more existing subjects (theory/lab/tutorial remain separate; no batch override). Only linked courses are read: own submissions, coursework (initially the last 90 days, older work with future deadlines, and older outstanding work), and announcements (90 days), then incrementally by update time. Changed content increments the source record's revision. Imported records stay `awaiting_interpretation` and are not tasks until Phase 3.
+
+See [verification evidence and remaining live checks](docs/Phase1Validation.md) before treating Phase 1 as hosted-accepted. No commit, push, deployment, or hosted data mutation is performed automatically. Phase 2 local evidence and pending live Google acceptance are recorded in [Phase2Validation.md](docs/Phase2Validation.md).
