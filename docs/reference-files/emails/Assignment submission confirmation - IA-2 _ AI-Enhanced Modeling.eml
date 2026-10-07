@@ -1,0 +1,128 @@
+Delivered-To: dhruv.kumar@somaiya.edu
+Received: by 2002:a05:7110:104c:b0:35c:62ef:e05e with SMTP id z12csp4090792gez;
+        Mon, 5 Oct 2026 11:26:39 -0700 (PDT)
+X-Received: by 2002:a05:6122:8c8b:b0:5da:4633:8a0e with SMTP id 71dfb90a1353d-5de6a33737cmr2046298e0c.10.1791224799723;
+        Mon, 05 Oct 2026 11:26:39 -0700 (PDT)
+ARC-Seal: i=1; a=rsa-sha256; t=1791224799; cv=none;
+        d=google.com; s=arc-20260327;
+        b=MRcJLNIJUW+z0cxHFEms+w4MuvBVxdM2raQjWLPHw1hg2pGyyjzC3KmxMR/sJVdBJL
+         yay8sfhZLkvBpXiMazp5qDFjSClWQsuwmNAUAtssFuxJqIaWUeh7L2nt0m+nLvthY1Fd
+         XCKCbnrtRnHuqDFVxOJzAZhcnwC1LnPnfO+PeG1R/DXZ13vj5WpNM4jQ3OpdnmfDWUih
+         /kUS3gNapEGuhi6Xzr6Jdn5oCyC+1HEcx1KdMioJGYY5/z/oM6OfSDO6Xc7Iypp1hMxJ
+         TCb7sc5XqPsK1f+t6Mz7fNnNFvWXbZ3zAbp5OF3wq18Ezuwcvd/QzpIciM0YO4OgpiO+
+         4Zyw==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20260327;
+        h=mime-version:message-id:subject:reply-to:from:to:date
+         :dkim-signature;
+        bh=lKAF/1j4X7rREVTjMXo/4NRdw1pUcsT1bpJ3KSCz0fs=;
+        fh=3iJFtKyYdKmILcFa9WR61JZpKbMvAwBYxiZGxrc2p0Q=;
+        b=BSwzcaZDVXPH6CLpcvqVqvbJ3QEnzvYR2lsBe+xCjRQZP07ySzZ+YSEPUB0ew/W1V7
+         zlth/do9e1odBCoQmuNiEgk1G9xEfE8VlvzhY9ToxZVd72M9iZgJIW2sd5WhN2zqBP3C
+         xc2drnI1U3LxIM+sLjH9qgSpz4SsXni2DKGOASusHSg83tp7RWaQOTSZY9uApov91OV1
+         cPcD0iVKJTtZjI1dYo4Xn7HacMgrrL6LzYefXSl/MOs+j298vsO+NFm+EmWNhjRYE468
+         onK7/HJq0hoMNZeM0ydh2h1eRwdyzjabsB2WULSC0aIYTTULPmeOH81a7ZYDfl2cjfZR
+         j+wA==;
+        dara=google.com
+ARC-Authentication-Results: i=1; mx.google.com;
+       dkim=pass header.i=@somaiya.edu header.s=google header.b=GRFdB8Ix;
+       spf=pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) smtp.mailfrom=lms-kjsse@somaiya.edu;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=somaiya.edu;
+       dara=neutral header.i=@somaiya.edu
+Return-Path: <lms-kjsse@somaiya.edu>
+Received: from mail-sor-f97.google.com (mail-sor-f97.google.com. [209.85.220.97])
+        by mx.google.com with SMTPS id 71dfb90a1353d-5e2dc4bda43sor529252e0c.1.2026.10.05.11.26.39
+        for <dhruv.kumar@somaiya.edu>
+        (Google Transport Security);
+        Mon, 05 Oct 2026 11:26:39 -0700 (PDT)
+Received-SPF: pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) client-ip=209.85.220.97;
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@somaiya.edu header.s=google header.b=GRFdB8Ix;
+       spf=pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) smtp.mailfrom=lms-kjsse@somaiya.edu;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=somaiya.edu;
+       dara=neutral header.i=@somaiya.edu
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=somaiya.edu; s=google; t=1791224799; x=1791829599; darn=somaiya.edu;
+        h=content-type:mime-version:message-id:subject:reply-to:from:to:date
+         :from:to:cc:subject:date:message-id:reply-to:content-type;
+        bh=lKAF/1j4X7rREVTjMXo/4NRdw1pUcsT1bpJ3KSCz0fs=;
+        b=GRFdB8IxfYGCU5BT+7lJF2ke9SsCsIbpiCxTzTUGgtoCelcAi5dMgO3eR0MV1HypCX
+         veBxinFSdVRAaoNveLwUbthpE7VVy3FAiy6RkJP1Yp1Q1pp3IS6cTm2gBXV1APbtWjOV
+         B0d1GlhnRHMxH8MajUgqQyPYoNTrU6Yte47e4=
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20260707; t=1791224799; x=1791829599;
+        h=content-type:mime-version:message-id:subject:reply-to:from:to:date
+         :x-gm-gg:x-gm-message-state:from:to:cc:subject:date:message-id
+         :reply-to:content-type;
+        bh=lKAF/1j4X7rREVTjMXo/4NRdw1pUcsT1bpJ3KSCz0fs=;
+        b=ZXlUbroSgMjm/x4e0xzWMXM20TGjJ71VSgJrYFZ5RRxoTiWexz06ChtCEJE+VanUlo
+         JHr73jzmaoCH/AwuldiV4GLVkuxVZuI7A3zPXospLTsfMb3i1yaN4f1nayrugPqkomTs
+         mU5W7cPqz6hNoYWCiI4yRItaeKVz3sPRddnrHsBb7vugVUtt9RV5QqI1v94iyRd9q3+U
+         XY/bjfNPl+CBfUMQutIcfGW07WAJWv97E6qKSHsQSVwat+nMG5ycDXsU8nfXJQHhBL/x
+         fat3pu7yiWlJm6MZB/fGEVmhItw0TiN/qHqAI2RGLX1TEuiWCJhOL4E93WTC73TFNJEF
+         tTdg==
+X-Gm-Message-State: AFq9FYI6vNu5pUlzm/xFFv03ykPlX+NQHds2bkQaiKFLy+8mLoxyvPw2
+	2RBhLLkejPIrPeAU0XajXreXgqrDpFfVFWjy5jnvMmmvMQYSIOQmc1TaP8X5uPANmUAkg0MX1N8
+	ZtUlLRnSEvDVEuyfbkj+AF7AvdCz3qem0pQ3B+mlDM25tZ6k=
+X-Gm-Gg: AYBFou0SwyXkZTXnGIbfhbuSjx+9TmKrLWk/q68wZlgNjj9FBBgFGm95wVexstnfqJz
+	gzI3y1NAz8MOP6RtDFcpDCCLiyvg79nv9sXSkFaerkcSIsKF2p26lICVG3PPLprdGH0t9RVZUWq
+	GYac+RyRrBBZqmX6LzW5crbeMg/UpC0p9UvC39QhY//p5YMKSB7TPdTZm3KxoxemM51yB3TdgaG
+	rSA570mVw+b9Zf2/z5jJAgWmdoAYcuqI770mV7/IOaHSoeUzuulFO9Dk6Gj0vOHCl8WzjD1bCtC
+	q7c+C0D+VWPL21ULRMpoGYn0J00LkS0bQfB/XxclVyufng==
+X-Received: by 2002:a05:6122:3c4f:b0:5c9:66f7:2f23 with SMTP id 71dfb90a1353d-5de65bab8c5mr2457207e0c.2.1791224799147;
+        Mon, 05 Oct 2026 11:26:39 -0700 (PDT)
+Return-Path: <lms-kjsse@somaiya.edu>
+Received: from lms-kjsce.somaiya.edu ([14.142.143.98])
+        by smtp-relay.gmail.com with ESMTP id 71dfb90a1353d-5e54c79fbd0sm5733e0c.1.2026.10.05.11.26.38
+        for <dhruv.kumar@somaiya.edu>;
+        Mon, 05 Oct 2026 11:26:39 -0700 (PDT)
+X-Relaying-Domain: somaiya.edu
+Date: Mon, 5 Oct 2026 23:56:36 +0530
+To: "DHRUV KUMAR" <dhruv.kumar@somaiya.edu>
+From: "Do not reply to this email  (via LMS KJSCE)" <lms-kjsse@somaiya.edu>
+Reply-To: "Do not reply to this email" <lms-kjsse@somaiya.edu>
+Subject: Assignment submission confirmation - IA-2 : AI-Enhanced Modeling
+Message-ID: <6ac3ebdc3fee46.90083623@lms-kjsce.somaiya.edu>
+X-Mailer: PHPMailer 6.9.3 (https://github.com/PHPMailer/PHPMailer)
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="b1=_90Ji60f522GxnNVkUzxpEGyxTErXm6gQSQoZzM6SQ"
+
+--b1=_90Ji60f522GxnNVkUzxpEGyxTErXm6gQSQoZzM6SQ
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+
+ITVC_A-B-C-D_SY_ODD_26-27 -> Assignment -> IA-2 : AI-Enhanced Modeling
+---------------------------------------------------------------------
+You have submitted an assignment submission for 'IA-2 : AI-Enhanced
+Modeling'.
+
+You can see the status of your assignment submission:
+
+https://lms-kjsce.somaiya.edu/mod/assign/view.php?id=3D91003
+
+Your submission contains:
+
+File submissions
+* ITVC IA2.docx (893.2=C2=A0KB)
+
+---------------------------------------------------------------------
+
+--b1=_90Ji60f522GxnNVkUzxpEGyxTErXm6gQSQoZzM6SQ
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<p style=3D"font-family: sans-serif">=0A    <a href=3D"https://lms-kjsce.so=
+maiya.edu/course/view.php?id=3D17043">ITVC_A-B-C-D_SY_ODD_26-27</a> ->=0A  =
+  <a href=3D"https://lms-kjsce.somaiya.edu/mod/assign/index.php?id=3D17043"=
+>Assignment</a> ->=0A    <a href=3D"https://lms-kjsce.somaiya.edu/mod/assig=
+n/view.php?id=3D91003">IA-2 : AI-Enhanced Modeling</a>=0A</p>=0A<hr>=0A<div=
+ style=3D"font-family: sans-serif"><p>Your assignment submission for 'IA-2 =
+: AI-Enhanced Modeling' has been submitted.</p>=0A<p>You can view your subm=
+ission and check its status on the <a href=3D"https://lms-kjsce.somaiya.edu=
+/mod/assign/view.php?id=3D91003">assignment page</a>.</p>=0A<h2>Your submis=
+sion contains:</h2><h3>File submissions</h3>=0A=0A<ul>=0A    <li>ITVC IA2.d=
+ocx (893.2=C2=A0KB)</li>=0A</ul></div>=0A<hr>
+
+--b1=_90Ji60f522GxnNVkUzxpEGyxTErXm6gQSQoZzM6SQ--
+

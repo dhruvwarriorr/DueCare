@@ -1,0 +1,143 @@
+Delivered-To: dhruv.kumar@somaiya.edu
+Received: by 2002:a05:7110:538d:b0:35c:62ef:e05e with SMTP id c13csp1721108geg;
+        Thu, 1 Oct 2026 02:01:06 -0700 (PDT)
+X-Received: by 2002:a05:690c:ec9:b0:88a:4770:c2e9 with SMTP id 00721157ae682-8ac92d3239dmr19628367b3.14.1790845265803;
+        Thu, 01 Oct 2026 02:01:05 -0700 (PDT)
+ARC-Seal: i=1; a=rsa-sha256; t=1790845265; cv=none;
+        d=google.com; s=arc-20260327;
+        b=XfEBlKM9kdeDY7Rr23KmVKwm/U7LamTDFU86BXxDQugiPek3M9l89oG/POKNb8aT6R
+         whZPhUXQGL/pM77qH5vE5WEQRrYuTSL6eo7aYEBNjZFo4pcwjKhcfojovFNaUm5OINM6
+         Lp6PLljy929o89SORmPaYjiEh8xgS3DcdQCgHhdbtvy4euBkR6bacHKm2CgdbzNAf6YL
+         5KzDG2q6mNwUYX1GtIWvurh0ailopvXzjMFMCvcdKy5NFJ5su8+yL3cCzQhqxdzH6mTL
+         4Fq6OWqQpb6ok1/ToRqSyDD0EfSqMBKIgfPHXCGRs2KRS6jdjq+mDmlR75Ec95igsTKY
+         2hfg==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20260327;
+        h=mime-version:message-id:subject:reply-to:from:to:date
+         :dkim-signature;
+        bh=QIl/v+h0+lvy77qjT8fBjakulJ50uWRMtBxhVTwsM7k=;
+        fh=3iJFtKyYdKmILcFa9WR61JZpKbMvAwBYxiZGxrc2p0Q=;
+        b=oGoB8EtE80hd+zQhaUxEMYLspKdFozxokHkHUAl+7N0IP1Nm11e1EJJ5rpwxLTSnHu
+         HiQ2nsLtHZ/wtpY6LTap5NgXs3ihXpO6a4nCTwXqpmnheDLzLlDDS8KiqPrXAECeCMql
+         y/SesZetGxzzNYQW7tdPcFhbR3/qUyZYKEfPPYIV3Vf/r9nKVEfxfi80qlgC7kGqnq02
+         BgR0poF6CFMaDmvhrJ2XvZFN4AKs+vsvuDszepVvHy2NwiiZyXaYhB5culdbOSC3/hDf
+         Lqg1IEMcmiaqa2jF+CxkzKGlAKRRVjl794cmW4AxuNKSxvAsz0kn07sch8Zq4KBYI1OY
+         6ACg==;
+        dara=google.com
+ARC-Authentication-Results: i=1; mx.google.com;
+       dkim=pass header.i=@somaiya.edu header.s=google header.b=aBNwbJDp;
+       spf=pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) smtp.mailfrom=lms-kjsse@somaiya.edu;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=somaiya.edu;
+       dara=neutral header.i=@somaiya.edu
+Return-Path: <lms-kjsse@somaiya.edu>
+Received: from mail-sor-f97.google.com (mail-sor-f97.google.com. [209.85.220.97])
+        by mx.google.com with SMTPS id 00721157ae682-8acdac09390sor16389897b3.13.2026.10.01.02.01.05
+        for <dhruv.kumar@somaiya.edu>
+        (Google Transport Security);
+        Thu, 01 Oct 2026 02:01:05 -0700 (PDT)
+Received-SPF: pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) client-ip=209.85.220.97;
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@somaiya.edu header.s=google header.b=aBNwbJDp;
+       spf=pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) smtp.mailfrom=lms-kjsse@somaiya.edu;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=somaiya.edu;
+       dara=neutral header.i=@somaiya.edu
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=somaiya.edu; s=google; t=1790845265; x=1791450065; darn=somaiya.edu;
+        h=content-type:mime-version:message-id:subject:reply-to:from:to:date
+         :from:to:cc:subject:date:message-id:reply-to:content-type;
+        bh=QIl/v+h0+lvy77qjT8fBjakulJ50uWRMtBxhVTwsM7k=;
+        b=aBNwbJDpMabTRqGVX523ptrpv6p92BEeepRsOx4FI6YueX5WWE54QRoiT7AmMbS8f3
+         VfF6XpXH78bhOlt68XYQiDVJ3+I8Yk336/SUtNMRVb8n2B32qCsj1MKAj/uLPHtxe1Tv
+         7rM3ltt46WKL9U2JIpL9u8gOy11eIbMrh3ILw=
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20260707; t=1790845265; x=1791450065;
+        h=content-type:mime-version:message-id:subject:reply-to:from:to:date
+         :x-gm-gg:x-gm-message-state:from:to:cc:subject:date:message-id
+         :reply-to:content-type;
+        bh=QIl/v+h0+lvy77qjT8fBjakulJ50uWRMtBxhVTwsM7k=;
+        b=lfKpjb39gWiWAC4m2dam3oN8LPYew/PNYNs9FwCVHXWZ1ZZK1o8FCo4X9tjs7YKKCQ
+         5b3/RZddPsXaD+YgKOEhdfwUEJgSAiMEiolRMLe3GT/JU9BEnDZQgENgDiYenne+LtuK
+         9LJtqcUuiSh4oJKaPdRrm52FQCSTfhvtaeAiOVflv6sRt/RcYgnhItUxQ8hE+TUni2p2
+         y5wXfq2geLvrYgauNX//RXfXpdWPD9A6UAO4wVTdRHwrpaQs4iawCVq6cIX8E/kXyLBo
+         Y5dp3uJFnaUixAUESAZQyPBwoa6EVosKLBUIpODsUCkKatUGqqAsExxkWavncM9bIw84
+         WtsQ==
+X-Gm-Message-State: AFq9FYLyF19SMJV8cAKAyh0WkpwZdmN4twZvdjz8LOb2MLwK1meSg7/y
+	qwFrQ3nJAOKUFwV8xoySEM5mV3zwA1q0YdaGZzDlwp9Eo779xiIyeqQVX5C+P6R1FzQSxrzrLQh
+	bazIRR+/j3aMXpWmS0vYszwBswGI+qwZ8ktzNVWaOis0SLsA=
+X-Gm-Gg: AYBFou2RVaCGDE8UkwkpK1lM5wauOue3oQDlOFr38+zMyQXff+OeHW7fKTPIxDewhww
+	vY9ovy8lnhi6088fm9nlg9m1Q3LwMBkLKXg1sHgoiwUdaTdIKGhrNX2BezVxPq/zyfz5XzdbCUv
+	vo8xisxu6mfQyS+Sith7erVTbRsrjC9ptSpB40NiCxOyOWNKtjNtzoaURuXQePtFOco09cnvc27
+	VnJZR5J8RYRABusZGLLYr9OWYRJCDAmWh13Sg6VJa8n879sFxo+TWR10ImjO8IN5rxBiJp+cYqQ
+	I2JYOFTkZtNnAEa1sQDSPvXmpJpxLmSHauWfgdjIttZl2xoS9kF/3wNIyP4stQ==
+X-Received: by 2002:a05:690e:13ce:b0:66d:113a:3928 with SMTP id 956f58d0204a3-676832f63d2mr2007436d50.12.1790845265183;
+        Thu, 01 Oct 2026 02:01:05 -0700 (PDT)
+Return-Path: <lms-kjsse@somaiya.edu>
+Received: from moodleserver ([14.142.143.98])
+        by smtp-relay.gmail.com with ESMTP id 956f58d0204a3-6769183913esm551208d50.12.2026.10.01.02.01.04
+        for <dhruv.kumar@somaiya.edu>;
+        Thu, 01 Oct 2026 02:01:05 -0700 (PDT)
+X-Relaying-Domain: somaiya.edu
+Date: Thu, 1 Oct 2026 14:31:04 +0530
+To: "DHRUV KUMAR" <dhruv.kumar@somaiya.edu>
+From: "No Reply  (via LMS KJSCE)" <lms-kjsse@somaiya.edu>
+Reply-To: "Do not reply to this email" <lms-kjsse@somaiya.edu>
+Subject: [LMS-Reminder] OVERDUE: (DSM_B_ODD_26-27-Quiz) IA1 Quiz closes
+Message-ID: <moodlereminder58843@lms-kjsce.somaiya.edu>
+X-Priority: 3
+X-Mailer: PHPMailer 6.9.3 (https://github.com/PHPMailer/PHPMailer)
+X-Course-Id: 15023
+X-Course-Name: Discrete Mathematics_B_ODD_26-27
+X-Activity-Id: 154328
+X-Activity-Name: Quiz: IA1 Quiz
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="b1=_2iYoJWF4rMvDw2dHtXF0BmAiQURpWtc0s4luIz77ac"
+
+--b1=_2iYoJWF4rMvDw2dHtXF0BmAiQURpWtc0s4luIz77ac
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+
+(DSM_B_ODD_26-27-Quiz) IA1 Quiz closes [-1 day to go]
+When: Thursday, 1 October 2026 2:30 PM - IST
+Course: Discrete Mathematics_B_ODD_26-27
+Activity: Quiz: IA1 Quiz
+Description:
+
+--b1=_2iYoJWF4rMvDw2dHtXF0BmAiQURpWtc0s4luIz77ac
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<head></head><body id=3D"email"><div><p><img style=3D"width: 30%; position:=
+ relative; top: 5px;" src=3D"https://svv-public-data.s3.ap-south-1.amazonaw=
+s.com/emailer-images/engg-logo.png" alt=3D"">=C2=A0</p></div><div><table ce=
+llspacing=3D"0" cellpadding=3D"8" style=3D"width:100%;font-family:Tahoma,Ar=
+ial,Sans-serif;border-width:1px 2px 2px 1px;border:1px solid #ccc;font-size=
+:13px"><tr><td colspan=3D"2"><a style=3D"text-decoration: none" href=3D"htt=
+ps://lms-kjsce.somaiya.edu/calendar/view.php?view=3Dday&amp;cal_d=3D1&amp;c=
+al_m=3D10&amp;cal_y=3D2026#event_58843"><h3 style=3D"padding:10px 0 10px 0;=
+margin:0;font-family:Arial,Sans-serif;font-size:16px;font-weight:bold;color=
+:#222">[OVERDUE]: (DSM_B_ODD_26-27-Quiz) IA1 Quiz closes</h3></a></td></tr>=
+<tr><td colspan=3D"2"><h4 style=3D"padding:10px 0 10px 10px;background-colo=
+r: #f3e3e3;margin:0;font-family:Arial,Sans-serif;font-size:16px;font-weight=
+:bold;color:#ec4040">This activity is overdue!</h4></td></tr><tr><td style=
+=3D"padding: 0 15px; color: #888; width: 150px;">When</td><td>Thursday, 1 O=
+ctober 2026 2:30 PM &nbsp;&nbsp;<span style=3D"font-size:13px;color: #888;"=
+>IST</span></td></tr><tr><td style=3D"padding: 0 15px; color: #888; width: =
+150px;">Course</td><td>Discrete Mathematics_B_ODD_26-27</td></tr><tr><td st=
+yle=3D"padding: 0 15px; color: #888; width: 150px;">Activity</td><td><a tar=
+get=3D"_blank" href=3D"https://lms-kjsce.somaiya.edu/mod/quiz/view.php?id=
+=3D91674">Quiz: IA1 Quiz</a></td></tr><tr><td style=3D"padding: 0 15px; col=
+or: #888; width: 150px;">Time limit</td><td>20 mins</td></tr><tr><td style=
+=3D"border-top:1px solid #eee;font-family:Arial,Sans-serif;font-size:13px;p=
+adding: 2px 15px;" colspan=3D"2"><p>IA1 Quiz closes</p></td></tr><tr><td st=
+yle=3D"background-color:#f6f6f6;color:#888;border-top:1px solid #ccc;font-f=
+amily:Arial,Sans-serif;font-size:11px;padding: 0px;" colspan=3D"2"><p style=
+=3D"text-align: justify;"><strong>Note:</strong></p><p style=3D"text-align:=
+ justify;"><strong>Do not reply to this Email as it is only for Notifying t=
+he Users, If you want to reply then login to LMS and then reply from LMS or=
+ Email on individual personal Email ID.</strong></p><p style=3D"text-align:=
+ justify;"><strong>Regards,</strong></p><p style=3D"text-align: justify;"><=
+strong>KJSSE LMS</strong></p></td></tr></table></div></body></html>
+
+--b1=_2iYoJWF4rMvDw2dHtXF0BmAiQURpWtc0s4luIz77ac--
+

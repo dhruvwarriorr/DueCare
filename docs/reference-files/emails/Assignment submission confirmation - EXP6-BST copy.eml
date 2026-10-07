@@ -1,0 +1,126 @@
+Delivered-To: dhruv.kumar@somaiya.edu
+Received: by 2002:a05:7110:104c:b0:35c:62ef:e05e with SMTP id z12csp4620347gez;
+        Mon, 5 Oct 2026 22:14:37 -0700 (PDT)
+X-Received: by 2002:a05:620a:17a6:b0:93c:b98e:a246 with SMTP id af79cd13be357-93e510c398bmr1624296785a.58.1791263676900;
+        Mon, 05 Oct 2026 22:14:36 -0700 (PDT)
+ARC-Seal: i=1; a=rsa-sha256; t=1791263676; cv=none;
+        d=google.com; s=arc-20260327;
+        b=mtscl8dcaRbNdiKFD2/pTGyy0OLuWW2BOm9OFPLbujwhxOEN+Oxd3n4zcdNtDBQMfP
+         uH9kN1Z3w8n/BqubnyH93emny6+g0HzQQcIFsli3OfJFGK5/CXnP5+q1u1aCnkKiSlG+
+         GGA63rPLmdNOUUQszu1gtI0vP3W1x8TUFjIR48IhK76M6fzFe54onDL0z0sB4xbhjsyG
+         6emqPKJAry7WZRFhmlXOUXk26XQMiCruGOBZV2gyHjLRZP5KlxlLfakjMCu90WBFQPg8
+         7EN4lRxax8baaE9ILwCOMPZIlq9KHAnTQHp3cgfBLyxO1xMLI8Ji4UMpLVp/ybnf7g8f
+         07Fw==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20260327;
+        h=mime-version:message-id:subject:reply-to:from:to:date
+         :dkim-signature;
+        bh=Qwkvgx9o4gjK+myfU+svwIyMbK+5oJQ4J7ej8F7iyPU=;
+        fh=3iJFtKyYdKmILcFa9WR61JZpKbMvAwBYxiZGxrc2p0Q=;
+        b=TZyYQFFsAW5c23ILQtg1bOtkVslWPpJKygk/ZKjPIoOESfxzU/8Sw7iePI6UkojvV+
+         Aj4IRy383z0bLFAWSnj34V49eLXQhK8Zqd7KzFLNnZ+seHgfv+JHqbE9cPl4aCvuInmu
+         gL/yfLEbDDIBuZKTEfTCM4+4/qCgZCGSNYNYG1rEsAi13Eei1z45aiGh/aFj5amCBTI2
+         mq+8ehhTEniNCpBoEGL2NMIL4NsPVc40qvq+7UumkcGtOgWoeMtcOt1JBZeCt/vfnglT
+         FKX1u39a7O77fM5ylPVAgrX/P9h4xaTMsNjhZCmbaz5W39HMxbziuBPDrL8E/5O9K1zK
+         lDEg==;
+        dara=google.com
+ARC-Authentication-Results: i=1; mx.google.com;
+       dkim=pass header.i=@somaiya.edu header.s=google header.b=uhskukMR;
+       spf=pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) smtp.mailfrom=lms-kjsse@somaiya.edu;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=somaiya.edu;
+       dara=neutral header.i=@somaiya.edu
+Return-Path: <lms-kjsse@somaiya.edu>
+Received: from mail-sor-f97.google.com (mail-sor-f97.google.com. [209.85.220.97])
+        by mx.google.com with SMTPS id af79cd13be357-93e7ec539fcsor220415885a.10.2026.10.05.22.14.36
+        for <dhruv.kumar@somaiya.edu>
+        (Google Transport Security);
+        Mon, 05 Oct 2026 22:14:36 -0700 (PDT)
+Received-SPF: pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) client-ip=209.85.220.97;
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@somaiya.edu header.s=google header.b=uhskukMR;
+       spf=pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) smtp.mailfrom=lms-kjsse@somaiya.edu;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=somaiya.edu;
+       dara=neutral header.i=@somaiya.edu
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=somaiya.edu; s=google; t=1791263676; x=1791868476; darn=somaiya.edu;
+        h=content-type:mime-version:message-id:subject:reply-to:from:to:date
+         :from:to:cc:subject:date:message-id:reply-to:content-type;
+        bh=Qwkvgx9o4gjK+myfU+svwIyMbK+5oJQ4J7ej8F7iyPU=;
+        b=uhskukMR4ZgcvLWm+xgjh8cIv+A3qBllRsJuqvzmgo0Jh3db6m6771/QYAkGlPxJNM
+         hNczI2rzSkMsGNAoMe3AmQaDyGQVrTCeLNsGmQ79zL4KmVZnpmRu3bcWrddzV8g5Txkg
+         eaovQZef3ruJesu/b+q1qW7cMPdSI5t1JWrGQ=
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20260707; t=1791263676; x=1791868476;
+        h=content-type:mime-version:message-id:subject:reply-to:from:to:date
+         :x-gm-gg:x-gm-message-state:from:to:cc:subject:date:message-id
+         :reply-to:content-type;
+        bh=Qwkvgx9o4gjK+myfU+svwIyMbK+5oJQ4J7ej8F7iyPU=;
+        b=ERAzc9rJ1K3wxA6hvIUfXrWIAuxO+AfDxdmSXdERbo78zkh8vz3clnlaE10YHJScbS
+         TflpW2wXl+L2E+xi2vcBh+7IV5O5cSeQvqQ8CQJFu9GFQDkMjySN48g/J3O9JIK85H0S
+         IV+Tg4EbGDJRZXaxPIHLQZCQvMeKYV9JvPPLHPgnKYVxG1xWin2kx7Kr21aDznrZjouA
+         PlTyPBHW10986EhmMV8NK1U5jtUfbXnA9x85Kc8A4eRMhl2612pBZ66avQ5fFnfv7gun
+         thmHW+gMp8YklMk/Sidty2Fp/N71ggjGScLyTvzckssYxTKDTCr/zWOnUE9e39sFLrdB
+         Q5Xg==
+X-Gm-Message-State: AFuF++mViukdpPPgEml640UikvNxSqadbl8y0IOxMehIW1hJNwryIo9x
+	ffNdrWBUxlMJI5ZsFh20GICVzdVSRTdX9vQc2i+gs/ZW8KYROyqlfXI6TFNUaLEkwxKefZH37Ky
+	qqo5s+tmTnxEESQd7LRF1I1EbXnBJ91eJagAojDeWzSCmFLw=
+X-Gm-Gg: AYBFou0vzg8Pbhupe3KlD0MzQ1VLNejj+udXyxM4Mjz1MAw94dVCnGHBNeuLqYQBl44
+	pjklATrTBJOX2hSjPNK0Xm7dNiKszd4HomkX2zZNW3IwdWhlGJnUAII/uL24qj/CFyIfcggddrT
+	1ZOkHn3RL2F4rjbsdL6JHGhzgoeKgLxk4yMVNYY1eF1YpDVz+d0hIEqUpTfG5NRCSQqDDtnM/jF
+	5m2AW7wTwYv58pyJMBC3GSM8CkbplpI7t4j0ND//lDNEJ2lnDpZqeM6RAtHhqJ8QTwlP6ETe5NX
+	ISPCsWcMOmu7uzbilwBMEGWf7jiHV5JUZDROOARo5THJcQ==
+X-Received: by 2002:a05:620a:28c6:b0:939:13a7:70f0 with SMTP id af79cd13be357-93e50e08351mr1727747685a.5.1791263676566;
+        Mon, 05 Oct 2026 22:14:36 -0700 (PDT)
+Return-Path: <lms-kjsse@somaiya.edu>
+Received: from lms-kjsce.somaiya.edu ([14.142.143.98])
+        by smtp-relay.gmail.com with ESMTP id af79cd13be357-93e58d2ab9csm284936285a.4.2026.10.05.22.14.35
+        for <dhruv.kumar@somaiya.edu>;
+        Mon, 05 Oct 2026 22:14:36 -0700 (PDT)
+X-Relaying-Domain: somaiya.edu
+Date: Tue, 6 Oct 2026 10:44:34 +0530
+To: "DHRUV KUMAR" <dhruv.kumar@somaiya.edu>
+From: "Do not reply to this email  (via LMS KJSCE)" <lms-kjsse@somaiya.edu>
+Reply-To: "Do not reply to this email" <lms-kjsse@somaiya.edu>
+Subject: Assignment submission confirmation - EXP6-BST
+Message-ID: <6ac483bad1e659.94357973@lms-kjsce.somaiya.edu>
+X-Mailer: PHPMailer 6.9.3 (https://github.com/PHPMailer/PHPMailer)
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="b1=_YEyLCoI43DcvJhCgUZKvtijcWiCCujiR6QTGSF4ac"
+
+--b1=_YEyLCoI43DcvJhCgUZKvtijcWiCCujiR6QTGSF4ac
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+
+DS_B_ODD_26-27 -> Assignment -> EXP6-BST
+---------------------------------------------------------------------
+You have submitted an assignment submission for 'EXP6-BST'.
+
+You can see the status of your assignment submission:
+
+https://lms-kjsce.somaiya.edu/mod/assign/view.php?id=3D91022
+
+Your submission contains:
+
+File submissions
+* EXP 6.docx (103.5=C2=A0KB)
+
+---------------------------------------------------------------------
+
+--b1=_YEyLCoI43DcvJhCgUZKvtijcWiCCujiR6QTGSF4ac
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<p style=3D"font-family: sans-serif">=0A    <a href=3D"https://lms-kjsce.so=
+maiya.edu/course/view.php?id=3D15011">DS_B_ODD_26-27</a> ->=0A    <a href=
+=3D"https://lms-kjsce.somaiya.edu/mod/assign/index.php?id=3D15011">Assignme=
+nt</a> ->=0A    <a href=3D"https://lms-kjsce.somaiya.edu/mod/assign/view.ph=
+p?id=3D91022">EXP6-BST</a>=0A</p>=0A<hr>=0A<div style=3D"font-family: sans-=
+serif"><p>Your assignment submission for 'EXP6-BST' has been submitted.</p>=
+=0A<p>You can view your submission and check its status on the <a href=3D"h=
+ttps://lms-kjsce.somaiya.edu/mod/assign/view.php?id=3D91022">assignment pag=
+e</a>.</p>=0A<h2>Your submission contains:</h2><h3>File submissions</h3>=0A=
+=0A<ul>=0A    <li>EXP 6.docx (103.5=C2=A0KB)</li>=0A</ul></div>=0A<hr>
+
+--b1=_YEyLCoI43DcvJhCgUZKvtijcWiCCujiR6QTGSF4ac--
+

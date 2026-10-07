@@ -1,0 +1,121 @@
+Delivered-To: dhruv.kumar@somaiya.edu
+Received: by 2002:a05:7110:104c:b0:35c:62ef:e05e with SMTP id z12csp1364097gez;
+        Fri, 2 Oct 2026 21:40:00 -0700 (PDT)
+X-Received: by 2002:a17:90b:2d43:b0:3a4:930e:6c35 with SMTP id 98e67ed59e1d1-3a6ce606fa9mr2812687a91.4.1791002400651;
+        Fri, 02 Oct 2026 21:40:00 -0700 (PDT)
+ARC-Seal: i=1; a=rsa-sha256; t=1791002400; cv=none;
+        d=google.com; s=arc-20260327;
+        b=oPP/C0gFudbeUA0bwR4rVBUFgK/rB7xzW6xguij2FLRg2PVkMiSCL+u6Y7VVltLW1n
+         R1N148q+zE6YBEmiVxnQ7oKKXbH52rOU41ODqNmSFAKAqO4k8QAGTvzy7YCa4u3C4p+t
+         Ws6TdLtnNBd2wCoP5Tp5w7SwrStD1sftELy1qW9fjAMoj1rcVXej/1CpiGtftkr9y6Hx
+         mss7IyvYf+Z9Wc+EyLFTOlTAfEfvvN3IsOgz+344MkeuCCKZobWxgQmMimwPKEmD3oDU
+         LrMMo5ucrSIyZFbQduwJWZkXUo/4yG44o/GQnQbEepDNYlK0NKqiRVAI+Z3g1MJittAK
+         kDPA==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20260327;
+        h=mime-version:message-id:subject:reply-to:from:to:date
+         :dkim-signature;
+        bh=Zj06DCo3gPz2duTXnD5Vaux/qT0g9ztolb7Fx7CjnZE=;
+        fh=3iJFtKyYdKmILcFa9WR61JZpKbMvAwBYxiZGxrc2p0Q=;
+        b=Xv8/diSNamMOkS6/yXgQy9x35+ciNTKpEv0Z22Qd6jfydpyZnz4UtypbBARa7FUfJQ
+         07+hyHABIdnBzdtYs4eocC1zieJzWA4F5Yfdpyw70IAyX9IjsgEYJFvfuxB5MpJ/8cOy
+         vMA1m9LZijCHfJO5PUBsEnOF3qxRxsMQqKhAPPO+VqvrG69/QHcBwzM+DF8vel0FVV6C
+         kXmRU6E5JK2jKKndlT5P5Q786GgyQqiHLZSa5PJyx8bq5taSfXjxb4WTM4O01d6jCvka
+         dQuSAJtvLzxXS62XwhAR0A9bcqGoFoVfvh+bCCrJcdAYbUEkePqhSUf7CMnmpdoBXOLl
+         My8Q==;
+        dara=google.com
+ARC-Authentication-Results: i=1; mx.google.com;
+       dkim=pass header.i=@somaiya.edu header.s=google header.b=xThdoRAB;
+       spf=pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) smtp.mailfrom=lms-kjsse@somaiya.edu;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=somaiya.edu;
+       dara=neutral header.i=@somaiya.edu
+Return-Path: <lms-kjsse@somaiya.edu>
+Received: from mail-sor-f97.google.com (mail-sor-f97.google.com. [209.85.220.97])
+        by mx.google.com with SMTPS id 98e67ed59e1d1-3a6cce55648sor2082379a91.1.2026.10.02.21.40.00
+        for <dhruv.kumar@somaiya.edu>
+        (Google Transport Security);
+        Fri, 02 Oct 2026 21:40:00 -0700 (PDT)
+Received-SPF: pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) client-ip=209.85.220.97;
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@somaiya.edu header.s=google header.b=xThdoRAB;
+       spf=pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) smtp.mailfrom=lms-kjsse@somaiya.edu;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=somaiya.edu;
+       dara=neutral header.i=@somaiya.edu
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=somaiya.edu; s=google; t=1791002400; x=1791607200; darn=somaiya.edu;
+        h=content-type:mime-version:message-id:subject:reply-to:from:to:date
+         :from:to:cc:subject:date:message-id:reply-to:content-type;
+        bh=Zj06DCo3gPz2duTXnD5Vaux/qT0g9ztolb7Fx7CjnZE=;
+        b=xThdoRABK/hSK982yebHP5ovLojcsdzerKSCn6r6ni7U1vwUoYEWJEOdxQ8THG1ibt
+         UKL0eUkzeAOV0UtwrKLcg3WRWOwgZ20n4c7q9VmWbgrbXWSuNn+WETVZdU4xr233sKkd
+         Vq4N6edgic7R5PyxtDQ5zVuFqbhiZhrY9URn0=
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20260707; t=1791002400; x=1791607200;
+        h=content-type:mime-version:message-id:subject:reply-to:from:to:date
+         :x-gm-gg:x-gm-message-state:from:to:cc:subject:date:message-id
+         :reply-to:content-type;
+        bh=Zj06DCo3gPz2duTXnD5Vaux/qT0g9ztolb7Fx7CjnZE=;
+        b=IkStYl2tjlYCeHt9HfG+P8huyzK2OCfqOkzRVVy00yf7I9M2T5KbmzjTBP8qv5y6rf
+         f4Pt3dhSNYbsjaZksupyXurWVJR41QHK0qpWTqzd/89RdFSZ8L+gJsIb00oGWpoUz0xl
+         HBPiHRuqY4guu5MsEWtXBlDg0EViQd0cLtKucRUBfUNUDQgJ8kiE/P4CbFNd/3xvK2A9
+         /PZBraIDAeQL0YPyOh3uq5UzSEshH8rbKFmAUZYKihr8706jsrm47MvbOBEPKvvIOwUf
+         NlkdNQ5oSgNK15RGxLqsVjRZhuXGE9BvL3N4wNoCe+ymzNtfjDInQk+6qlV2TWQIllEy
+         d6Xg==
+X-Gm-Message-State: AFq9FYIKTVbd8wGTxPs4gvb/NogUjq2PzB2xzqGaeQ1s8NhJxHPzaMOT
+	YC9rBrs5Wwh4AvA+NduHQ/gl5uQonZm6gWtCxsr2O2CjgvVIS+EDzVGEzvt7sFELI0gO+iTcYiS
+	VcXshLkhDiV8WFhbUGV/a2ipvlBbMSLMiJdP7aDl8HmWzhRc=
+X-Gm-Gg: AYBFou3rTEHqONAByGWIpRXKUOYD8wZKIKwxRgCW8cUZZJvhNKcaStCuX3K9prYq8w5
+	V9En6qPdjmnkrRSF1ytogXV7LW04TuzpncLNPjZNovwAPOf74e/yFqIOisemK2DBbBFmlUoYC2i
+	ZuXAdL/Xw2JqNw4DB46FsLWQlD8k43KcHHBtYZSelyNl/l/Bwl4RccqlNPFy7in7llXi4eohNm8
+	4ugOhEQFi59VVEIQZhjRxgDn4L1tuaafMAudM9fy7YRm1SXJhiUt8li4JVTnqFnbr6T0HyzAbpe
+	IXFMh6C1OXKCC/dG+hmrLz4K4HqtGM4C5DMyTumJd5s+bA==
+X-Received: by 2002:a17:90a:e7c2:b0:3a4:7730:755e with SMTP id 98e67ed59e1d1-3a6ceb05570mr3008773a91.26.1791002400087;
+        Fri, 02 Oct 2026 21:40:00 -0700 (PDT)
+Return-Path: <lms-kjsse@somaiya.edu>
+Received: from moodleserver ([14.142.143.98])
+        by smtp-relay.gmail.com with ESMTP id 98e67ed59e1d1-3a78e473003sm551650a91.5.2026.10.02.21.39.59
+        for <dhruv.kumar@somaiya.edu>;
+        Fri, 02 Oct 2026 21:40:00 -0700 (PDT)
+X-Relaying-Domain: somaiya.edu
+Date: Sat, 3 Oct 2026 10:09:58 +0530
+To: "DHRUV KUMAR" <dhruv.kumar@somaiya.edu>
+From: "Do not reply to this email  (via LMS KJSCE)" <lms-kjsse@somaiya.edu>
+Reply-To: "Do not reply to this email" <lms-kjsse@somaiya.edu>
+Subject: Due on Monday, 5 October 2026, 10:06 AM: Exp 5- Doubly LL, Circular LL
+Message-ID: <6ac0871ec64ef1.08143368@lms-kjsce.somaiya.edu>
+X-Priority: 3
+X-Mailer: PHPMailer 6.9.3 (https://github.com/PHPMailer/PHPMailer)
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="b1=_eSOesmZeIXD0X0CBZHfaZmXnzwGiW7rQlB8Mu1aVdW4"
+
+--b1=_eSOesmZeIXD0X0CBZHfaZmXnzwGiW7rQlB8Mu1aVdW4
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+
+Hi DHRUV,
+
+The assignment EXP 5- DOUBLY LL, CIRCULAR LL in course Data
+Structures_B_ODD_26-27 is due soon.
+
+DUE: MONDAY, 5 OCTOBER 2026, 10:06 AM
+
+Go to activity [1]
+
+Links:
+------
+[1] https://lms-kjsce.somaiya.edu/mod/assign/view.php?id=3D91542&action=3Dv=
+iew
+
+--b1=_eSOesmZeIXD0X0CBZHfaZmXnzwGiW7rQlB8Mu1aVdW4
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<p>Hi DHRUV,</p>=0A<p>The assignment <strong>Exp 5- Doubly LL, Circular LL<=
+/strong> in course Data Structures_B_ODD_26-27 is due soon.</p>=0A<p><stron=
+g>Due: Monday, 5 October 2026, 10:06 AM</strong></p>=0A<p><a href=3D"https:=
+//lms-kjsce.somaiya.edu/mod/assign/view.php?id=3D91542&amp;action=3Dview">G=
+o to activity</a></p>
+
+--b1=_eSOesmZeIXD0X0CBZHfaZmXnzwGiW7rQlB8Mu1aVdW4--
+

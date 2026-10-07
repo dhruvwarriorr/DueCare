@@ -1,0 +1,396 @@
+Delivered-To: dhruv.kumar@somaiya.edu
+Received: by 2002:a05:66bc:80c3:10b0:35c:62ef:e05e with SMTP id l3-n1csp3941296geo;
+        Mon, 28 Sep 2026 23:29:19 -0700 (PDT)
+X-Received: by 2002:a17:90b:1e46:b0:3a4:945e:bc33 with SMTP id 98e67ed59e1d1-3a4945ec49amr1967623a91.47.1790663359689;
+        Mon, 28 Sep 2026 23:29:19 -0700 (PDT)
+ARC-Seal: i=1; a=rsa-sha256; t=1790663359; cv=none;
+        d=google.com; s=arc-20260327;
+        b=G/JNjxmmHiVhJvP2NPzNKiNjftodIdTWwE5mhQ3k6Mt6N1qXMhnrBPzbxn3aokVolp
+         jkXycKLydC68r0Nsdc0W6bBd+seMCv7JeudTBWqOBR0gD9FYC4Nt0lblXNYJO2ePkg31
+         J3B5HA2iBOOqM5PGLbEBsuCdF6G1+cHLWCIYvLT5tHU4ILDNm/Pu0aQBFaTWe3BoC4Pr
+         t6CuWQaItxohkRSO3CHsCMhLtFEEl2dwLKYVairM2vJ9c64hHzrKshKhPJBczExPciia
+         VmUBKfV8xf0v2DKGSV4NFnMzdEBKz743dFkOK+718K/2M33x/SUDgmaSOfSEPZ6IKLBk
+         3/Hg==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20260327;
+        h=mime-version:thread-index:thread-topic:references:in-reply-to
+         :list-unsubscribe:auto-submitted:precedence:list-help:list-id
+         :message-id:subject:reply-to:from:to:date:dkim-signature;
+        bh=JK5iyAgkNuaRcQA57XRtO6szpKYQzyI0+Mkm9i+vdZM=;
+        fh=3iJFtKyYdKmILcFa9WR61JZpKbMvAwBYxiZGxrc2p0Q=;
+        b=Hux5VZ6XLUq1XAhnd0gyEhesjsCuGFlRvid/FHi/E5n5yyK+8eYupank2yiHYoVTJ+
+         /b4ZQ0HARaBSduhP0vN45r50g7l6WxZYlHFJslE3vCzhRB2LieDD49YxjmzkKs0WPkTw
+         b3l/yaeAQJ3kvjerqDc66S0y8a6H9J11+7Lwoo5rFxXDbEbr9JafSEGw7Bzfjcrd8Nu3
+         O9NoZK34w1Y5ogJeJdgqXJSpqKaNCiYh2jr+4yZ6yV6tNK86zMKMLkMb+izo+ASgeSTD
+         o4thT6DaDhQmO+EDsYA68o9o6xXfOT5H9fIh19TChoK0xQsy4UC2ioMcEF8MJdC2BuN/
+         A6VQ==;
+        dara=google.com
+ARC-Authentication-Results: i=1; mx.google.com;
+       dkim=pass header.i=@somaiya.edu header.s=google header.b=tzFc0oYc;
+       spf=pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) smtp.mailfrom=lms-kjsse@somaiya.edu;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=somaiya.edu;
+       dara=neutral header.i=@somaiya.edu
+Return-Path: <lms-kjsse@somaiya.edu>
+Received: from mail-sor-f97.google.com (mail-sor-f97.google.com. [209.85.220.97])
+        by mx.google.com with SMTPS id 98e67ed59e1d1-3a0df647eecsor5781128a91.7.2026.09.28.23.29.19
+        for <dhruv.kumar@somaiya.edu>
+        (Google Transport Security);
+        Mon, 28 Sep 2026 23:29:19 -0700 (PDT)
+Received-SPF: pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) client-ip=209.85.220.97;
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@somaiya.edu header.s=google header.b=tzFc0oYc;
+       spf=pass (google.com: domain of lms-kjsse@somaiya.edu designates 209.85.220.97 as permitted sender) smtp.mailfrom=lms-kjsse@somaiya.edu;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=somaiya.edu;
+       dara=neutral header.i=@somaiya.edu
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=somaiya.edu; s=google; t=1790663359; x=1791268159; darn=somaiya.edu;
+        h=content-type:mime-version:thread-index:thread-topic:references
+         :in-reply-to:list-unsubscribe:auto-submitted:precedence:list-help
+         :list-id:message-id:subject:reply-to:from:to:date:from:to:cc:subject
+         :date:message-id:reply-to:content-type;
+        bh=JK5iyAgkNuaRcQA57XRtO6szpKYQzyI0+Mkm9i+vdZM=;
+        b=tzFc0oYcpP9YqtQ2w5zWU2pudEy1l5FAyuGCbpwvwlH4YdBEUOD3FylIAf8FWxdDw0
+         Mp8LmmxFUa4awQ1b3ndYeWdxPA3c2ijn5itJO1pkEfNAXExzN1ccPRScpAQJ2sIvz7Kn
+         pZVotPWeg05bIocQi+REiMFEdgx6qaifXMgJs=
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20260707; t=1790663359; x=1791268159;
+        h=content-type:mime-version:thread-index:thread-topic:references
+         :in-reply-to:list-unsubscribe:auto-submitted:precedence:list-help
+         :list-id:message-id:subject:reply-to:from:to:date:x-gm-gg
+         :x-gm-message-state:from:to:cc:subject:date:message-id:reply-to
+         :content-type;
+        bh=JK5iyAgkNuaRcQA57XRtO6szpKYQzyI0+Mkm9i+vdZM=;
+        b=HiPKvqqg9xbVITNq3xpwZ0sE1A2jNZ+ARpzIHmgoZmPGxq/Vo8cDulZw01qV6PBtR+
+         +ZcBDtNND55aew9ZS6H8tzbFAWejotwVBMbuvJLt37FDZ8EmE2WxRbpw8oBbgLxlsK9o
+         Xyd4NfxyKiiJbM06qL3TcvRQl/Py8FoQMIBDSGidU0GOisswuqGVqB/szmnQ3mO/Dftw
+         hYHknTNBPmNtQULxQGRXX9XKGGvU6bGMS6EUTS3N2f5qs3wxvHmUp0fzSnQNO5B6E2xP
+         Zp+y0T0llSRl1f/Xv+L8J4ZOj155/CNzHw8GpAF3aMoFRQwPhKqVn19N0+TGgoZ6g1Vm
+         SYdQ==
+X-Gm-Message-State: AFq9FYKMs5hW8TYcNTXEiMZvSN2hHHBZ65CVNWrFTNbdc9W6rZwk5pUj
+	WB+38Mys5YtZmXEe6U7W1c5r+OUhLPDL4LWcbuYuMOOVKD2sCeJug+toYlyXm7E8NVt5c59ok7/
+	Z3E6P3bXrCu6vdFJqVnt1gei2+lILpFoSdY3WPa6AQeUP7uU=
+X-Gm-Gg: AYBFou2BIAbe5+OovqAM2a6XFImUh3i8UZHkJ7Jjwxd/MsPCFoxg4cF/6OQh58uRlJh
+	/VpYt3RAqvx3DiFPPjWngwn6oAby73ERJiSfBspLpefH1RN9wWE5ePjwCOAKzl9qeEkM47g8fml
+	4PY2c92ComaxsyJtiprQhlixdRxT0x/50P62ksZuxbpmZQAuskZFC39CwYmYvBeWFjyuuD19Tuc
+	wyROGDi5K3tyWWwDnRq8PyBKWq4/eDqSu6+bvaroCmZahvsusLV9vlZoIpRdpWLoemQzGM3i9fH
+	TRKVCXLvMLMUJpP1eNnXbIqQR8cvyey7g3DdwBswQY4RTg==
+X-Received: by 2002:a17:90b:55cb:b0:3a0:f4ee:d2a6 with SMTP id 98e67ed59e1d1-3a0f4eee43emr6095820a91.19.1790663359155;
+        Mon, 28 Sep 2026 23:29:19 -0700 (PDT)
+Return-Path: <lms-kjsse@somaiya.edu>
+Received: from moodleserver ([14.142.143.98])
+        by smtp-relay.gmail.com with ESMTP id 98e67ed59e1d1-3a497f21894sm1216322a91.7.2026.09.28.23.29.18
+        for <dhruv.kumar@somaiya.edu>;
+        Mon, 28 Sep 2026 23:29:19 -0700 (PDT)
+X-Relaying-Domain: somaiya.edu
+Date: Tue, 29 Sep 2026 11:59:17 +0530
+To: "DHRUV KUMAR" <dhruv.kumar@somaiya.edu>
+From: "Prof. Shweta Chachra (via LMS KJSCE)" <lms-kjsse@somaiya.edu>
+Reply-To: "Do not reply to this email" <lms-kjsse@somaiya.edu>
+Subject: DS_B_ODD_26-27: DS OST on 13th Oct 2026-B2 Batch
+Message-ID: <bdf306da2ce50edaf40a98b9630712d6be37e2016c0c7fec4f87d2cb80ce2273@lms-kjsce.somaiya.edu>
+X-Priority: 3
+X-Mailer: PHPMailer 6.9.3 (https://github.com/PHPMailer/PHPMailer)
+List-Id: "Announcements" <moodleforum7212@lms-kjsce.somaiya.edu>
+List-Help: https://lms-kjsce.somaiya.edu/mod/forum/view.php?f=7212
+X-Course-Id: 15011
+X-Course-Name: Data Structures_B_ODD_26-27
+Precedence: Bulk
+X-Auto-Response-Suppress: All
+Auto-Submitted: auto-generated
+List-Unsubscribe: <>
+In-Reply-To: <bdf306da2ce50edaf40a98b9630712d6be37e2016c0c7fec4f87d2cb80ce2273@lms-kjsce.somaiya.edu>
+References: <bdf306da2ce50edaf40a98b9630712d6be37e2016c0c7fec4f87d2cb80ce2273@lms-kjsce.somaiya.edu>
+Thread-Topic: DS_B_ODD_26-27: DS OST on 13th Oct 2026-B2 Batch
+Thread-Index: bdf306da2ce50edaf40a98b96307
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="b1=_q8wLlNQblR0iVC1JnKZ5NXv4P2zbkNrIFcFNQdfdjk"
+
+--b1=_q8wLlNQblR0iVC1JnKZ5NXv4P2zbkNrIFcFNQdfdjk
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+
+DS_B_ODD_26-27 -> Forums -> Announcements -> DS OST on 13th Oct 2026-B2
+Batch
+https://lms-kjsce.somaiya.edu/mod/forum/discuss.php?d=3D13304#p17293
+DS OST on 13th Oct 2026-B2 Batch
+by Prof. Shweta Chachra - Tuesday, 29 September 2026, 11:54 AM
+---------------------------------------------------------------------
+Dear Students,
+
+The=C2=A0 B2 Batch DS Lab OST is scheduled on 13th Oct 2026 during the regu=
+lar
+lab timings i.e. 9-11am.
+
+Kindly come prepared for the same.
+
+Syllabus -Exp 1-6.
+
+Kindly refer to the mail by Prof. Swati Mali ma'am=C2=A0 regarding OST for
+further details.
+
+Note: Variations and concepts related to the experiment list can be asked
+for practical implementation.
+Practical Examination Total Marks - 25 Marks (Refer tables below for
+distribution of marks)
+
+Time Duration: Strictly 2 hrs=C2=A0
+
+=C2=A0Change of Experiment: - 3 marks
+
+=C2=A0
+
+Important:
+
+*
+Carrying any study material/electronic gadgets will be considered unfair
+means.
+
+*
+Any indiscipline during the examination will be considered as unfair means
+
+*
+All unfair means cases will be reported to COE.
+
+Other instructions:
+
+*
+Students will choose a question sheet for them.
+
+*
+Each sheet will have only one question.
+
+*
+Students should follow the =E2=80=9Cquestion content=E2=80=9D exactly (data=
+ structure
+mentioned, memory allocation policy, outputs expected etc).
+
+*
+Students can use the question sheet for rough work. On request, an extra
+sheet can be provided if needed.
+
+*
+They might have to explain the code when asked by teachers.
+
+*
+Students will have to report in time and complete the
+execution+modification within the stipulated time of 2 hrs
+
+*
+The batches may have different sets of experiments for OST exams.
+
+Weightage Breakdown (Total: 25 Marks)
+
+Evaluation Parameter
+
+Marks
+
+Weightage
+
+Core Focus Area
+
+1. Logic Explanation & On-Screen Modification
+
+10
+
+40%
+
+Line-by-line walkthrough, conceptual defense, execution state after live
+modification
+
+2. Execution & Testing
+
+8
+
+32%
+
+Base code compilation, standard test cases, boundary/edge case validation
+
+3. Code Quality
+
+7
+
+28%
+
+Modular layout, pointer integrity, dynamic memory management (free/delete)
+
+Thankyou,
+
+---------------------------------------------------------------------
+This is a copy of a message posted in DS_B_ODD_26-27.
+
+Change your forum digest preferences:
+https://lms-kjsce.somaiya.edu/mod/forum/index.php?id=3D15011
+
+--b1=_q8wLlNQblR0iVC1JnKZ5NXv4P2zbkNrIFcFNQdfdjk
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<div class=3D"navbar">=0A    <div class=3D"container-fluid p-0">=0A        =
+<a target=3D"_blank" href=3D"https://lms-kjsce.somaiya.edu/course/view.php?=
+id=3D15011">DS_B_ODD_26-27</a>=0A        &raquo;=0A        <a target=3D"_bl=
+ank" href=3D"https://lms-kjsce.somaiya.edu/mod/forum/index.php?id=3D15011">=
+Forums</a>=0A        &raquo;=0A        <a target=3D"_blank" href=3D"https:/=
+/lms-kjsce.somaiya.edu/mod/forum/view.php?f=3D7212">Announcements</a>=0A   =
+     &raquo;=0A        <a target=3D"_blank" href=3D"https://lms-kjsce.somai=
+ya.edu/mod/forum/discuss.php?d=3D13304">DS OST on 13th Oct 2026-B2 Batch</a=
+>=0A    </div>=0A</div>=0A=0A<table border=3D"0" cellpadding=3D"3" cellspac=
+ing=3D"0" class=3D"forumpost">=0A    <tr class=3D"header">=0A        <td wi=
+dth=3D"35" valign=3D"top" class=3D"picture left">=0A            <a href=3D"=
+https://lms-kjsce.somaiya.edu/user/view.php?id=3D25&amp;course=3D15011" cla=
+ss=3D"d-inline-block aabtn"><img src=3D"https://lms-kjsce.somaiya.edu/plugi=
+nfile.php/99/user/icon/adaptable/f2?rev=3D15343" class=3D"userpicture" widt=
+h=3D"35" height=3D"35" alt=3D"Prof. Shweta Chachra" title=3D"Prof. Shweta C=
+hachra" /></a>=0A        </td>=0A        <td class=3D"topic starter">=0A   =
+         <div class=3D"subject">=0A                DS OST on 13th Oct 2026-=
+B2 Batch=0A            </div>=0A            <div class=3D"author">=0A      =
+          by <a target=3D'_blank' href=3D'https://lms-kjsce.somaiya.edu/use=
+r/view.php?id=3D25&course=3D15011'>Prof. Shweta Chachra</a> - Tuesday, 29 S=
+eptember 2026, 11:54 AM=0A            </div>=0A        </td>=0A    </tr>=0A=
+    <tr>=0A        <td class=3D"left side" valign=3D"top">=0A              =
+  &nbsp;=0A        </td>=0A        <td class=3D"content">=0A            <p>=
+Dear Students,</p>
+<p>The=C2=A0 B2 Batch DS Lab OST is scheduled on 13th Oct 2026 during the r=
+egular lab timings i.e. 9-11am.</p>
+<p>Kindly come prepared for the same.</p>
+<p>Syllabus -Exp 1-6.</p>
+<p>Kindly refer to the mail by Prof. Swati Mali ma'am=C2=A0 regarding OST f=
+or further details.</p>
+<div>
+<div class=3D"gmail_default">Note: Variations and concepts related to the e=
+xperiment list can be asked for practical implementation.</div>
+<p dir=3D"ltr">Practical Examination Total Marks - 25 Marks (Refer tables b=
+elow for distribution of marks)</p>
+<p>Time Duration: Strictly 2 hrs=C2=A0</p>
+<p>=C2=A0Change of Experiment: - 3 marks</p>
+</div>
+<div>=C2=A0</div>
+<div>
+<div class=3D"gmail_default">Important:</div>
+<ol>
+<li dir=3D"ltr">
+<p dir=3D"ltr">Carrying any study material/electronic gadgets will be consi=
+dered unfair means.</p>
+</li>
+<li dir=3D"ltr">
+<p dir=3D"ltr">Any indiscipline during the examination will be considered a=
+s unfair means</p>
+</li>
+<li dir=3D"ltr">
+<p dir=3D"ltr">All unfair means cases will be reported to COE.</p>
+</li>
+</ol>
+<br />
+<p dir=3D"ltr">Other instructions:</p>
+<ol>
+<li dir=3D"ltr">
+<p dir=3D"ltr">Students will choose a question sheet for them<span class=3D=
+"gmail_default">.</span></p>
+</li>
+<li dir=3D"ltr">
+<p dir=3D"ltr">Each sheet will have only one question<span class=3D"gmail_d=
+efault">.</span></p>
+</li>
+<li dir=3D"ltr">
+<p dir=3D"ltr">Students should follow the =E2=80=9Cquestion content=
+=E2=80=9D exactly (data structure mentioned, memory allocation policy, outp=
+uts expected etc)<span class=3D"gmail_default">.</span></p>
+</li>
+<li dir=3D"ltr">
+<p dir=3D"ltr">Students can use the question sheet for rough work. On reque=
+st, an extra sheet can be provided if needed.</p>
+</li>
+<li dir=3D"ltr">
+<p dir=3D"ltr">They might have to explain the code when asked by teachers<s=
+pan class=3D"gmail_default">.</span></p>
+</li>
+<li dir=3D"ltr">
+<p dir=3D"ltr">Students will have to report in time and complete the execut=
+ion+modification within the stipulated time of 2 hrs</p>
+</li>
+<li dir=3D"ltr">
+<p dir=3D"ltr">The batches may have different sets of experiments for OST e=
+xams.</p>
+</li>
+</ol>
+<br />
+<p dir=3D"ltr">Weightage Breakdown (Total: 25 Marks)</p>
+<br />
+<div dir=3D"ltr" align=3D"left">
+<table><colgroup><col width=3D"174" /><col width=3D"72" /><col width=3D"106=
+" /><col width=3D"233" /></colgroup>
+<tbody>
+<tr>
+<td>
+<p dir=3D"ltr">Evaluation Parameter</p>
+</td>
+<td>
+<p dir=3D"ltr">Marks</p>
+</td>
+<td>
+<p dir=3D"ltr">Weightage</p>
+</td>
+<td>
+<p dir=3D"ltr">Core Focus Area</p>
+</td>
+</tr>
+<tr>
+<td>
+<p dir=3D"ltr">1. Logic Explanation &amp; On-Screen Modification</p>
+</td>
+<td>
+<p dir=3D"ltr">10</p>
+</td>
+<td>
+<p dir=3D"ltr">40%</p>
+</td>
+<td>
+<p dir=3D"ltr">Line-by-line walkthrough, conceptual defense, execution stat=
+e after live modification</p>
+</td>
+</tr>
+<tr>
+<td>
+<p dir=3D"ltr">2. Execution &amp; Testing</p>
+</td>
+<td>
+<p dir=3D"ltr">8</p>
+</td>
+<td>
+<p dir=3D"ltr">32%</p>
+</td>
+<td>
+<p dir=3D"ltr">Base code compilation, standard test cases, boundary/edge ca=
+se validation</p>
+</td>
+</tr>
+<tr>
+<td>
+<p dir=3D"ltr">3. Code Quality</p>
+</td>
+<td>
+<p dir=3D"ltr">7</p>
+</td>
+<td>
+<p dir=3D"ltr">28%</p>
+</td>
+<td>
+<p dir=3D"ltr">Modular layout, pointer integrity, dynamic memory management=
+ (free/delete)</p>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<p>Thankyou,</p>=0A=0A            <div class=3D"commands">=0A            </=
+div>=0A=0A            <div class=3D"link">=0A                <a target=3D"_=
+blank" href=3D"https://lms-kjsce.somaiya.edu/mod/forum/discuss.php?d=3D1330=
+4#p17293">=0A                    See this post in context=0A               =
+ </a>=0A            </div>=0A        </td>=0A    </tr>=0A</table>=0A=0A<hr =
+/>=0A<div class=3D"mdl-align unsubscribelink">=0A    <a href=3D"https://lms=
+-kjsce.somaiya.edu/mod/forum/index.php?id=3D15011">Change your forum digest=
+ preferences</a>=0A</div>
+
+--b1=_q8wLlNQblR0iVC1JnKZ5NXv4P2zbkNrIFcFNQdfdjk--
+
