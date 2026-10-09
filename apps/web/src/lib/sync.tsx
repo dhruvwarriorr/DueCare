@@ -53,6 +53,16 @@ export function SyncProvider({
     // Discovery can add Classroom courses or change a linked course's availability.
     await client.invalidateQueries({ queryKey: ["classroom-courses"] });
     await client.invalidateQueries({ queryKey: ["subjects"] });
+    await client.invalidateQueries({ queryKey: ["activity"] });
+    for (const key of [
+      "review-items",
+      "review-item",
+      "tasks",
+      "task",
+      "history",
+      "evidence",
+    ])
+      await client.invalidateQueries({ queryKey: [key] });
   }, [client]);
   const drive = useCallback(
     async (id: string, trigger: Trigger, existing?: SyncJob) => {
@@ -112,7 +122,7 @@ export function SyncProvider({
     if (!items || started.current) return;
     started.current = true;
     for (const c of items)
-      if (c.status === "active")
+      if (c.status === "active" && !c.privacyJobId)
         void drive(c.id, "open", c.activeJob || undefined);
   }, [items, drive]);
   useEffect(() => {
@@ -124,7 +134,7 @@ export function SyncProvider({
       });
       // Resume unfinished work on return; otherwise the server applies the 15-minute rule.
       for (const c of latest.items)
-        if (c.status === "active")
+        if (c.status === "active" && !c.privacyJobId)
           void drive(c.id, "focus", c.activeJob || undefined);
     };
     document.addEventListener("visibilitychange", onVisible);

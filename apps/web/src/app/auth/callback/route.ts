@@ -5,6 +5,7 @@ import {
   stateCookie,
   sessionCookie,
   cookieOptions,
+  deletionCookie,
 } from "@/lib/server";
 export async function GET(request: Request) {
   const code = new URL(request.url).searchParams.get("code");
@@ -22,10 +23,12 @@ export async function GET(request: Request) {
     new URL(session ? "/" : "/sign-in?error=callback", origin),
   );
   res.cookies.set(stateCookie, "", { ...cookieOptions, maxAge: 0 });
-  if (session)
+  if (session) {
+    res.cookies.set(deletionCookie, "", { ...cookieOptions, maxAge: 0 });
     res.cookies.set(sessionCookie, session, {
       ...cookieOptions,
       maxAge: 60 * 60 * 24 * 365 * 10,
     });
+  }
   return res;
 }

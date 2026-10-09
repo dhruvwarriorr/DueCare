@@ -90,6 +90,8 @@ Complete each phase's acceptance checks before building dependent functionality.
 
 **Outcome:** The complete web product passes release checks and can be deployed with documented recovery procedures.
 
+**Current execution scope, confirmed 7 October 2026:** localhost only. Complete the web workflows, privacy, automated checks and local recovery documentation now. Public Vercel deployment, production domains and Google production approval are deferred until the student requests public release. [Phase4Validation.md](Phase4Validation.md) records local completion separately from those future release gates.
+
 ### Implementation
 
 - Complete the activity inbox with read/unread state and links for new tasks, revisions, reopening, reviews, and connection/sync issues.

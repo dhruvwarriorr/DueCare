@@ -7,6 +7,9 @@ export const sessionCookie = secure
   : "duecare-session";
 export const stateCookie = secure ? "__Host-duecare-login" : "duecare-login";
 export const csrfCookie = secure ? "__Host-duecare-csrf" : "duecare-csrf";
+export const deletionCookie = secure
+  ? "__Host-duecare-deletion"
+  : "duecare-deletion";
 export const cookieOptions = {
   httpOnly: true,
   secure,

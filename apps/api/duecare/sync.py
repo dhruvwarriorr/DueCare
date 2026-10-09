@@ -18,7 +18,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, exists, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from . import google, interpret, mail
@@ -33,9 +33,11 @@ from .models import (
     SenderPreference,
     SourceAttachment,
     SourceCourse,
+    SourceEvent,
     SourceRecord,
     SubjectMapping,
     SyncJob,
+    TaskEvidence,
     now,
 )
 
@@ -137,12 +139,17 @@ def suppress_sender(db, uid, email):
         .where(
             SourceRecord.user_id == uid,
             SourceRecord.sender_email == email,
-            SourceRecord.processing_state.in_(("awaiting_interpretation", "duplicate")),
+            ~exists(
+                select(TaskEvidence.id)
+                .join(SourceEvent, SourceEvent.id == TaskEvidence.event_id)
+                .where(SourceEvent.source_record_id == SourceRecord.id)
+            ),
         )
         .with_for_update()
     ).all()
     for record in rows:
         minimize(db, record, "blocked", "sender_blocked")
+        db.execute(update(SourceEvent).where(SourceEvent.source_record_id == record.id).values(data={}))
     interpret.suppress_reviews(db, uid, email)
     return len(rows)
 
@@ -191,6 +198,8 @@ def access_token(user, connection_id, force=False):
 
 def ensure_job(db, uid, connection_id, mode="import", trigger="manual"):
     conn = owned(db, Connection, connection_id, uid, lock=True)
+    if conn.data.get("privacyJobId"):
+        raise ApiError(409, "PRIVACY_IN_PROGRESS", "Finish the source privacy operation before syncing")
     if conn.status != "active":
         raise ApiError(409, "CONNECTION_INACTIVE", "Reconnect this account before syncing")
     active = db.scalar(select(SyncJob).where(SyncJob.connection_id == conn.id, SyncJob.status.in_(ACTIVE)))
@@ -265,8 +274,8 @@ def advance(user, job_id):
     try:
         while time.monotonic() < deadline and step(user, job_id, lease):
             pass
-    except Exception:
-        log.exception("sync step failed", extra={"job": str(job_id)})
+    except Exception as exc:
+        log.error("sync step failed type=%s job=%s", type(exc).__name__, str(job_id))
         record_failure(
             user, job_id, lease, google.SourceError("fatal", "Sync stopped unexpectedly. Try again")
         )
@@ -304,6 +313,17 @@ def record_failure(user, job_id, lease, exc):
         job.lease_owner = job.lease_expires_at = None
         job.revision += 1
         conn.data = {**conn.data, "lastError": error}
+        from .activity import notify
+
+        notify(
+            db,
+            conn.user_id,
+            "sync_issue",
+            "connection",
+            conn.id,
+            "A source could not sync. Open Sources to retry or reconnect.",
+            f"sync:{job.id}:{error['code']}",
+        )
     return False
 
 

@@ -22,6 +22,7 @@ from .models import (
     GoogleAccount,
     OAuthGrant,
     OAuthState,
+    PrivacyJob,
     SenderPreference,
     SourceCourse,
     SourceRecord,
@@ -88,6 +89,7 @@ def connection_out(db, conn):
         "lastSuccessAt": sync.iso(conn.last_success_at),
         "retryAt": sync.iso(conn.retry_at),
         "lastError": conn.data.get("lastError"),
+        "privacyJobId": conn.data.get("privacyJobId"),
         "activeJob": sync.job_out(active) if active else None,
         "lastJob": sync.job_out(last) if last else None,
         "records": {
@@ -202,6 +204,13 @@ def link_account(db, uid, sub, email, profile, tokens, services):
     if account is None:
         account = GoogleAccount(user_id=uid, google_sub=sub, email="")
         db.add(account)
+    elif db.scalar(
+        select(PrivacyJob.id)
+        .join(Connection, Connection.id == PrivacyJob.connection_id)
+        .where(Connection.account_id == account.id, PrivacyJob.status != "completed")
+        .limit(1)
+    ):
+        raise ApiError(409, "PRIVACY_IN_PROGRESS", "Finish the source privacy operation before reconnecting")
     account.email = normalize_email(email)
     account.data = {**profile, "emailVerified": True}
     db.flush()
@@ -311,6 +320,11 @@ def attach_login_grant(identity, provider):
 
 @router.delete("/connections/{id}")
 def disconnect(id: uuid.UUID, request: Request, revision_value: int = Query(alias="revision"), user=User):
+    from .models import Operation
+    from .privacy import advance_source, job_out, start_source
+
+    # Persist the disconnect and cancellation before reaching Google. A crash or outage cannot
+    # roll back the student's stop-sync request; the private revoke checkpoint remains resumable.
     with work(user) as db:
         cached, op = replay(db, request, user, {"revision": revision_value})
         if cached is not None:
@@ -318,46 +332,36 @@ def disconnect(id: uuid.UUID, request: Request, revision_value: int = Query(alia
         conn = owned(db, Connection, id, user["id"], True)
         revision(conn, revision_value)
         cancelled = sync.cancel_jobs(db, conn.id, "DISCONNECTED")
-        conn.status, conn.checkpoint, conn.retry_at = "disconnected", {}, None
-        conn.revision += 1
-        remaining = db.scalar(
-            select(func.count())
-            .select_from(Connection)
-            .where(
-                Connection.account_id == conn.account_id,
-                Connection.id != conn.id,
-                Connection.status != "disconnected",
-            )
-        )
-        revoked = False
-        grant = db.scalar(
-            select(OAuthGrant).where(OAuthGrant.account_id == conn.account_id).with_for_update()
-        )
-        if not remaining and grant and grant.refresh_token:
-            # No other service uses this grant: revoke at Google, then remove local credentials.
-            try:
-                google.provider.revoke(google.vault().decrypt(grant.refresh_token, grant.key_version))
-            except google.SourceError as exc:
-                if exc.kind == "retryable":
-                    raise ApiError(503, "DISCONNECT_RETRY", exc.message)
-            grant.refresh_token = grant.access_token = grant.access_expires_at = None
-            grant.status, grant.scopes = "revoked", []
-            revoked = True
+        job = start_source(db, conn, "disconnect")
         preserved = db.scalar(
             select(func.count()).select_from(SourceRecord).where(SourceRecord.connection_id == conn.id)
         )
-        return finish(
-            db,
-            op,
-            {
-                "ok": True,
-                "connectionId": str(conn.id),
-                "service": conn.service,
-                "cancelledJobs": cancelled,
-                "googleAccessRevoked": revoked,
-                "preservedSourceRecords": preserved,
-            },
-        )
+        result = {
+            "ok": True,
+            "connectionId": str(conn.id),
+            "service": conn.service,
+            "cancelledJobs": cancelled,
+            "googleAccessRevoked": False,
+            "preservedSourceRecords": preserved,
+            "privacyJob": job_out(job),
+        }
+        finish(db, op, result)
+        db.flush()
+        op_id, job_id = op.id, job.id
+    with work(user) as db:
+        from .models import PrivacyJob
+
+        job = owned(db, PrivacyJob, job_id, user["id"], True)
+        conn = owned(db, Connection, id, user["id"], True)
+        checkpoint = advance_source(db, job, conn)
+        result = {
+            **result,
+            "privacyJob": checkpoint,
+            "googleAccessRevoked": checkpoint["status"] == "completed"
+            and bool(job.data.get("googleAccessRevoked")),
+        }
+        owned(db, Operation, op_id, user["id"], True).result = result
+        return result
 
 
 @router.post("/connections/{id}/sync")

@@ -1,5 +1,7 @@
 # Phase 3 implementation and verification
 
+This is the Phase 3 implementation snapshot. [Phase4Validation.md](Phase4Validation.md) supersedes its environment/migration status and outstanding Phase 4 implementation list; live provider evidence remains separately tracked.
+
 Verified locally on 7 October 2026. Phase 3 code passes local automated checks using a fake Google provider, a fake AI provider, and PostgreSQL 18.
 
 **Live acceptance has not been performed.** No Groq (or OpenAI/Gemini) key or model ID is configured, and no real model output has been evaluated. Hosted migration `0003` has not been applied. No automatic completion path is enabled. No deployment, commit, or push was performed.

@@ -28,6 +28,7 @@ from .config import settings
 from .domain import effective_status, task_data
 from .errors import ApiError
 from .models import (
+    Connection,
     History,
     Profile,
     ReviewItem,
@@ -586,6 +587,9 @@ def from_item(item, ctx, base_choices, allowed, occurred, source):
 
 
 def history(db, task, action, changes, event=None):
+    from .activity import task_changed
+
+    task_changed(db, task, action, changes, event)
     db.add(
         History(
             user_id=task.user_id,
@@ -681,6 +685,10 @@ def open_review(db, uid, record, event, issue, question, data, task=None, identi
         data={**data, "identityKey": identity, "eventIds": [str(event.id)]},
     )
     db.add(item)
+    db.flush()
+    from .activity import notify
+
+    notify(db, uid, "review", "review", item.id, "An imported item needs your review.", f"review:{item.id}")
     return item
 
 
@@ -899,6 +907,11 @@ def reopen_task(db, task, event):
 
 
 def apply_candidate(db, uid, ctx, record, index, cand, run):
+    from .privacy import suppressed
+
+    conn = db.get(Connection, record.connection_id)
+    if suppressed(db, conn, cand.identity_key) or suppressed(db, conn, record.provider_id):
+        return "ignored_deleted"
     key = f"{record.revision}:{run}:{index}"
     if db.scalar(
         select(SourceEvent.id).where(SourceEvent.source_record_id == record.id, SourceEvent.event_key == key)
@@ -1291,7 +1304,7 @@ def commit(db, uid, record, prepared, ctx, progress, run):
         )
         if reason == "unmatched_receipt" or record.kind.startswith("classroom"):
             record.processing_state, record.reason = "ignored", reason
-            record.expires_at = now() + timedelta(days=30) if reason == "unmatched_receipt" else None
+            record.expires_at = now() + timedelta(days=30)
         else:
             minimize(db, record, "ignored", reason)
     elif not outcomes:
@@ -1322,6 +1335,10 @@ def unit(snap, token):
 
 
 def suppress_reviews(db, uid, email):
+    from sqlalchemy import delete
+
+    from .models import Activity
+
     rows = db.scalars(
         select(ReviewItem).where(
             ReviewItem.user_id == uid, ReviewItem.sender_email == email, ReviewItem.status == "open"
@@ -1329,6 +1346,8 @@ def suppress_reviews(db, uid, email):
     ).all()
     for r in rows:
         r.status = "suppressed"  # Cannot be approved while the block is active.
+        r.data, r.question = {}, "This sender is blocked"
+        db.execute(delete(Activity).where(Activity.target_type == "review", Activity.target_id == r.id))
     return len(rows)
 
 

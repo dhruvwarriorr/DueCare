@@ -24,6 +24,7 @@ import {
   Plug,
   Inbox,
   SlidersHorizontal,
+  Bell,
 } from "lucide-react";
 import { api, formatTime } from "@/lib/api";
 import { useCutoffRefresh } from "@/lib/use-cutoff-refresh";
@@ -39,11 +40,14 @@ import { Connections, SyncOverview } from "./connections";
 import { SyncProvider } from "@/lib/sync";
 import { NeedsAttention } from "./needs-attention";
 import { Rules } from "./rules";
+import { ActivityInbox } from "./activity";
+import { PrivacyControls } from "./privacy";
 const views = [
   ["dashboard", "Overview", LayoutDashboard],
   ["tasks", "Tasks", ListTodo],
   ["calendar", "Calendar", CalendarDays],
   ["attention", "Needs attention", Inbox],
+  ["activity", "Activity", Bell],
   ["subjects", "Subjects", BookOpen],
   ["connections", "Sources", Plug],
   ["rules", "Rules", SlidersHorizontal],
@@ -450,6 +454,14 @@ function App() {
     enabled: Boolean(profile.data?.onboardingComplete),
   });
   const reviewCount = overview.data?.reviewCount || 0;
+  const activity = useQuery({
+    queryKey: ["activity", "count"],
+    queryFn: () => api<{ unreadCount: number }>("/activity?limit=1"),
+    enabled: Boolean(profile.data?.onboardingComplete),
+    refetchInterval: 30000,
+  });
+  const unread = activity.data?.unreadCount || 0;
+  const [reviewTarget, setReviewTarget] = useState<string | null>(null);
   const [menu, setMenu] = useState(false);
   const [taskStatus, setTaskStatus] = useState("");
   const [editor, setEditor] = useState<Task | null | undefined>(undefined);
@@ -547,6 +559,14 @@ function App() {
                 )}
               </button>
             ))}
+            {unread > 0 && (
+              <button
+                onClick={() => navigate("activity")}
+                className="activity-count"
+              >
+                <Bell size={17} /> {unread} unread updates
+              </button>
+            )}
           </nav>
           <div className="sidebar-bottom">
             <div className="profile-mini">
@@ -605,7 +625,10 @@ function App() {
           </header>
           <main id="main" className="main-content">
             {!p.onboardingComplete ? (
-              <ProfileForm profile={p} />
+              <>
+                <ProfileForm profile={p} />
+                <PrivacyControls />
+              </>
             ) : (
               <>
                 <ErrorNotice
@@ -641,9 +664,24 @@ function App() {
                   />
                 )}
                 {view === "attention" && (
-                  <NeedsAttention subjects={subjects.data || []} />
+                  <NeedsAttention
+                    subjects={subjects.data || []}
+                    targetId={reviewTarget}
+                    onBack={() => setReviewTarget(null)}
+                  />
                 )}
                 {view === "rules" && <Rules subjects={subjects.data || []} />}
+                {view === "activity" && (
+                  <ActivityInbox
+                    onOpen={(item) => {
+                      if (item.targetType === "task") setDetail(item.targetId);
+                      else if (item.targetType === "review") {
+                        setReviewTarget(item.targetId);
+                        navigate("attention");
+                      } else navigate("connections");
+                    }}
+                  />
+                )}
                 {view === "connections" && (
                   <Connections
                     notice={notice}
@@ -653,6 +691,7 @@ function App() {
                 {view === "settings" && (
                   <>
                     <ProfileForm key={p.revision} profile={p} />
+                    <PrivacyControls />
                     <section className="panel settings-link">
                       <div>
                         <h2>Sources and senders</h2>

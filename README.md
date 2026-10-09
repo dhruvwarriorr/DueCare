@@ -1,8 +1,8 @@
 # DueCare
 
-Phase 1 is the manual academic workspace: Somaiya Google sign-in, academic onboarding, subjects, weekly timetable context, tasks, calendar, dashboard, and settings. Phase 2 adds read-only Gmail and Classroom source connections, explicit Classroom-to-subject links, sender inclusion/blocking, and resumable browser-driven imports into source records. Phase 3 interprets imported items into tasks with academic targeting, Needs attention review, ordered rules, merges, and completion reconciliation. Privacy workflows and the web release belong to Phase 4.
+DueCare combines Somaiya Google sign-in, academic onboarding, manually added subjects and weekly timetable context, tasks, calendar, read-only Gmail/Classroom imports, academic targeting, student review, rules and completion reconciliation. Activity tracks changes and sync issues. Settings provides resumable privacy operations, deleted-import suppression/restore and account deletion. The current web scope is **localhost only**; native mobile apps and public deployment remain future scope.
 
-The approved behavior lives in [the specification](docs/ProjectDocumentation.md) and [four-phase plan](docs/ImplementationPhases.md). [Phase 1 verification](docs/Phase1Validation.md), [Phase 2 verification](docs/Phase2Validation.md), and [Phase 3 verification](docs/Phase3Validation.md) distinguish tested local behavior from pending live acceptance.
+The approved behavior lives in [the specification](docs/ProjectDocumentation.md) and [four-phase plan](docs/ImplementationPhases.md). See [current verification and live evidence gaps](docs/Phase4Validation.md) and [local operation/recovery](docs/OperationsLocal.md). Earlier phase verification files remain historical snapshots.
 
 ## Repository
 
@@ -83,7 +83,7 @@ In one terminal:
 
 ```sh
 cd apps/api
-uv run uvicorn duecare.main:app --reload --host 127.0.0.1 --port 8000
+uv run uvicorn duecare.main:app --reload --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
 From the repository root in another terminal:
@@ -127,7 +127,7 @@ npm audit --omit=dev
 
 Browser tests start their own local API and Next.js servers on ports 8001/3001, seed a synthetic account, and test through the actual gateway. Do not run tests and the development server on those ports simultaneously. Test screenshots and retained failure traces are ignored local artifacts. Stop the disposable server when finished with `pg_ctl -D .local/postgres stop`.
 
-For migration recovery, test `alembic downgrade base` followed by `upgrade head` only on a disposable database. Downgrade removes all application data. On a configured Supabase project, disable the creation hook and remove both `duecare_internal.before_user_created` and `duecare_internal.lookup_auth_identity` functions before downgrading the application schemas. Back up real data and use reviewed forward repairs for production recovery; hosted migration revision `0001` has been applied to the configured DueCare project; hosted application acceptance is tracked in `docs/Phase1Validation.md`.
+For migration recovery, test downgrades only on a disposable database. Downgrade removes application data. Back up real data and use reviewed forward repairs for hosted recovery. The configured development project is on migration `0004`; [current verification](docs/Phase4Validation.md) records the database checks and [recovery instructions](docs/OperationsLocal.md) explain the tested disposable round-trip.
 
 ## API behavior
 
@@ -141,7 +141,7 @@ There is no scheduled sync. The open browser starts syncing on app open, on refo
 
 Gmail imports the last 90 days, then continues incrementally from the mailbox history ID (relisting the gap if history expires). The complete sender blocklist is checked from metadata before any body is fetched, and again under a per-sender lock when results are committed, so a block added mid-import cannot commit content. Non-academic senders (outside `ACADEMIC_SENDER_DOMAINS`, unless included) are not fetched. Blocked and ignored mail keeps only identifiers, sender, and reason, with 30-day expiry. Eligible mail is MIME-decoded safely (plain text preferred unless HTML tables would be flattened; no remote content or scripts), split into authored/quoted/forwarded/signature/footer sections, and stored as identifiers, timestamps, a content hash, section structure, attachment metadata, and links—never the full body. Identical Message-ID and content in the same account is marked as a duplicate occurrence.
 
-Classroom discovers courses as metadata only; nothing creates subjects. Students explicitly link a course to one or more existing subjects (theory/lab/tutorial remain separate; no batch override). Only linked courses are read: own submissions, coursework (initially the last 90 days, older work with future deadlines, and older outstanding work), and announcements (90 days), then incrementally by update time. Changed content increments the source record's revision. Imported records stay `awaiting_interpretation` and are not tasks until Phase 3.
+Classroom discovers courses as metadata only; nothing creates subjects. Students explicitly link a course to one or more existing subjects (theory/lab/tutorial remain separate; no batch override). Only linked courses are read: own submissions, coursework (initially the last 90 days, older work with future deadlines, and older outstanding work), and announcements (90 days), then incrementally by update time. Changed content increments the source record's revision. Imported records pass through interpretation and review before becoming tasks.
 
 ### Interpretation, review, and completion (Phase 3)
 
@@ -159,4 +159,10 @@ Apply migration `0003` (`uv run alembic upgrade head`). After each import, the s
 
 **Needs attention** shows the question, observed versus profile context, the proposal, and source excerpt. You can accept (with subject/time corrections), link to an existing task, keep current values, confirm completion, reopen, remove withdrawn work, or dismiss. The server rechecks sender blocks, current academic context, and revision first. Task detail shows source evidence, completion origin, and change history by actor. It also supports moving evidence to another task and merging duplicates with undo (different subjects never merge). **Reprocess** on a source reconsiders earlier ignored, unmatched, and interpreted items under current senders, profile, subjects, timetable, and rules, without duplicating evidence.
 
-See [verification evidence and remaining live checks](docs/Phase1Validation.md) before treating Phase 1 as hosted-accepted. No commit, push, deployment, or hosted data mutation is performed automatically. Phase 2 local evidence and pending live Google acceptance are recorded in [Phase2Validation.md](docs/Phase2Validation.md).
+### Activity and privacy
+
+Activity supports read/unread filters and opens the related task, review or source. In Settings, delete a connection's imported data separately from disconnecting it, restore suppressed imports and explicitly reimport, or permanently delete the account with typed confirmation. Interrupted operations have saved checkpoints and Resume controls. Student work and other-source evidence are preserved during imported-data deletion; account deletion removes the entire owned workspace and native login. See [operation and recovery details](docs/OperationsLocal.md).
+
+The gateway also exposes `/activity`, `/activity/{id}`, `/privacy/jobs`, `/privacy/jobs/{id}/advance`, `/privacy/source-data-deletions`, `/privacy/account-deletion`, `/suppression-records`, `/suppression-records/{id}/restore`, and `/connections/{id}/reimport`. Account-deletion capabilities stay in HTTP-only cookies, never browser-facing JSON. All ordinary ownership, gateway and mutation protections remain in force.
+
+See [current verification and remaining live checks](docs/Phase4Validation.md) before claiming live provider or production acceptance. Code is not committed or pushed automatically.

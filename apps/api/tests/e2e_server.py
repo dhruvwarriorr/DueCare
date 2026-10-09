@@ -8,14 +8,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import json
 
 from duecare import auth, google
-from duecare.models import now
+from duecare.common import work
+from duecare.models import Connection, now
+from duecare.sources_api import link_account
 from tests.conftest import FixtureAuth, account
 from tests.conftest import app as app
 from tests.fake_google import FakeGoogle, eml
+from tests.test_phase4 import imported
 
 fixture = account("browser-fixture@somaiya.edu")
 sources_fixture = account("browser-sources@somaiya.edu")
 attention_fixture = account("browser-attention@somaiya.edu")
+privacy_fixture = account("browser-privacy@somaiya.edu")
+delete_fixture = account("browser-delete@somaiya.edu")
+source_delete_fixture = account("browser-source-delete@somaiya.edu")
 auth.provider = FixtureAuth()
 
 # Synthetic, redacted source data. No real mail, accounts, or Google requests are involved.
@@ -84,12 +90,37 @@ def exchange(code, verifier):
 
 source.exchange = exchange
 google.provider = source
+# A disconnected synthetic source isolates privacy workflows from browser-driven sync.
+with work({"id": str(source_delete_fixture.uid)}) as db:
+    linked = link_account(
+        db,
+        source_delete_fixture.uid,
+        "privacy-google",
+        "privacy@example.com",
+        {},
+        {
+            "refresh_token": "synthetic-refresh",
+            "access_token": "synthetic-access",
+            "expires_in": 3600,
+            "scope": " ".join(google.SERVICE_SCOPES["gmail"]),
+        },
+        ["gmail"],
+    )
+    privacy_connection = linked["connectionId"]
+    db.get(Connection, __import__("uuid").UUID(privacy_connection)).status = "disconnected"
+removed_task, _, _ = imported(source_delete_fixture.uid, privacy_connection, "privacy-remove")
+retained_task, _, _ = imported(source_delete_fixture.uid, privacy_connection, "privacy-keep", manual=True)
 (Path(__file__).resolve().parents[3] / ".local/e2e-account.json").write_text(
     json.dumps(
         {
             "handle": fixture.handle,
             "sourcesHandle": sources_fixture.handle,
             "attentionHandle": attention_fixture.handle,
+            "privacyHandle": privacy_fixture.handle,
+            "deleteHandle": delete_fixture.handle,
+            "sourceDeleteHandle": source_delete_fixture.handle,
+            "removedTask": removed_task,
+            "retainedTask": retained_task,
         }
     )
 )

@@ -675,6 +675,8 @@ Deleted imported tasks remain suppressed during later syncs. Retain minimal supp
 
 Account deletion stops new processing, removes application data and source credentials, and deletes the authentication account. Make deletion resumable and idempotent.
 
+The local web implementation persists privacy operations before external revocation or deletion steps. Disconnect and imported-data deletion are separate actions. An unfinished operation blocks sync, restoration and reconnection to its affected Google account until it completes. Account deletion freezes normal workspace access and uses an HTTP-only recovery capability; an authenticated second browser can recover pending progress. Completed account-deletion receipts remove the user reference and expire after 30 days, while unfinished checkpoints remain. [Local operations](OperationsLocal.md) describes recovery and the bounded request chunks.
+
 Privacy settings provide deletion and connection controls. There is no administrative student-data browsing interface.
 
 ### Operational limits
@@ -716,6 +718,8 @@ Use revisions for editable records. Preserve source occurrence time separately f
 | `activity_notifications` | Owner; event type; related task/review/connection; message; created/read timestamps |
 | `sync_jobs` | Connection; import/reprocess mode; phase; status; checkpoint; progress counters; lease; next retry; sanitized error; timestamps |
 | `suppression_records` | Owner; namespaced source identifiers; deletion time; restore state |
+| `privacy_jobs` | Owner; connection identifier; disconnect/source-data kind; current stage; pending/waiting-retry/completed state; content-free counters; safe error code; revision and timestamps |
+| `duecare_internal.account_deletions` | Server-only checkpoint; owner while pending; hashed recovery capability; stage/status; safe error code; created/completed timestamps; owner removed on completion; no source text or account address |
 | `merge_operations` | Owner; surviving and absorbed task references; association/field changes required for undo; timestamps |
 
 #### Task timing and supporting fields
@@ -795,12 +799,12 @@ FastAPI exposes versioned REST under `/api/v1`, with generated OpenAPI documenta
 | Reprocessing | `POST /connections/{id}/reprocess`; creates a resumable explicit reprocessing job |
 | Rules | `GET/POST /rules`; `POST /rules/interpret`; `PATCH/DELETE /rules/{id}`; `PUT /rules/order` |
 | Sender preferences | `GET /sender-preferences`; `PUT /sender-preferences/{senderEmail}` with action `include` or `block` and revision for replacement; `DELETE /sender-preferences/{senderEmail}` to remove the preference; URL-encode the exact address |
-| Review | `GET /review-items`; `POST /review-items/{id}/resolve` |
+| Review | `GET /review-items`; `GET /review-items/{id}` for the exact open review; `POST /review-items/{id}/resolve` |
 | Duplicates | `POST /task-merges`; `POST /task-merges/{id}/undo` |
 | Evidence | `POST /evidence/{id}/reassign` |
 | Activity | `GET /activity`; `PATCH /activity/{id}` for read state |
-| Privacy | `POST /privacy/source-data-deletions`; `POST /privacy/account-deletion` |
-| Restore | `POST /suppression-records/{id}/restore` |
+| Privacy | `GET /privacy/jobs`; `POST /privacy/jobs/{id}/advance`; `POST /privacy/source-data-deletions`; `GET/POST /privacy/account-deletion` for owner-confirmed deletion and checkpoint recovery |
+| Restore | `GET /suppression-records`; `POST /suppression-records/{id}/restore`; `POST /connections/{id}/reimport` for explicit source reimport after restoration |
 | Health | Minimal public liveness endpoint; protected dependency diagnostics |
 
 Task edits cover completion, reopening, notes, deadlines, subject assignment, and priority overrides. Task responses and filters expose exactly `due`, `completed`, `overdue`, and `missed`. Students mark work completed or reopen it; the server determines the effective incomplete status from type, timing mode, and cutoff. Clients cannot force overdue/missed through an arbitrary status edit or use missed for an assignment. Reject unsupported task statuses.

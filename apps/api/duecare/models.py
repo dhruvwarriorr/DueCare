@@ -368,3 +368,47 @@ class MergeOperation(Owned, Base):
     absorbed_task_id: Mapped[uuid.UUID] = mapped_column(UUID, index=True)
     data: Mapped[dict] = mapped_column(JSONB, default=dict)
     undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Activity(Owned, Base):
+    __tablename__ = "activity_notifications"
+    __table_args__ = (UniqueConstraint("user_id", "event_key"), {"schema": "duecare"})
+    event_key: Mapped[str] = mapped_column(String(200))
+    event_type: Mapped[str] = mapped_column(String(30))
+    target_type: Mapped[str] = mapped_column(String(20))
+    target_id: Mapped[uuid.UUID] = mapped_column(UUID)
+    message: Mapped[str] = mapped_column(String(300))
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Suppression(Owned, Base):
+    __tablename__ = "suppression_records"
+    __table_args__ = (UniqueConstraint("user_id", "namespace", "identity_hash"), {"schema": "duecare"})
+    namespace: Mapped[str] = mapped_column(String(64))
+    identity_hash: Mapped[str] = mapped_column(String(64))
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PrivacyJob(Owned, Base):
+    __tablename__ = "privacy_jobs"
+    __table_args__ = ({"schema": "duecare"},)
+    kind: Mapped[str] = mapped_column(String(30))
+    connection_id: Mapped[uuid.UUID] = mapped_column(UUID)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    stage: Mapped[str] = mapped_column(String(20), default="tasks")
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+
+class AccountDeletion(Base):
+    # Private capability checkpoint survives removal of native Auth and app sessions.
+    __tablename__ = "account_deletions"
+    __table_args__ = {"schema": "duecare_internal"}
+    id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID, nullable=True, unique=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    stage: Mapped[str] = mapped_column(String(20), default="revoke")
+    error_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

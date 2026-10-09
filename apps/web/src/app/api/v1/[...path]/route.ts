@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
-import { backend, csrf, sessionCookie, cookieOptions } from "@/lib/server";
+import { cookies } from "next/headers";
+import {
+  backend,
+  csrf,
+  sessionCookie,
+  cookieOptions,
+  deletionCookie,
+} from "@/lib/server";
 // A sync advance uses a 90-second work budget plus provider and response overhead.
 export const maxDuration = 150;
 const routes = [
@@ -14,6 +21,9 @@ const routes = [
   "rules",
   "task-merges",
   "evidence",
+  "activity",
+  "privacy",
+  "suppression-records",
 ];
 async function proxy(
   request: Request,
@@ -33,20 +43,42 @@ async function proxy(
       { message: "Refresh the page and try again" },
       { status: 403 },
     );
+  const deleting = path.join("/") === "privacy/account-deletion";
+  const ticket = deleting
+    ? (await cookies()).get(deletionCookie)?.value
+    : undefined;
+  const resuming =
+    deleting && ticket && ["GET", "POST"].includes(request.method);
   const response = await backend(
-    "/api/v1/" +
-      path.map(encodeURIComponent).join("/") +
-      new URL(request.url).search,
+    resuming
+      ? "/internal/privacy/account-deletion"
+      : "/api/v1/" +
+          path.map(encodeURIComponent).join("/") +
+          new URL(request.url).search,
     {
-      method: request.method,
-      body: request.method === "GET" ? undefined : await request.text(),
+      method: resuming ? "POST" : request.method,
+      body: resuming
+        ? JSON.stringify({ token: ticket, advance: request.method === "POST" })
+        : request.method === "GET"
+          ? undefined
+          : await request.text(),
       headers: {
         "Idempotency-Key": request.headers.get("idempotency-key") || "",
       },
     },
     path[0] === "sync-jobs" && path[2] === "advance" ? 140000 : 25000,
   );
-  const res = new NextResponse(await response.text(), {
+  let payload = await response.text();
+  let resumeToken: string | undefined;
+  let deleted = false;
+  if (deleting && response.ok) {
+    const data = JSON.parse(payload);
+    resumeToken = data.resumeToken;
+    delete data.resumeToken;
+    deleted = data.status === "completed";
+    payload = JSON.stringify(data);
+  }
+  const res = new NextResponse(payload, {
     status: response.status,
     headers: {
       "Content-Type": "application/json",
@@ -56,6 +88,15 @@ async function proxy(
   });
   if (response.status === 401)
     res.cookies.set(sessionCookie, "", { ...cookieOptions, maxAge: 0 });
+  if (resumeToken)
+    res.cookies.set(deletionCookie, resumeToken, {
+      ...cookieOptions,
+      maxAge: 30 * 86400,
+    });
+  if (deleted) {
+    res.cookies.set(sessionCookie, "", { ...cookieOptions, maxAge: 0 });
+    // Keep the minimal completion receipt available for refresh/retry for thirty days.
+  }
   return res;
 }
 export {

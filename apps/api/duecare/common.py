@@ -33,6 +33,18 @@ def revision(obj, value):
 def work(user):
     with transaction(user["id"]) as db:
         try:
+            from .models import AccountDeletion
+            from .privacy import cleanup, owner_lock
+
+            owner_lock(db, user["id"])
+            deleting = db.scalar(select(AccountDeletion.id).where(AccountDeletion.user_id == user["id"]))
+            if deleting and not user.get("_privacy"):
+                raise ApiError(
+                    409,
+                    "ACCOUNT_DELETING",
+                    "Account deletion is in progress. Resume it from the deletion page",
+                )
+            cleanup(db, user["id"])
             yield db
             db.commit()
         except Exception:
@@ -53,6 +65,8 @@ def replay(db, request, user, payload):
     if existing:
         if existing.fingerprint != fingerprint:
             raise ApiError(409, "IDEMPOTENCY_CONFLICT", "This key was already used for another operation")
+        if existing.result.get("privacyErased"):
+            raise ApiError(410, "RESULT_ERASED", "This result was removed by a privacy request")
         return existing.result, None
     return None, Operation(user_id=uuid.UUID(user["id"]), key=key, fingerprint=fingerprint, result={})
 

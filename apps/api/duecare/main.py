@@ -10,16 +10,18 @@ from pydantic import ValidationError
 from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from . import auth, phase3_api, sources_api
+from . import auth, phase3_api, privacy_api, sources_api
 from .common import User, finish, owned, page, replay, revision, work
 from .db import transaction
 from .domain import effective_status, task_data
 from .errors import ApiError
 from .models import History, ReviewItem, Slot, Subject, Task, now
+from .safe_logs import configure
 from .schemas import ProfilePatch, SubjectInput, TaskInput, TaskPatch, TimetableInput
 from .views import profile, task_out
 
 app = FastAPI(title="DueCare API", version="0.2.0", openapi_url="/api/v1/openapi.json")
+configure()
 
 
 @app.middleware("http")
@@ -76,8 +78,10 @@ async def database_error(request, exc):
 
 @app.exception_handler(Exception)
 async def unexpected_error(request, exc):
-    # Unexpected failures still return the structured error contract; details stay in server logs.
-    logging.getLogger("duecare").exception("unhandled error", extra={"requestId": request.state.request_id})
+    # Report the exception type and request ID without private payloads or SQL parameters.
+    logging.getLogger("duecare").error(
+        "unhandled error type=%s requestId=%s", type(exc).__name__, request.state.request_id
+    )
     return JSONResponse(
         status_code=500,
         content={
@@ -96,7 +100,15 @@ def health():
 @app.get("/ready")
 def ready():
     with transaction() as db:
-        db.execute(text("select 1 from duecare.profiles limit 1"))
+        for table in (
+            "duecare.profiles",
+            "duecare.source_events",
+            "duecare.activity_notifications",
+            "duecare.suppression_records",
+            "duecare.privacy_jobs",
+            "duecare_internal.account_deletions",
+        ):
+            db.execute(text(f"select 1 from {table} limit 1"))
     return {"status": "ok"}
 
 
@@ -156,6 +168,9 @@ def subject_out(s, mappings=()):
 
 def history(db, t, action, changes):
     db.add(History(user_id=t.user_id, task_id=t.id, action=action, changes=changes))
+    from .activity import task_changed
+
+    task_changed(db, t, action, changes)
 
 
 @app.get("/api/v1/me")
@@ -486,6 +501,9 @@ def delete_task(id: uuid.UUID, request: Request, revision_value: int = Query(ali
             return cached
         t = owned(db, Task, id, user["id"], True)
         revision(t, revision_value)
+        from .privacy import task_suppression
+
+        task_suppression(db, t)
         db.delete(t)
         return finish(db, op, {"ok": True})
 
@@ -565,3 +583,5 @@ def overview(user=User):
 
 app.include_router(sources_api.router)
 app.include_router(phase3_api.router)
+app.include_router(privacy_api.router)
+app.include_router(privacy_api.internal)

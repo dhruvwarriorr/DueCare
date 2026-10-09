@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -322,6 +323,12 @@ function ConnectionCard({
         </span>
       </div>
       <SyncStatus c={c} driving={driving} />
+      {c.privacyJobId && (
+        <p role="status" className="text-secondary">
+          A privacy operation is in progress.{" "}
+          <Link href="/?view=settings">Open Settings to resume it.</Link>
+        </p>
+      )}
       <ErrorNotice error={sync.failures[c.id] || null} />
       {c.status !== "disconnected" && (
         <>
@@ -354,7 +361,9 @@ function ConnectionCard({
         {c.status === "active" && (
           <Button
             size="sm"
-            disabled={driving || Boolean(c.activeJob?.leased)}
+            disabled={
+              !!c.privacyJobId || driving || Boolean(c.activeJob?.leased)
+            }
             onClick={() => sync.syncNow(c.id)}
           >
             <RefreshCw size={14} />
@@ -362,7 +371,11 @@ function ConnectionCard({
           </Button>
         )}
         {c.status !== "active" && (
-          <Button size="sm" onClick={() => onConnect()}>
+          <Button
+            size="sm"
+            disabled={!!c.privacyJobId}
+            onClick={() => onConnect()}
+          >
             Reconnect
           </Button>
         )}
@@ -370,7 +383,7 @@ function ConnectionCard({
           <Button
             size="sm"
             variant="outline"
-            disabled={driving || reprocess.isPending}
+            disabled={!!c.privacyJobId || driving || reprocess.isPending}
             onClick={() => reprocess.mutate()}
           >
             <RotateCcw size={14} />
@@ -378,7 +391,12 @@ function ConnectionCard({
           </Button>
         )}
         {c.status !== "disconnected" && (
-          <Button size="sm" variant="ghost" onClick={() => setConfirm(true)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!!c.privacyJobId}
+            onClick={() => setConfirm(true)}
+          >
             <Unplug size={14} />
             Disconnect
           </Button>

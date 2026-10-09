@@ -4,6 +4,7 @@ import {
   useInfiniteQuery,
   useMutation,
   useQueryClient,
+  useQuery,
 } from "@tanstack/react-query";
 import { Inbox, Check, X, Link2 } from "lucide-react";
 import { api, formatTime, localTime, utcTime } from "@/lib/api";
@@ -405,10 +406,24 @@ function ReviewCard({
   );
 }
 
-export function NeedsAttention({ subjects }: { subjects: Subject[] }) {
+export function NeedsAttention({
+  subjects,
+  targetId,
+  onBack,
+}: {
+  subjects: Subject[];
+  targetId?: string | null;
+  onBack?: () => void;
+}) {
+  const target = useQuery({
+    queryKey: ["review-items", targetId],
+    queryFn: () => api<ReviewItem>("/review-items/" + targetId),
+    enabled: !!targetId,
+  });
   const query = useInfiniteQuery({
     queryKey: ["review-items"],
     initialPageParam: "",
+    enabled: !targetId,
     queryFn: ({ pageParam }) =>
       api<Page<ReviewItem>>(
         "/review-items" +
@@ -419,10 +434,18 @@ export function NeedsAttention({ subjects }: { subjects: Subject[] }) {
   const tasks = useInfiniteQuery({
     queryKey: ["tasks", "review-picker"],
     initialPageParam: "",
-    queryFn: () => api<Page<Task>>("/tasks?limit=100"),
-    getNextPageParam: () => undefined,
+    queryFn: ({ pageParam }) =>
+      api<Page<Task>>(
+        "/tasks?limit=100" +
+          (pageParam ? "&cursor=" + encodeURIComponent(pageParam) : ""),
+      ),
+    getNextPageParam: (p) => p.nextCursor || undefined,
   });
-  const items = query.data?.pages.flatMap((p) => p.items) || [];
+  const items = targetId
+    ? target.data
+      ? [target.data]
+      : []
+    : query.data?.pages.flatMap((p) => p.items) || [];
   return (
     <>
       <div className="section-bar">
@@ -435,8 +458,16 @@ export function NeedsAttention({ subjects }: { subjects: Subject[] }) {
           </p>
         </div>
       </div>
-      <ErrorNotice error={query.error} retry={() => query.refetch()} />
-      {query.isPending ? (
+      {targetId && (
+        <Button variant="ghost" onClick={onBack}>
+          All items needing attention
+        </Button>
+      )}
+      <ErrorNotice
+        error={targetId ? target.error : query.error}
+        retry={() => (targetId ? target.refetch() : query.refetch())}
+      />
+      {(targetId ? target.isPending : query.isPending) ? (
         <p className="empty-small" role="status">
           Loading items…
         </p>
@@ -458,13 +489,22 @@ export function NeedsAttention({ subjects }: { subjects: Subject[] }) {
           ))}
         </div>
       )}
-      {query.hasNextPage && (
+      {!targetId && query.hasNextPage && (
         <Button
           className="mt-4"
           variant="outline"
           onClick={() => query.fetchNextPage()}
         >
           Load more
+        </Button>
+      )}
+      {tasks.hasNextPage && (
+        <Button
+          variant="ghost"
+          disabled={tasks.isFetchingNextPage}
+          onClick={() => tasks.fetchNextPage()}
+        >
+          Load more tasks for linking
         </Button>
       )}
     </>

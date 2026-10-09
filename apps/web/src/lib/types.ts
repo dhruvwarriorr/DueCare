@@ -129,6 +129,7 @@ export type SyncJob = {
   finishedAt: string | null;
 };
 export type Connection = {
+  privacyJobId?: string | null;
   id: string;
   service: "gmail" | "classroom";
   status: "active" | "needs_reauth" | "disconnected";

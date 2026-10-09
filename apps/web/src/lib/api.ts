@@ -44,7 +44,11 @@ export async function api<T>(
   );
   // A proxy, restart, or crash can return non-JSON; report it as a normal request error.
   const text = await response.text();
-  let data: { message?: string; fieldErrors?: Record<string, string> } = {};
+  let data: {
+    message?: string;
+    code?: string;
+    fieldErrors?: Record<string, string>;
+  } = {};
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
@@ -56,6 +60,10 @@ export async function api<T>(
     if (response.ok) throw new ApiError(data.message as string, 502, undefined);
   }
   if (!response.ok) {
+    // Every browser tab must stop exposing private cached work once deletion begins.
+    if (data.code === "ACCOUNT_DELETING")
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign("/privacy/deletion");
     // A full navigation clears in-memory private query data after session expiry.
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     if (response.status === 401) window.location.assign("/sign-in");

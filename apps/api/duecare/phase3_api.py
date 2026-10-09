@@ -38,6 +38,9 @@ EDITABLE = (
 
 def manual_history(db, task, action, changes):
     db.add(History(user_id=task.user_id, task_id=task.id, action=action, changes=changes))
+    from .activity import task_changed
+
+    task_changed(db, task, action, changes)
 
 
 # --- Needs attention ---------------------------------------------------------------------------
@@ -83,7 +86,13 @@ def review_items(
     with work(user) as db:
         rows, c = page(
             db,
-            select(ReviewItem).where(ReviewItem.user_id == user["id"], ReviewItem.status == status),
+            select(ReviewItem)
+            .outerjoin(SourceRecord, SourceRecord.id == ReviewItem.source_record_id)
+            .where(
+                ReviewItem.user_id == user["id"],
+                ReviewItem.status == status,
+                (SourceRecord.expires_at.is_(None)) | (SourceRecord.expires_at > now()),
+            ),
             ReviewItem,
             limit,
             cursor,
@@ -151,6 +160,8 @@ def resolve_review(id: uuid.UUID, body: Resolution, request: Request, user=User)
             return finish(db, op, {"ok": False, "code": "SENDER_BLOCKED", "review": review_out(item, db)})
         event = db.get(SourceEvent, item.event_id) if item.event_id else None
         record = db.get(SourceRecord, item.source_record_id) if item.source_record_id else None
+        if record and record.expires_at and record.expires_at <= now():
+            raise ApiError(410, "REVIEW_EXPIRED", "This review has expired")
         task = (
             db.scalar(select(Task).where(Task.id == item.task_id).with_for_update()) if item.task_id else None
         )
@@ -268,6 +279,9 @@ def resolve_review(id: uuid.UUID, body: Resolution, request: Request, user=User)
                 task.status, task.revision = effective_status(task, now()), task.revision + 1
                 manual_history(db, task, "reopened", {"status": task.status, "via": "review"})
             elif body.action == "delete_task":
+                from .privacy import task_suppression
+
+                task_suppression(db, task)
                 result["deletedTaskId"] = str(task.id)
                 item.task_id = None
                 db.flush()
@@ -644,3 +658,15 @@ def task_evidence(id: uuid.UUID, user=User):
                 }
             )
         return {"items": out}
+
+
+@router.get("/review-items/{id}")
+def get_review(id: uuid.UUID, user=User):
+    with work(user) as db:
+        item = owned(db, ReviewItem, id, user["id"])
+        record = db.get(SourceRecord, item.source_record_id) if item.source_record_id else None
+        if record and record.expires_at and record.expires_at <= now():
+            raise ApiError(410, "REVIEW_EXPIRED", "This review has expired")
+        if item.status != "open":
+            raise ApiError(410, "REVIEW_CLOSED", "This review has already been settled")
+        return review_out(item, db)
