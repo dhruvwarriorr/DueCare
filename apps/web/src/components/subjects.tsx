@@ -4,12 +4,13 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, CalendarDays, Pencil, Trash2 } from "lucide-react";
+import { Plus, CalendarDays, FileUp, Pencil, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Subject, Slot } from "@/lib/types";
 import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
 import { Field, ErrorNotice } from "./ui/field";
+import { TimetableImport } from "./timetable-import";
 const schema = z.object({
   name: z.string().trim().min(1),
   kind: z.enum(["theory", "lab", "tutorial"]),
@@ -186,35 +187,29 @@ function Timetable({
                         ))}
                       </select>
                     </Field>
-                    {(
-                      [
-                        "startTime",
-                        "endTime",
-                        "location",
-                        "instructor",
-                      ] as const
-                    ).map((key) => (
-                      <Field
-                        key={key}
-                        id={key + i}
-                        label={
-                          {
-                            startTime: "Starts (IST)",
-                            endTime: "Ends (IST)",
-                            location: "Room / location",
-                            instructor: "Instructor",
-                          }[key]
-                        }
-                      >
-                        <input
+                    {(["startTime", "endTime", "location"] as const).map(
+                      (key) => (
+                        <Field
+                          key={key}
                           id={key + i}
-                          required={key === "startTime" || key === "endTime"}
-                          type={key.endsWith("Time") ? "time" : "text"}
-                          value={s[key] || ""}
-                          onChange={(e) => change(i, key, e.target.value)}
-                        />
-                      </Field>
-                    ))}
+                          label={
+                            {
+                              startTime: "Starts (IST)",
+                              endTime: "Ends (IST)",
+                              location: "Room / location",
+                            }[key]
+                          }
+                        >
+                          <input
+                            id={key + i}
+                            required={key === "startTime" || key === "endTime"}
+                            type={key.endsWith("Time") ? "time" : "text"}
+                            value={s[key] || ""}
+                            onChange={(e) => change(i, key, e.target.value)}
+                          />
+                        </Field>
+                      ),
+                    )}
                   </div>
                   <Button
                     type="button"
@@ -266,6 +261,7 @@ export function Subjects({
   const [editing, setEditing] = useState<Subject | null | undefined>(undefined);
   const [timetable, setTimetable] = useState<Subject | null>(null);
   const [deleting, setDeleting] = useState<Subject | null>(null);
+  const [importing, setImporting] = useState(false);
   const remove = useMutation({
     mutationFn: (s: Subject) =>
       api("/subjects/" + s.id + "?revision=" + s.revision, "DELETE"),
@@ -285,16 +281,25 @@ export function Subjects({
             Batch {batch || "not set"} applies to every subject.
           </p>
         </div>
-        <Button onClick={() => setEditing(null)}>
-          <Plus size={16} />
-          Add subject
-        </Button>
+        <div className="section-actions">
+          <Button variant="outline" onClick={() => setImporting(true)}>
+            <FileUp size={16} />
+            Upload timetable
+          </Button>
+          <Button onClick={() => setEditing(null)}>
+            <Plus size={16} />
+            Add subject
+          </Button>
+        </div>
       </div>
       {subjects.length === 0 ? (
         <div className="empty panel">
           <CalendarDays size={30} />
           <h3>A place for every subject</h3>
-          <p>Add theory, lab, and tutorial subjects separately.</p>
+          <p>
+            Add theory, lab, and tutorial subjects separately, then upload your
+            timetable to fill in their weekly slots.
+          </p>
         </div>
       ) : (
         <div className="subject-grid">
@@ -348,6 +353,14 @@ export function Subjects({
             </article>
           ))}
         </div>
+      )}
+      {importing && (
+        // Stays mounted while a subject is added, so the draft survives.
+        <TimetableImport
+          subjects={subjects}
+          onAddSubject={() => setEditing(null)}
+          onClose={() => setImporting(false)}
+        />
       )}
       {editing !== undefined && (
         <SubjectEditor

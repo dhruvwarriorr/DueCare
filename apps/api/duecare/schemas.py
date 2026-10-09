@@ -23,6 +23,8 @@ class ProfilePatch(Input):
     general_batch: str | None = Field(None, min_length=1, max_length=50)
     roll_number: str | None = Field(None, min_length=1, max_length=100)
     theme: Literal["system", "light", "dark"] | None = None
+    # KT (ATKT/backlog) notices concern only students re-taking a failed subject.
+    ignore_kt_notices: bool | None = None
 
     @field_validator("branch_code")
     @classmethod

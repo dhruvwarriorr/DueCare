@@ -9,6 +9,7 @@ export type Profile = {
   };
   onboardingComplete: boolean;
   theme: "system" | "light" | "dark";
+  ignoreKtNotices: boolean;
   institution?: string;
   programme?: string;
   branchCode?: string | null;
@@ -256,4 +257,100 @@ export type Evidence = {
   excerpt: string | null;
   validation: Record<string, unknown> | null;
   outcome: string;
+};
+export type TimetableCell = {
+  id: string;
+  page: string;
+  weekday: number;
+  start: string;
+  end: string;
+  lines: string[];
+  text: string;
+  bbox: [number, number, number, number] | null;
+  spansDays: boolean;
+  narrow: boolean;
+  clippedTop?: boolean;
+  clippedBottom?: boolean;
+  unsure?: boolean;
+};
+export type TimetablePage = {
+  id: string;
+  source: string;
+  layout: "grid" | "scheduler";
+  method: "pdf_text" | "scheduler_ocr" | "image_ocr";
+  visible?: string;
+  preview: string | null;
+  header: { classLabel?: string; academicYear?: string; semester?: string };
+  issues: string[];
+  cells: TimetableCell[];
+};
+export type TimetableReading = {
+  method: "pdf_text" | "scheduler_ocr" | "image_ocr";
+  pages: TimetablePage[];
+};
+export type DraftRow = {
+  id: string;
+  cellId: string | null;
+  page: string | null;
+  bbox: [number, number, number, number] | null;
+  sourceText: string;
+  label: string;
+  baseLabel: string;
+  code: string | null;
+  group: number | null;
+  batches: string[];
+  component: "theory" | "lab" | "tutorial" | null;
+  weekday: number;
+  startTime: string;
+  endTime: string;
+  location: string | null;
+  instructor: string | null;
+  include: boolean;
+  otherBatch: boolean;
+  exclusionReason: string | null;
+  subjectId: string | null;
+  link: "exact" | "accepted" | "manual" | "none";
+  suggestedSubjectId: string | null;
+  suggestionSource: "name" | "ai" | null;
+  choiceKey: string | null;
+  choiceLabel: string | null;
+  track?: "core" | "elective" | "honours" | "minor";
+  family?: string | null;
+  familyKey?: string | null;
+  placeholder?: boolean;
+  issues: string[];
+};
+export type CourseFamily = {
+  key: string;
+  track: "elective" | "honours" | "minor";
+  name: string;
+  slots: number;
+  selected: boolean;
+};
+export type TimetableDraft = {
+  rows: DraftRow[];
+  ignored: { cellId: string; text: string; reason: string }[];
+  documents: { page: string; classLabel?: string; mismatch: string | null }[];
+  batch: string | null;
+  families: CourseFamily[];
+  ai: { used: boolean; unavailable?: boolean };
+  profileRevision: number;
+};
+export type ImportSlotBrief = {
+  subjectId: string;
+  subjectName?: string;
+  weekday: number;
+  startTime: string;
+  endTime: string;
+  location?: string | null;
+  instructor?: string | null;
+  sameDetails?: boolean;
+};
+export type ImportSummary = {
+  added: ImportSlotBrief[];
+  duplicates: ImportSlotBrief[];
+  updated: ImportSlotBrief[];
+  removed: ImportSlotBrief[];
+  overlaps: { first: ImportSlotBrief; second: ImportSlotBrief }[];
+  repeated: number;
 };

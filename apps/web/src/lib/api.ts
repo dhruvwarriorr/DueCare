@@ -3,6 +3,7 @@ export class ApiError extends Error {
     message: string,
     public status: number,
     public fields?: Record<string, string>,
+    public code?: string,
   ) {
     super(message);
   }
@@ -25,20 +26,26 @@ export async function api<T>(
   path: string,
   method = "GET",
   body?: unknown,
+  // A retry of an uncertain write reuses its key so the server replays, never repeats, it.
+  options: { idempotencyKey?: string } = {},
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+  const form = body instanceof FormData;
+  // The browser sets the multipart boundary itself for FormData uploads.
+  const headers: Record<string, string> = form
+    ? {}
+    : { "Content-Type": "application/json" };
   if (method !== "GET") {
     headers["X-CSRF-Token"] = await token();
-    headers["Idempotency-Key"] = crypto.randomUUID();
+    headers["Idempotency-Key"] =
+      options.idempotencyKey || crypto.randomUUID();
   }
   const response = await fetch(
     path.startsWith("/auth") ? path : "/api/v1" + path,
     {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body:
+        body === undefined ? undefined : form ? body : JSON.stringify(body),
       cache: "no-store",
     },
   );
@@ -71,6 +78,7 @@ export async function api<T>(
       data.message || "Please try again",
       response.status,
       data.fieldErrors,
+      data.code,
     );
   }
   return data as T;

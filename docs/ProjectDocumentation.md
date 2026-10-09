@@ -217,6 +217,30 @@ Timetable edits affect future interpretation. They cannot silently move accepted
 
 The timetable is an interpretation reference within Subjects. It does not add scheduled syncing, reminders, automatic course history, or tasks for every class meeting.
 
+#### KT notices
+
+Settings offers **Show KT notices** (default) or **Ignore KT notices**. KT (ATKT/backlog) notices concern only students re-taking a failed subject: KT exam timetables, forms, fees and results.
+
+- The extraction marks an item `ktOnly` only when it is just for KT students. The backend also marks items whose title, Gmail subject or Classroom title says so plainly (ATKT, "KT exam/form/result/students", "backlog exam"). It never marks items naming regular students too, or a bare "KT", which may be a teacher's initials.
+- With Ignore selected, a KT-only Gmail or Classroom item that matches no existing task is ignored like a targeting mismatch: no task, review, completion change or activity, and the record keeps the minimized reason `kt_notice`. Tasks already tracked keep receiving updates.
+- The choice applies to newly processed items. **Reprocess** on a source reconsiders earlier ones under the current setting.
+
+#### Timetable upload
+
+Students can fill weekly slots from their college timetable instead of typing them (Subjects → **Upload timetable**). This is an explicit student upload; it does not read Gmail or Classroom attachments.
+
+- Input: exactly two supported kinds, both read without AI. Either the department's timetable PDF (up to four pages), or up to four screenshots of the Somaiya roster scheduler's Week view (PNG, JPEG or WebP). Files are limited to 10 MB each and 20 MB in total. Mixed uploads are rejected, and so are scanned PDFs without text, with guidance towards the two supported kinds.
+- Generated PDFs are read from their own text and ruling lines, without AI. Each cell's weekday comes from the day header and its time span from the rows it covers, so merged multi-hour lab cells keep their full interval. Rows read top to bottom, so `12:00-1:00` is 12:00–13:00.
+- Department timetables that exist only as a picture or a scanned PDF are read without AI too. Ruling lines are found in the pixels, and the table is cut into its smallest cells; cells are joined where the line between them is missing, which recovers merged labs and batch sub-columns. Each cell is read with Tesseract, then mapped through the same weekday/time logic as a generated PDF. The fixed structure repairs OCR gaps: unread day headers are filled from their neighbours, and hour labels are rebuilt by majority vote over the one-hour rows. Missing batch labels are restored from their column position, and look-alike characters in room codes are fixed (`82078` → `B207B`). Low-confidence cells are flagged for checking. A cropped picture without its time column is rejected.
+- Scheduler screenshots are read from pixel geometry with local Tesseract OCR. Grey ruling lines give the seven day columns and 30-minute rows. Hour labels anchor the clock, and each class is a solid coloured block whose top and bottom give its times. OCR reads only small crops: day headers, hour labels, and each block's course code and name. The page scrolls, so screenshots may overlap and arrive in any order. Pieces of one class are joined by weekday, colour and overlapping time. Classes still cut off are flagged so the student checks their times, and time ranges no screenshot shows are reported. Scheduler entries are already the student's own classes, so batch filtering does not apply.
+- Lab and tutorial sessions are printed as side-by-side batch columns in one time block (`B1 WDL…`, `B2 DBMS…`) or as numbered groups (`DA_1`, `DA_2`). The profile batch decides batch-labelled rows; other batches stay visible as not included. Numbered groups and one course printed in several rooms at once are explicit student choices, never guessed. A timetable whose header names another class year or division is excluded visibly unless the student includes it.
+- Subject links: an exact name/code/alias match with a compatible component is preselected. A batch session is a lab or tutorial; a whole-class cell is theory. Same-course siblings (the lab of an exactly matched theory subject), matching initials, and AI suggestions are only suggestions the student accepts. AI receives course labels, component hints and the student's subject list, and may return only supplied subject IDs.
+- Missing subjects: each course card offers **Create subject from this**, prefilled with the printed name, kind and course code; the student can edit them first. Creating links all of that course's slots. The printed label is saved as an alias when the name differs. A subject with the same normalized name and kind is never created twice: the form offers the existing one (or a suggested match), and the API rejects duplicates with `409 DUPLICATE_SUBJECT`, including renames.
+- Electives (`E-`), honours (`H-`) and minors are grouped by course family, so `E-ACC`, `E-ACC_1…_5` and `H-CSFTUT`/`H_CSF` are one course each. A checklist offers each family; families matching the student's subjects start ticked, and unticked families are left out visibly. Class-wide placeholders such as `Minor -- --` or `EL -- --` stay included with a note to link the student's own minor or elective. A course taught in parallel by several teachers (e.g. SDT, E-ACC, E-Dev) becomes one choice of teacher for the week, because each teacher keeps the same group; per-time-block room choices remain when teachers are not printed.
+- Review: the original page is shown beside an editable draft. Every included slot needs a subject and valid times before saving; unresolved rows can be fixed or explicitly excluded. Breaks are listed as non-classes.
+- Saving: a dry run shows additions, already-saved duplicates, updates and removals (replace mode) and overlaps. One transaction then saves all selected subjects after rechecking the profile and subject revisions. Overlaps and removals need explicit acknowledgement. Retries reuse the idempotency key.
+- Retention: uploaded files, extracted text and drafts are not stored; multipart temporary files are removed after the request. Confirmed slots record `origin` (`timetable_import`, reading method, time). Refreshing the page discards an unconfirmed draft.
+
 Classroom's `dueDate` and `dueTime` represent UTC values. Convert the API values to IST before displaying them; a date-only UI screenshot is not proof that the API lacks a time. `creationTime`, `updateTime`, and `scheduledTime` identify publication/editing behavior, not test attendance. [Classroom coursework fields](https://developers.google.com/workspace/classroom/reference/rest/v1/courses.courseWork)
 
 Effective priority follows this precedence:
@@ -559,7 +583,7 @@ Provide unread/read state and links to the affected task, review item, or connec
 | Authentication | Supabase Auth with Google |
 | Database access | SQLAlchemy, Alembic, psycopg |
 | Integrations | Official Google API clients |
-| AI | OpenAI primary, Gemini fallback |
+| AI | Groq primary, configured Groq/OpenAI/Gemini fallbacks (text only); timetable files are read without AI using pdfplumber and local Tesseract OCR |
 | Tests | Pytest, Vitest, React Testing Library, Playwright |
 | JavaScript runtime | Node 24 |
 | Python runtime | Python 3.13 |
@@ -647,8 +671,8 @@ Disconnecting one service must not accidentally revoke another service's shared 
 
 AI performs classification, extraction, rule interpretation, and permitted candidate matching. It does not provide student-facing summaries or chat.
 
-- OpenAI is primary.
-- After a retryable failure, or invalid structured output following one repair attempt, use Gemini.
+- Groq is primary (student decision). After a retryable failure, or invalid structured output following one repair attempt, try the configured Groq fallback model, then OpenAI, then Gemini.
+- One deadline bounds a whole provider chain, including repairs and fallbacks, where a workflow sets one (timetable upload).
 - Model IDs are deployment configuration.
 - Validate configured models against extraction and matching fixtures before release.
 - Reject outputs that violate schemas, ownership, task-type restrictions, or candidate constraints.
@@ -811,6 +835,7 @@ FastAPI exposes versioned REST under `/api/v1`, with generated OpenAPI documenta
 | Task history | `GET /tasks/{id}/history`; paginated source and change timeline |
 | Subjects | `GET/POST /subjects`; `GET/PATCH/DELETE /subjects/{id}`; kinds theory/lab/tutorial; subject creation is student-initiated |
 | Subject timetable | `GET/PUT /subjects/{id}/timetable`; retrieve or atomically replace the subject's optional weekly slots using its current revision; omitted existing slots are removed after explicit save |
+| Timetable upload | `POST /timetable-imports/extract` (multipart; returns grid cells and page previews); `POST /timetable-imports/interpret` (returns an editable draft; no writes); `POST /timetable-imports/confirm` (`dryRun` summary, or one atomic save across subjects in add/replace mode) |
 | Classroom mapping | `GET /connections/{id}/classroom-courses` for source metadata only; `PUT/DELETE /subjects/{id}/classroom-mappings/{connectionId}/{externalCourseId}` for explicit linking/unlinking |
 | Connections | `GET /connections`; `POST /connections/authorize`; `GET /connections/oauth/callback`; `DELETE /connections/{id}` |
 | Sync | `POST /connections/{id}/sync`; `GET /sync-jobs/{id}`; `POST /sync-jobs/{id}/advance` |
@@ -1037,7 +1062,8 @@ Document separate environments and server-only settings for:
 - Runtime and migration database connections.
 - Google OAuth client credentials and callback URLs.
 - Versioned source-token encryption keys.
-- OpenAI and Gemini API keys and explicitly configured model IDs.
+- Groq, OpenAI and Gemini API keys and explicitly configured model IDs.
+- Tesseract OCR installed on the API host for scheduler screenshots.
 - Frontend/backend origins.
 - Sync work budget and function duration.
 - Validated sender/template configuration and completion enablement.

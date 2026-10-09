@@ -7,18 +7,22 @@ export function Dialog({
   title,
   description,
   children,
+  className,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   title: string;
   description: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
     <D.Root open={open} onOpenChange={onOpenChange}>
       <D.Portal>
         <D.Overlay className="fixed inset-0 z-40 bg-black/45" />
-        <D.Content className="dialog-panel">
+        <D.Content
+          className={className ? "dialog-panel " + className : "dialog-panel"}
+        >
           <div className="dialog-heading">
             <D.Title className="text-xl font-semibold">{title}</D.Title>
             <D.Description className="mt-1 text-sm text-secondary">

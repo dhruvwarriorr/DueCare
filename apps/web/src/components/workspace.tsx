@@ -32,6 +32,7 @@ import type { Profile, Page, Task, Subject } from "@/lib/types";
 import { Button } from "./ui/button";
 import { ErrorNotice } from "./ui/field";
 import { ProfileForm } from "./profile-form";
+import { KtPreference } from "./kt-preference";
 import { TaskEditor } from "./task-editor";
 import { TaskDetail } from "./task-detail";
 import { Subjects } from "./subjects";
@@ -691,6 +692,7 @@ function App() {
                 {view === "settings" && (
                   <>
                     <ProfileForm key={p.revision} profile={p} />
+                    <KtPreference profile={p} />
                     <PrivacyControls />
                     <section className="panel settings-link">
                       <div>

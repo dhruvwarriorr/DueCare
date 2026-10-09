@@ -99,6 +99,7 @@ class Cand:
     method: str = "ai"
     source: str = "gmail"
     course_label: str | None = None
+    kt_only: bool = False
 
 
 @dataclass
@@ -400,6 +401,7 @@ def gmail_candidates(prepared, snap, ctx, token, account_email):
             course.get("course"), {**item.targeting.model_dump(), "scope": "activity"}
         )
         cand.trusted = bool(label) and addressed and from_lms
+        cand.kt_only = cand.kt_only or kt_text(decoded.subject)
         cand.identity_key = f"{snap['provider_id']}:{i}"
         cand.links = links[:5]
         if item.intent == "submission":
@@ -446,6 +448,7 @@ def classroom_candidates(prepared, snap, ctx, token):
         )
         cand.observed = targeting.merge({**it.targeting.model_dump(), "scope": "activity"})
         cand.trusted = True  # The student explicitly linked this course to their subject(s).
+        cand.kt_only = cand.kt_only or kt_text(item.get("title"))
         cand.identity_key = (
             snap["provider_id"] if (resource == "coursework" and i == 0) else f"{snap['provider_id']}:{i}"
         )
@@ -503,6 +506,22 @@ def submission_candidates(prepared, snap):
             links=[data.get("alternateLink")] if data.get("alternateLink") else [],
         )
     )
+
+
+# KT (ATKT) notices concern only students re-taking a failed subject. The extraction flag decides;
+# these wordings also mark an item when the model misses them, unless regular students are included.
+KT_ONLY = re.compile(
+    r"\b(?:a\.?\s?t\.?\s?k\.?\s?t\b|kt\s+(?:exams?|examinations?|students?|subjects?|forms?|results?|papers?"
+    r"|fees?|re-?exams?|re-?examinations?|registrations?)|(?:re-?exam(?:ination)?s?|supplementary)\s+for\s+kt\b"
+    r"|backlog\s+(?:exams?|examinations?|students?|subjects?))",
+    re.I,
+)
+REGULAR = re.compile(r"\bregular\b", re.I)
+
+
+def kt_text(*texts):
+    text = " ".join(t for t in texts if t)
+    return bool(KT_ONLY.search(text)) and not REGULAR.search(text)
 
 
 def from_item(item, ctx, base_choices, allowed, occurred, source):
@@ -569,6 +588,7 @@ def from_item(item, ctx, base_choices, allowed, occurred, source):
         section=item.section,
         relates=item.relatesToAssessment,
         source=source,
+        kt_only=item.ktOnly or kt_text(item.title, item.assessmentLabel),
     )
 
 
@@ -965,6 +985,9 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
             .where(Task.id == uuid.UUID(cand.match_task_id), Task.user_id == uid)
             .with_for_update()
         )
+    if cand.kt_only and ctx["profile"].get("ignoreKtNotices") and not task:
+        # The student chose to ignore KT notices. Work already tracked keeps receiving updates.
+        return done("ignored_kt")
     subject_id = cand.subject_id or (str(task.subject_id) if task and task.subject_id else None)
     if not subject_id and cand.subject_choices:
         choices = cand.subject_choices
@@ -1284,6 +1307,8 @@ def commit(db, uid, record, prepared, ctx, progress, run):
         reason = (
             "targeting_mismatch"
             if "ignored_mismatch" in outcomes
+            else "kt_notice"
+            if "ignored_kt" in outcomes
             else ("unmatched_receipt" if "unmatched_receipt" in outcomes else "not_academic_work")
         )
         if reason == "unmatched_receipt" or record.kind.startswith("classroom"):

@@ -866,3 +866,69 @@ def test_lms_sender_and_host_are_always_recognized(monkeypatch):
     monkeypatch.setattr(settings(), "lms_hosts", "")
     assert "lms-kjsse@somaiya.edu" in interpret.lms_senders()
     assert "lms-kjsce.somaiya.edu" in interpret.lms_hosts()
+
+
+def reprocess(client, headers, conn):
+    job = client.post(f"/api/v1/connections/{conn}/reprocess", headers=fresh(headers)).json()["job"]
+    while job["status"] not in ("completed", "failed"):
+        job = client.post(f"/api/v1/sync-jobs/{job['id']}/advance", headers=headers).json()
+
+
+def test_kt_notices_follow_the_student_setting(client, headers, student, fake, model):
+    subjects = setup_student(client, headers)
+    ds = subjects["Data Structures"]["id"]
+    me = client.get("/api/v1/me", headers=headers).json()
+    assert me["ignoreKtNotices"] is False  # Default: KT notices are processed like any other.
+    r = client.patch(
+        "/api/v1/me", headers=fresh(headers), json={"revision": me["revision"], "ignoreKtNotices": True}
+    )
+    assert r.status_code == 200 and r.json()["ignoreKtNotices"] is True
+    exam = {"divisions": ["B"]}
+    model.items = {
+        # Flagged by the extraction.
+        "DS exam schedule for November": [{"intent": "new_work", "taskType": "test", "title": "DS end-semester exam",
+            "subjectId": ds, "ktOnly": True, "targeting": exam, "timing": {"startsAt": "2026-11-20T10:00:00+05:30"}}],
+        # Missed by the extraction but plainly worded.
+        "ATKT examination form": [{"intent": "new_work", "taskType": "assignment", "title": "Submit exam form",
+            "subjectId": ds, "targeting": exam, "timing": {"dueAt": "2026-11-01T17:00:00+05:30"}}],
+        # Regular and KT students together is not KT-only.
+        "Regular and KT students: DS IA2": [{"intent": "new_work", "taskType": "test", "title": "DS IA2",
+            "subjectId": ds, "targeting": exam, "timing": {"startsAt": "2026-10-20T10:00:00+05:30"}}],
+        "KT exam timetable": [{"intent": "new_work", "taskType": "test", "title": "KT exam DS", "subjectId": ds,
+            "ktOnly": True, "timing": {"startsAt": "2026-11-25T10:00:00+05:30"}}],
+    }  # fmt: skip
+    t0 = now() - timedelta(days=3)
+    for gid, subject in [
+        ("k1", "DS exam schedule for November"),
+        ("k2", "ATKT examination form"),
+        ("k3", "Regular and KT students: DS IA2"),
+    ]:
+        send(fake, gid, "exam.cell@somaiya.edu", (subject, f"{subject}. Details of the exam inside."), t0)
+    conn = connect(client, headers, fake, "gmail")
+    run(client, headers, conn)
+    assert [t.title for t in tasks(student.uid)] == ["DS IA2"]
+    stamp = t0.isoformat().replace("+00:00", "Z")
+    fake.courses = [{"id": "c1", "name": "DS Div B"}]
+    fake.coursework["c1"] = [{"id": "w1", "title": "KT exam timetable", "description": "KT exam on 25 Nov",
+        "workType": "MATERIAL", "creationTime": stamp, "updateTime": stamp}]  # fmt: skip
+    room = connect(client, headers, fake, "classroom", code="c2")
+    run(client, headers, room)  # Discovers the course so it can be linked.
+    client.put(f"/api/v1/subjects/{ds}/classroom-mappings/{room}/c1", headers=fresh(headers))
+    run(client, headers, room)
+    assert [t.title for t in tasks(student.uid)] == ["DS IA2"]
+    with transaction(student.uid) as db:
+        outcomes = db.scalars(select(SourceEvent.outcome).where(SourceEvent.user_id == student.uid)).all()
+    assert sorted(outcomes).count("ignored_kt") == 3
+    # Turning the setting off and reprocessing brings earlier KT notices back.
+    me = client.get("/api/v1/me", headers=headers).json()
+    client.patch(
+        "/api/v1/me", headers=fresh(headers), json={"revision": me["revision"], "ignoreKtNotices": False}
+    )
+    reprocess(client, headers, conn)
+    reprocess(client, headers, room)
+    assert sorted(t.title for t in tasks(student.uid)) == [
+        "DS IA2",
+        "DS end-semester exam",
+        "KT exam DS",
+        "Submit exam form",
+    ]

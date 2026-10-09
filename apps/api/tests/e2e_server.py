@@ -7,14 +7,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import json
 
-from duecare import auth, google
+from duecare import academic, auth, google
 from duecare.common import work
-from duecare.models import Connection, now
+from duecare.models import Connection, Subject, now
 from duecare.sources_api import link_account
+from duecare.views import profile
 from tests.conftest import FixtureAuth, account
 from tests.conftest import app as app
 from tests.fake_google import FakeGoogle, eml
+from tests.scheduler_png import screenshot
 from tests.test_phase4 import imported
+from tests.test_timetable_import import WEEK
+from tests.timetable_pdf import sample
 
 fixture = account("browser-fixture@somaiya.edu")
 sources_fixture = account("browser-sources@somaiya.edu")
@@ -22,6 +26,8 @@ attention_fixture = account("browser-attention@somaiya.edu")
 privacy_fixture = account("browser-privacy@somaiya.edu")
 delete_fixture = account("browser-delete@somaiya.edu")
 source_delete_fixture = account("browser-source-delete@somaiya.edu")
+timetable_fixture = account("browser-timetable@somaiya.edu")
+scheduler_fixture = account("browser-scheduler@somaiya.edu")
 auth.provider = FixtureAuth()
 
 # Synthetic, redacted source data. No real mail, accounts, or Google requests are involved.
@@ -110,6 +116,53 @@ with work({"id": str(source_delete_fixture.uid)}) as db:
     db.get(Connection, __import__("uuid").UUID(privacy_connection)).status = "disconnected"
 removed_task, _, _ = imported(source_delete_fixture.uid, privacy_connection, "privacy-remove")
 retained_task, _, _ = imported(source_delete_fixture.uid, privacy_connection, "privacy-keep", manual=True)
+# A division B, batch 2 student with subjects to link, and a synthetic timetable PDF to upload.
+with work({"id": str(timetable_fixture.uid)}) as db:
+    p = profile(db, str(timetable_fixture.uid))
+    p.data = academic.profile_data(
+        {
+            "branchCode": "COMPS",
+            "classYear": "SY",
+            "currentSemester": 3,
+            "division": "B",
+            "generalBatch": "2",
+            "rollNumber": "001A",
+        }
+    )
+    p.revision = 2
+    for name, kind, code in [
+        ("Data Structures", "theory", "DS"),
+        ("Data Structures Lab", "lab", None),
+        ("Database Management Systems", "theory", "DBMS"),
+        ("Database Management Systems Lab", "lab", None),
+        ("Computer Organization and Architecture", "theory", None),
+    ]:
+        db.add(
+            Subject(user_id=timetable_fixture.uid, name=name, kind=kind, data={"code": code, "aliases": []})
+        )
+(Path(__file__).resolve().parents[3] / ".local/e2e-timetable.pdf").write_bytes(sample())
+# A scheduler user with subjects, and two overlapping Week-view screenshots.
+with work({"id": str(scheduler_fixture.uid)}) as db:
+    p = profile(db, str(scheduler_fixture.uid))
+    p.data = academic.profile_data(
+        {
+            "branchCode": "COMPS",
+            "classYear": "SY",
+            "currentSemester": 3,
+            "division": "B",
+            "generalBatch": "2",
+            "rollNumber": "002A",
+        }
+    )
+    p.revision = 2
+    for name, kind in [
+        ("Data Structures", "theory"),
+        ("Data Structures Lab", "lab"),
+        ("Introduction to Virtual Reality and Unity Game Engine", "theory"),
+    ]:
+        db.add(Subject(user_id=scheduler_fixture.uid, name=name, kind=kind, data={"aliases": []}))
+for n, (start, end) in enumerate([(420, 715), (690, 985)], start=1):
+    screenshot(start, end, WEEK).save(Path(__file__).resolve().parents[3] / f".local/e2e-scheduler-{n}.png")
 (Path(__file__).resolve().parents[3] / ".local/e2e-account.json").write_text(
     json.dumps(
         {
@@ -119,6 +172,8 @@ retained_task, _, _ = imported(source_delete_fixture.uid, privacy_connection, "p
             "privacyHandle": privacy_fixture.handle,
             "deleteHandle": delete_fixture.handle,
             "sourceDeleteHandle": source_delete_fixture.handle,
+            "timetableHandle": timetable_fixture.handle,
+            "schedulerHandle": scheduler_fixture.handle,
             "removedTask": removed_task,
             "retainedTask": retained_task,
         }

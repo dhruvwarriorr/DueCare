@@ -24,7 +24,10 @@ const routes = [
   "activity",
   "privacy",
   "suppression-records",
+  "timetable-imports",
 ];
+// Timetable uploads: one PDF or two pictures, 20 MB in total, plus multipart overhead.
+const maxUploadBytes = 20 * 1024 * 1024 + 512 * 1024;
 async function proxy(
   request: Request,
   { params }: { params: Promise<{ path: string[] }> },
@@ -43,7 +46,27 @@ async function proxy(
       { message: "Refresh the page and try again" },
       { status: 403 },
     );
-  const deleting = path.join("/") === "privacy/account-deletion";
+  const route = path.join("/");
+  const uploading = route === "timetable-imports/extract";
+  if (uploading) {
+    const size = Number(request.headers.get("content-length"));
+    if (!size || size > maxUploadBytes)
+      return NextResponse.json(
+        {
+          code: "FILE_TOO_LARGE",
+          message: "Uploads are limited to 20 MB in total",
+        },
+        { status: 413 },
+      );
+    if (
+      !request.headers.get("content-type")?.startsWith("multipart/form-data")
+    )
+      return NextResponse.json(
+        { code: "UNSUPPORTED_FILE", message: "Upload the timetable as a file" },
+        { status: 415 },
+      );
+  }
+  const deleting = route === "privacy/account-deletion";
   const ticket = deleting
     ? (await cookies()).get(deletionCookie)?.value
     : undefined;
@@ -61,12 +84,25 @@ async function proxy(
         ? JSON.stringify({ token: ticket, advance: request.method === "POST" })
         : request.method === "GET"
           ? undefined
-          : await request.text(),
+          : uploading
+            ? // Binary files pass through unchanged with their multipart boundary.
+              await request.arrayBuffer()
+            : await request.text(),
       headers: {
         "Idempotency-Key": request.headers.get("idempotency-key") || "",
+        ...(uploading
+          ? { "Content-Type": request.headers.get("content-type") as string }
+          : {}),
       },
     },
-    path[0] === "sync-jobs" && path[2] === "advance" ? 140000 : 25000,
+    path[0] === "sync-jobs" && path[2] === "advance"
+      ? 140000
+      : // Reading allows 45 seconds (pictures use a vision model); organizing allows 60.
+        uploading
+        ? 60000
+        : route === "timetable-imports/interpret"
+          ? 75000
+          : 25000,
   );
   let payload = await response.text();
   let resumeToken: string | undefined;

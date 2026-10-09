@@ -14,6 +14,11 @@ dependencies = [
     "cryptography>=44",
     "google-api-python-client>=2.150",
     "google-auth>=2.35",
+    "pdfplumber>=0.11",
+    "pillow>=11",
+    "python-multipart>=0.0.20",
+    "numpy>=2",
+    "pytesseract>=0.3.13",
 ]
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.11"]

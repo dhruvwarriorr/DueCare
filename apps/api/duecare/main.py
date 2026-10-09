@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from . import academic, auth, phase3_api, privacy_api, sources_api
+from . import academic, auth, phase3_api, privacy_api, sources_api, timetable_api
 from .common import User, finish, owned, page, replay, revision, work
 from .db import transaction
 from .domain import effective_status, task_data
@@ -147,6 +147,7 @@ def profile_out(p, user):
         **data,
         "branchOptions": [{"code": code, "name": name} for code, name in academic.BRANCHES.items()],
         "theme": p.data.get("theme", "system"),
+        "ignoreKtNotices": bool(p.data.get("ignoreKtNotices", False)),
         "id": str(p.user_id),
         "identity": user,
         "revision": p.revision,
@@ -201,9 +202,21 @@ def subjects(limit: int = Query(50, ge=1, le=100), cursor: str | None = None, us
         return {"items": [subject_out(s, mappings.get(s.id, [])) for s in rows], "nextCursor": c}
 
 
+def unique_subject(db, uid, name, kind, exclude=None):
+    """One record per name and kind. The per-owner lock taken by work() serializes concurrent adds."""
+    for s in db.scalars(select(Subject).where(Subject.user_id == uid, Subject.kind == kind)):
+        if s.id != exclude and academic.normalized(s.name) == academic.normalized(name):
+            raise ApiError(
+                409,
+                "DUPLICATE_SUBJECT",
+                f"You already have {s.name} ({kind}). Use that subject instead",
+            )
+
+
 @app.post("/api/v1/subjects", status_code=201)
 def add_subject(body: SubjectInput, user=User):
     with work(user) as db:
+        unique_subject(db, user["id"], body.name, body.kind)
         s = Subject(
             user_id=uuid.UUID(user["id"]),
             name=body.name,
@@ -227,6 +240,7 @@ def edit_subject(id: uuid.UUID, body: SubjectInput, user=User):
     with work(user) as db:
         s = owned(db, Subject, id, user["id"], True)
         revision(s, body.revision)
+        unique_subject(db, user["id"], body.name, body.kind, exclude=s.id)
         s.name, s.kind = body.name, body.kind
         s.data = body.model_dump(mode="json", by_alias=True, exclude={"name", "kind", "revision"})
         s.revision += 1
@@ -292,13 +306,9 @@ def save_timetable(id: uuid.UUID, body: TimetableInput, request: Request, user=U
             slot = current.get(item.id) if item.id else Slot(subject_id=id, user_id=uuid.UUID(user["id"]))
             if item.id in retained:
                 raise ApiError(422, "DUPLICATE_SLOT", "A slot cannot be saved twice")
-            slot.data = {
-                **item.model_dump(mode="json", by_alias=True, exclude={"id"}),
-                "timezone": "Asia/Kolkata",
-                "semesterContext": p.data.get("currentSemester"),
-                "termContext": s.data.get("term"),
-                "subjectRevision": s.revision + 1,
-            }
+            slot.data = timetable_api.slot_data(
+                item.model_dump(mode="json", by_alias=True, exclude={"id"}), p, s
+            )
             db.add(slot)
             db.flush()
             retained.add(slot.id)
@@ -580,4 +590,5 @@ def overview(user=User):
 app.include_router(sources_api.router)
 app.include_router(phase3_api.router)
 app.include_router(privacy_api.router)
+app.include_router(timetable_api.router)
 app.include_router(privacy_api.internal)
