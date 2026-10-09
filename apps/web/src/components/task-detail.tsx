@@ -1,15 +1,9 @@
 "use client";
 import { useCutoffRefresh } from "@/lib/use-cutoff-refresh";
 import { useState } from "react";
-import {
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, formatTime, datetimeFields } from "@/lib/api";
-import type { Task, Page, History, Evidence } from "@/lib/types";
-import { FacultyApproval } from "./faculty-approval";
+import type { Task } from "@/lib/types";
 import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
 import { ErrorNotice } from "./ui/field";
@@ -24,167 +18,6 @@ const sourceNames: Record<string, string> = {
   gmail: "Gmail",
   classroom: "Google Classroom",
 };
-const eventNames: Record<string, string> = {
-  new_work: "New work",
-  revision: "Revision",
-  due_notice: "Due / overdue notice",
-  supporting: "Supporting information",
-  submission: "Submission evidence",
-  unsubmission: "Unsubmission",
-  withdrawal: "Withdrawal notice",
-  unknown: "Source item",
-};
-
-function SourceEvidence({ task }: { task: Task }) {
-  const client = useQueryClient();
-  const evidence = useQuery({
-    queryKey: ["evidence", task.id],
-    queryFn: () =>
-      api<{ items: Evidence[] }>("/tasks/" + task.id + "/evidence"),
-  });
-  const others = useQuery({
-    queryKey: ["tasks", "picker", task.type],
-    queryFn: () => api<Page<Task>>("/tasks?limit=100&type=" + task.type),
-  });
-  const [target, setTarget] = useState<Record<string, string>>({});
-  const [merged, setMerged] = useState<string | null>(null);
-  const [absorb, setAbsorb] = useState("");
-  const done = async () => {
-    for (const key of ["tasks", "task", "overview", "evidence", "history"])
-      await client.invalidateQueries({ queryKey: [key] });
-  };
-  const move = useMutation({
-    mutationFn: (e: Evidence) =>
-      api("/evidence/" + e.id + "/reassign", "POST", { taskId: target[e.id] }),
-    onSuccess: done,
-  });
-  const merge = useMutation({
-    mutationFn: () => {
-      const other = candidates.find((t) => t.id === absorb)!;
-      return api<{ id: string }>("/task-merges", "POST", {
-        survivingTaskId: task.id,
-        absorbedTaskId: other.id,
-        survivingRevision: task.revision,
-        absorbedRevision: other.revision,
-      });
-    },
-    onSuccess: async (r) => {
-      setMerged(r.id);
-      setAbsorb("");
-      await done();
-    },
-  });
-  const undo = useMutation({
-    mutationFn: () => api("/task-merges/" + merged + "/undo", "POST"),
-    onSuccess: async () => {
-      setMerged(null);
-      await done();
-    },
-  });
-  const candidates = (others.data?.items || []).filter((t) => t.id !== task.id);
-  const items = evidence.data?.items || [];
-  return (
-    <section className="detail-section">
-      <h3>Source evidence</h3>
-      <ErrorNotice error={evidence.error} retry={() => evidence.refetch()} />
-      {items.length === 0 ? (
-        <p className="text-sm text-secondary mt-2">
-          No imported evidence. This task was entered by you.
-        </p>
-      ) : (
-        <ol className="timeline">
-          {items.map((e) => (
-            <li key={e.id} className={e.state === "reassigned" ? "muted" : ""}>
-              <strong>{eventNames[e.eventType] || e.eventType}</strong>
-              <time>
-                {e.occurredAt ? formatTime(e.occurredAt) : "Time not stated"}
-              </time>
-              <p className="text-secondary text-xs">
-                {e.sourceKind.startsWith("classroom") ? "Classroom" : "Gmail"}
-                {e.sender ? " · " + e.sender : ""}
-                {e.sourceTitle ? " · " + e.sourceTitle : ""}
-                {e.state === "reassigned" ? " · moved to another task" : ""}
-              </p>
-              {e.excerpt && <p className="text-xs">{e.excerpt}</p>}
-              {e.state === "active" && candidates.length > 0 && (
-                <span className="link-control mt-2">
-                  <label className="sr-only" htmlFor={"move-" + e.id}>
-                    Move this evidence to another task
-                  </label>
-                  <select
-                    id={"move-" + e.id}
-                    value={target[e.id] || ""}
-                    onChange={(ev) =>
-                      setTarget({ ...target, [e.id]: ev.target.value })
-                    }
-                  >
-                    <option value="">Move to another task…</option>
-                    {candidates.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.title}
-                      </option>
-                    ))}
-                  </select>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!target[e.id] || move.isPending}
-                    onClick={() => move.mutate(e)}
-                  >
-                    Move
-                  </Button>
-                </span>
-              )}
-            </li>
-          ))}
-        </ol>
-      )}
-      <ErrorNotice error={move.error} />
-      <div className="merge-row">
-        <label className="sr-only" htmlFor={"merge-" + task.id}>
-          Duplicate task to merge into this one
-        </label>
-        <select
-          id={"merge-" + task.id}
-          value={absorb}
-          onChange={(e) => setAbsorb(e.target.value)}
-        >
-          <option value="">Merge a duplicate into this task…</option>
-          {candidates.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.title}
-              {t.subjectName ? " · " + t.subjectName : ""}
-            </option>
-          ))}
-        </select>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!absorb || merge.isPending}
-          onClick={() => merge.mutate()}
-        >
-          Merge
-        </Button>
-      </div>
-      {merged && (
-        <div className="success-notice mt-2" role="status">
-          <p>
-            Tasks merged. The duplicate is hidden and its evidence moved here.
-          </p>
-          <button
-            type="button"
-            disabled={undo.isPending}
-            onClick={() => undo.mutate()}
-          >
-            Undo merge
-          </button>
-        </div>
-      )}
-      <ErrorNotice error={merge.error || undo.error} />
-    </section>
-  );
-}
-
 export function TaskDetail({
   id,
   onClose,
@@ -199,18 +32,6 @@ export function TaskDetail({
   const task = useQuery({
     queryKey: ["task", id],
     queryFn: () => api<Task>("/tasks/" + id),
-  });
-  const timeline = useInfiniteQuery({
-    queryKey: ["history", id],
-    initialPageParam: "",
-    queryFn: ({ pageParam }) =>
-      api<Page<History>>(
-        "/tasks/" +
-          id +
-          "/history" +
-          (pageParam ? "?cursor=" + encodeURIComponent(pageParam) : ""),
-      ),
-    getNextPageParam: (p) => p.nextCursor || undefined,
   });
   const mutation = useMutation({
     mutationFn: ({ remove }: { remove: boolean }) =>
@@ -251,7 +72,7 @@ export function TaskDetail({
         if (!v) onClose();
       }}
       title={t?.title || "Task details"}
-      description="Your instructions, timing, and change history."
+      description="Your instructions, timing, and status."
     >
       <div className="dialog-body">
         <ErrorNotice error={task.error} retry={() => task.refetch()} />
@@ -265,7 +86,6 @@ export function TaskDetail({
                 <span className="tag">{t.type}</span>
                 <span className="tag">{t.priority} priority</span>
               </div>
-              <FacultyApproval emails={t.senderEmails} />
               <dl className="detail-grid">
                 <div>
                   <dt>Subject</dt>
@@ -385,43 +205,6 @@ export function TaskDetail({
                   <p className="whitespace-pre-wrap">{t.notes}</p>
                 </section>
               )}
-              <section className="detail-section">
-                <h3>Change history</h3>
-                <ErrorNotice
-                  error={timeline.error}
-                  retry={() => timeline.refetch()}
-                />
-                <ol className="timeline">
-                  {timeline.data?.pages
-                    .flatMap((p) => p.items)
-                    .map((h) => (
-                      <li key={h.id}>
-                        <strong>{h.action.replaceAll("_", " ")}</strong>
-                        <time>{formatTime(h.recordedAt)}</time>
-                        <p className="text-secondary text-xs">
-                          {h.actor === "source" ? "From a source" : "You"} ·{" "}
-                          {Object.keys(h.changes).join(", ") ||
-                            "no field changes"}
-                        </p>
-                        <details>
-                          <summary>View change details</summary>
-                          <pre className="history-values">
-                            {JSON.stringify(h.changes, null, 2)}
-                          </pre>
-                        </details>
-                      </li>
-                    ))}
-                </ol>
-                {timeline.hasNextPage && (
-                  <Button
-                    variant="outline"
-                    onClick={() => timeline.fetchNextPage()}
-                  >
-                    Older changes
-                  </Button>
-                )}
-              </section>
-              <SourceEvidence task={t} />
               <ErrorNotice error={mutation.error} />
               {confirm && (
                 <div className="error-notice">

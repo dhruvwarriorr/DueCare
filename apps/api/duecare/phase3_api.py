@@ -48,6 +48,9 @@ def manual_history(db, task, action, changes):
 
 def review_out(r, db):
     task = db.get(Task, r.task_id) if r.task_id else None
+    proposal = interpret.source_fields(r.data.get("proposal") or {})
+    if proposal.get("dueDate") and proposal.get("type"):
+        proposal["dueAt"] = interpret.task_input(proposal)["dueAt"]
     return {
         "id": str(r.id),
         "issueType": r.issue_type,
@@ -58,7 +61,7 @@ def review_out(r, db):
         "senderEmail": r.sender_email,
         "observed": r.data.get("observed"),
         "student": r.data.get("student"),
-        "proposal": r.data.get("proposal"),
+        "proposal": proposal,
         "conflicts": r.data.get("conflicts"),
         "window": r.data.get("window"),
         "alternatives": r.data.get("alternatives"),
@@ -67,7 +70,7 @@ def review_out(r, db):
         "excerpt": r.data.get("excerpt"),
         "sourceTitle": r.data.get("sourceTitle"),
         "sourceKind": r.data.get("sourceKind"),
-        "links": r.data.get("links", []),
+        "links": mail.source_links(r.data.get("links", [])),
         "validation": r.data.get("validation"),
         "evidenceCount": len(r.data.get("eventIds", [])),
         "resolution": r.data.get("resolution"),
@@ -187,6 +190,18 @@ def resolve_review(id: uuid.UUID, body: Resolution, request: Request, user=User)
                 owned(db, Subject, body.subject_id, user["id"])
                 edits["subjectId"] = str(body.subject_id)
             fields.update(edits)
+            if any(edits.get(k) for k in ("dueAt", "startsAt", "availabilityClosesAt")):
+                fields.pop("dueDate", None)
+                if fields.get("type") == "test" and edits.get("startsAt"):
+                    fields["timingMode"] = "fixed_session"
+                    if not edits.get("dueAt"):
+                        fields.pop("dueAt", None)
+                elif fields.get("type") == "test" and edits.get("availabilityClosesAt"):
+                    fields["timingMode"] = "attempt_window"
+                    if not edits.get("dueAt"):
+                        fields.pop("dueAt", None)
+                else:
+                    fields["timingMode"] = "deadline_only"
             if not fields.get("type"):
                 raise ApiError(
                     422,
@@ -202,7 +217,7 @@ def resolve_review(id: uuid.UUID, body: Resolution, request: Request, user=User)
             created = interpret.create_task(
                 db,
                 user["id"],
-                {"profile": context(db, user["id"])["profile"]},
+                interpret.load_context(db, user["id"], record),
                 record,
                 event,
                 cand,
@@ -658,7 +673,7 @@ def task_evidence(id: uuid.UUID, user=User):
                     "sourceKind": record.kind,
                     "sender": record.sender_email,
                     "sourceTitle": record.title,
-                    "links": event.data.get("links", []),
+                    "links": mail.source_links(event.data.get("links", [])),
                     "excerpt": event.data.get("excerpt"),
                     "validation": event.data.get("validation"),
                     "targeting": event.data.get("targeting"),

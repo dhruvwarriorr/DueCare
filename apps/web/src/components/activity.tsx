@@ -5,7 +5,7 @@ import {
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
-import { Bell, ArrowUpRight } from "lucide-react";
+import { Bell, ArrowUpRight, CheckCheck } from "lucide-react";
 import { api, formatTime } from "@/lib/api";
 import type { Page } from "@/lib/types";
 import { Button } from "./ui/button";
@@ -46,7 +46,12 @@ export function ActivityInbox({
       api("/activity/" + item.id, "PATCH", { read, revision: item.revision }),
     onSuccess: () => client.invalidateQueries({ queryKey: ["activity"] }),
   });
+  const markAll = useMutation({
+    mutationFn: () => api("/activity/read-all", "POST"),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["activity"] }),
+  });
   const items = query.data?.pages.flatMap((p) => p.items) || [];
+  const unread = query.data?.pages[0]?.unreadCount || 0;
   return (
     <>
       <div className="section-bar">
@@ -56,17 +61,30 @@ export function ActivityInbox({
             New work, changes, and items that need your attention.
           </p>
         </div>
-        <label>
-          <span className="sr-only">Activity filter</span>
-          <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-            <option value="">All activity</option>
-            <option value="false">Unread</option>
-            <option value="true">Read</option>
-          </select>
-        </label>
+        <div className="activity-tools">
+          {unread > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={markAll.isPending}
+              onClick={() => markAll.mutate()}
+            >
+              <CheckCheck size={15} />
+              Mark all as read
+            </Button>
+          )}
+          <label>
+            <span className="sr-only">Activity filter</span>
+            <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+              <option value="">All activity</option>
+              <option value="false">Unread</option>
+              <option value="true">Read</option>
+            </select>
+          </label>
+        </div>
       </div>
       <ErrorNotice
-        error={query.error || mark.error}
+        error={query.error || mark.error || markAll.error}
         retry={() => query.refetch()}
       />
       <section className="panel activity-list" aria-label="Activity inbox">

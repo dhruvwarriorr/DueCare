@@ -84,10 +84,10 @@ test("activity reads, task links, privacy controls, and themes work on a mobile 
     page.getByRole("heading", { name: "Privacy and your data" }),
   ).toBeVisible();
   await expect(page.getByText("No imported sources to delete.")).toBeVisible();
-  await page.getByLabel("Appearance").selectOption("dark");
+  await page.getByRole("radio", { name: "Dark", exact: true }).check();
   await page.getByRole("button", { name: "Save profile", exact: true }).click();
   await expect(page.locator("html")).toHaveClass(/dark/);
-  await page.getByLabel("Appearance").selectOption("light");
+  await page.getByRole("radio", { name: "Light", exact: true }).check();
   await page.getByRole("button", { name: "Save profile", exact: true }).click();
   await expect(page.locator("html")).not.toHaveClass(/dark/);
   await page

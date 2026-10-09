@@ -3,7 +3,7 @@ import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, datetimeFields, localTime, utcTime } from "@/lib/api";
+import { api, localTime, utcTime } from "@/lib/api";
 import type { Task, Subject } from "@/lib/types";
 import { Dialog } from "./ui/dialog";
 import { Field, ErrorNotice } from "./ui/field";
@@ -15,16 +15,14 @@ const schema = z
   })
   .catchall(z.string());
 type Values = z.infer<typeof schema>;
-const timeLabels: Record<string, string> = {
-  dueAt: "Exact cutoff",
-  submissionOpensAt: "Submission opens",
-  availabilityOpensAt: "Quiz window opens",
-  availabilityClosesAt: "Quiz window closes",
-  loginByAt: "Login by",
-  reportingAt: "Report at",
-  startsAt: "Test starts",
-  endsAt: "Test ends",
-};
+// Deadline inputs split the stored IST cutoff into a date and an optional time.
+function deadlineOf(task?: Task) {
+  if (task?.dueDate) return { date: task.dueDate, time: "" };
+  const local = localTime(task?.dueAt);
+  return local
+    ? { date: local.slice(0, 10), time: local.slice(11, 16) }
+    : { date: "", time: "" };
+}
 export function TaskEditor({
   task,
   subjects,
@@ -35,56 +33,47 @@ export function TaskEditor({
   onClose: () => void;
 }) {
   const client = useQueryClient();
+  const deadline = deadlineOf(task);
   const defaults: Values = {
     title: task?.title || "",
     type: task?.type || "assignment",
+    subjectId: task?.subjectId || "",
+    priorityOverride: task?.priorityOverride || "",
+    notes: task?.notes || "",
+    deadlineDate: deadline.date,
+    deadlineTime: deadline.time,
   };
-  const optional = [
-    "subjectId",
-    "instructions",
-    "notes",
-    "estimatedEffortMinutes",
-    "priorityOverride",
-    "assessmentLabel",
-    "deliverableLabel",
-    "location",
-    "syllabus",
-    "permittedTools",
-    "preparationInstructions",
-    "dueDate",
-    "dateWindowStart",
-    "dateWindowEnd",
-    "durationMinutes",
-    "timingMode",
-  ] as const;
-  for (const field of optional)
-    defaults[field] = task?.[field] == null ? "" : String(task[field]);
-  defaults.timingMode = task?.timingMode || "undated";
-  for (const field of datetimeFields)
-    defaults[field] =
-      field === "dueAt" && task?.dueDate ? "" : localTime(task?.[field]);
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: defaults,
   });
-  const type = useWatch({ control: form.control, name: "type" });
-  const mode = useWatch({ control: form.control, name: "timingMode" });
+  const date = useWatch({ control: form.control, name: "deadlineDate" });
   const save = useMutation({
     mutationFn: async (v: Values) => {
-      const body: Record<string, unknown> = { ...v };
-      for (const field of datetimeFields) body[field] = utcTime(v[field] || "");
-      for (const field of optional)
-        if (!v[field])
-          body[field] = ["instructions", "notes"].includes(field) ? "" : null;
-      body.timingMode = v.timingMode || "undated";
-      for (const field of ["estimatedEffortMinutes", "durationMinutes"])
-        body[field] = v[field] ? Number(v[field]) : null;
-      if (
-        v.timingMode === "fixed_session" ||
-        v.timingMode === "attempt_window" ||
-        v.dueDate
-      )
-        body.dueAt = null;
+      const body: Record<string, unknown> = {
+        title: v.title,
+        type: v.type,
+        subjectId: v.subjectId || null,
+        priorityOverride: v.priorityOverride || null,
+        notes: v.notes || "",
+      };
+      // Only rewrite timing when the student changed it, so imported test
+      // details (start, attempt window) survive ordinary edits.
+      const changed =
+        !task ||
+        v.deadlineDate !== deadline.date ||
+        v.deadlineTime !== deadline.time;
+      if (changed) {
+        const d = v.deadlineDate || "";
+        const t = v.deadlineTime || "";
+        body.timingMode = d ? "deadline_only" : "undated";
+        body.dueDate = d && !t ? d : null;
+        body.dueAt = d && t ? utcTime(d + "T" + t) : null;
+        if (task) {
+          body.startsAt = null;
+          body.availabilityClosesAt = null;
+        }
+      }
       if (task) body.revision = task.revision;
       return api<Task>(
         task ? "/tasks/" + task.id : "/tasks",
@@ -95,7 +84,7 @@ export function TaskEditor({
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ["tasks"] });
       await client.invalidateQueries({ queryKey: ["overview"] });
-      await client.invalidateQueries({ queryKey: ["history"] });
+      await client.invalidateQueries({ queryKey: ["task"] });
       onClose();
     },
   });
@@ -106,7 +95,7 @@ export function TaskEditor({
         if (!v) onClose();
       }}
       title={task ? "Edit task" : "Add a task"}
-      description="Only a title and type are required. All times use IST."
+      description="Only a title is required. All times use IST."
     >
       <form onSubmit={form.handleSubmit((v) => save.mutate(v))}>
         <div className="dialog-body">
@@ -139,6 +128,21 @@ export function TaskEditor({
                 ))}
               </select>
             </Field>
+            <Field id="deadline-date" label="Deadline date">
+              <input
+                id="deadline-date"
+                type="date"
+                {...form.register("deadlineDate")}
+              />
+            </Field>
+            <Field id="deadline-time" label="Deadline time (optional)">
+              <input
+                id="deadline-time"
+                type="time"
+                disabled={!date}
+                {...form.register("deadlineTime")}
+              />
+            </Field>
             <Field id="priority" label="Priority">
               <select id="priority" {...form.register("priorityOverride")}>
                 <option value="">Based on deadline</option>
@@ -147,123 +151,15 @@ export function TaskEditor({
                 ))}
               </select>
             </Field>
-            <Field id="effort" label="Estimated effort (minutes)">
-              <input
-                id="effort"
-                type="number"
-                min="1"
-                {...form.register("estimatedEffortMinutes")}
-              />
-            </Field>
           </div>
-          <Field id="instructions" label="Instructions">
-            <textarea
-              id="instructions"
-              rows={3}
-              {...form.register("instructions")}
-            />
-          </Field>
+          <p className="form-help">
+            {date
+              ? "Without a time, it's due by 23:59 IST that day."
+              : "No date yet? Leave it blank and add it when you know."}
+          </p>
           <Field id="notes" label="Personal notes">
             <textarea id="notes" rows={2} {...form.register("notes")} />
           </Field>
-          <details className="advanced" open={Boolean(task)}>
-            <summary>Timing and assessment details</summary>
-            <div className="form-grid mt-4">
-              <Field id="timing-mode" label="Timing">
-                <select id="timing-mode" {...form.register("timingMode")}>
-                  <option value="undated">Undated / simple deadline</option>
-                  <option value="deadline_only">Deadline only</option>
-                  {type === "test" && (
-                    <>
-                      <option value="fixed_session">Fixed-session test</option>
-                      <option value="attempt_window">
-                        Online attempt window
-                      </option>
-                    </>
-                  )}
-                  <option value="unresolved">Exact time unresolved</option>
-                </select>
-              </Field>
-              <Field
-                id="due-date"
-                label={
-                  type === "assignment"
-                    ? "Date-only deadline"
-                    : "Test date (time unknown)"
-                }
-              >
-                <input
-                  id="due-date"
-                  type="date"
-                  {...form.register("dueDate")}
-                />
-              </Field>
-              {datetimeFields.map((field) => (
-                <Field key={field} id={field} label={timeLabels[field]}>
-                  <input
-                    id={field}
-                    type="datetime-local"
-                    {...form.register(field)}
-                  />
-                </Field>
-              ))}
-              <Field id="dateWindowStart" label="Unresolved date range begins">
-                <input
-                  id="dateWindowStart"
-                  type="date"
-                  {...form.register("dateWindowStart")}
-                />
-              </Field>
-              <Field id="dateWindowEnd" label="Unresolved date range ends">
-                <input
-                  id="dateWindowEnd"
-                  type="date"
-                  {...form.register("dateWindowEnd")}
-                />
-              </Field>
-              {(
-                [
-                  "assessmentLabel",
-                  "deliverableLabel",
-                  "location",
-                  "durationMinutes",
-                  "syllabus",
-                  "permittedTools",
-                  "preparationInstructions",
-                ] as const
-              ).map((field) => (
-                <Field
-                  key={field}
-                  id={field}
-                  label={
-                    {
-                      assessmentLabel: "Assessment label",
-                      deliverableLabel: "Deliverable label",
-                      location: "Venue",
-                      durationMinutes: "Duration (minutes)",
-                      syllabus: "Syllabus",
-                      permittedTools: "Permitted tools",
-                      preparationInstructions: "Preparation instructions",
-                    }[field]
-                  }
-                >
-                  <input
-                    id={field}
-                    type={field === "durationMinutes" ? "number" : "text"}
-                    min={field === "durationMinutes" ? 1 : undefined}
-                    {...form.register(field)}
-                  />
-                </Field>
-              ))}
-            </div>
-            <p className="form-help">
-              {mode === "attempt_window"
-                ? "The closing time determines when an incomplete test is missed."
-                : mode === "fixed_session"
-                  ? "The confirmed start determines when an incomplete test is missed."
-                  : "Date-only assignment deadlines use 23:59 IST. Unknown exam times remain unresolved."}
-            </p>
-          </details>
           <ErrorNotice error={save.error} />
         </div>
         <div className="dialog-footer">

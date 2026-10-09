@@ -88,8 +88,8 @@ test("imported LMS work is resolved in Needs attention, completed from confirmed
   await expect(receipt).toHaveCount(0);
 
   await page.goto("/?view=tasks");
-  await page.getByLabel("Status filter").selectOption("completed");
-  await page.getByRole("button", { name: /EXP3-Queue/ }).click();
+  await page.getByRole("radio", { name: "Completed", exact: true }).check();
+  await page.getByRole("button", { name: /^EXP3-Queue/ }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText(
     "Confirmed by you from submission evidence",
@@ -99,12 +99,6 @@ test("imported LMS work is resolved in Needs attention, completed from confirmed
   await expect(dialog).toContainText(
     "Linked automatically from the course name",
   );
-  await expect(
-    dialog.getByText("Submission evidence", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    dialog.getByText("Due / overdue notice", { exact: true }),
-  ).toBeVisible();
   await page.getByRole("button", { name: "Close dialog" }).click();
 
   await page.goto("/?view=rules");

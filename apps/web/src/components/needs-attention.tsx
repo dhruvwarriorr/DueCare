@@ -175,6 +175,11 @@ function ReviewCard({
             .map(([k, label]) => (
               <li key={k}>
                 {label}: {formatTime(String(p[k]))}
+                {k === "dueAt" && Boolean(p.dueDate) && (
+                  <span className="block text-xs text-secondary">
+                    Date only; default 11:59 pm IST
+                  </span>
+                )}
               </li>
             ))}
         </ul>
@@ -403,14 +408,6 @@ function ReviewCard({
           Dismiss
         </Button>
       </div>
-      {item.links.length > 0 && (
-        <p className="text-xs text-secondary review-links">
-          Source link:{" "}
-          <a href={item.links[0]} target="_blank" rel="noreferrer noopener">
-            {new URL(item.links[0]).hostname}
-          </a>
-        </p>
-      )}
     </article>
   );
 }

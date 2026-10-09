@@ -27,15 +27,14 @@ def task_data(payload: TaskInput):
                     422, "INVALID_TIME", "Precise times must include a timezone", {name: "Timezone required"}
                 )
             d[name] = dt.astimezone(UTC).isoformat()
-    if d["dueDate"] and d["dueAt"]:
-        raise ApiError(422, "INVALID_TIME", "Choose a date-only deadline or an exact cutoff, not both")
     if d["dueDate"]:
-        if d["type"] == "assignment":
-            dt = datetime.combine(payload.due_date, time(23, 59), IST)
-            d["dueAt"] = dt.astimezone(UTC).isoformat()
-            d["timingMode"] = "deadline_only"
-        else:
-            d["timingMode"] = "unresolved"
+        cutoff = datetime.combine(payload.due_date, time(23, 59), IST).astimezone(UTC).isoformat()
+        # Stored date-only tasks also contain their derived cutoff. Accept that round trip.
+        if d["dueAt"] and d["dueAt"] != cutoff:
+            raise ApiError(422, "INVALID_TIME", "Choose a date-only deadline or an exact cutoff, not both")
+        if d["startsAt"] or d["availabilityClosesAt"]:
+            raise ApiError(422, "INVALID_TIME", "Choose a date-only deadline or a timed test, not both")
+        d["dueAt"], d["timingMode"] = cutoff, "deadline_only"
     if d["timingMode"] == "fixed_session":
         if d["type"] != "test" or not d["startsAt"]:
             raise ApiError(422, "INVALID_TIME", "A fixed-session test requires a confirmed start")
@@ -76,7 +75,7 @@ def task_data(payload: TaskInput):
         )
         if d[k]
     }
-    if d["dueDate"] and d["type"] == "assignment":
+    if d["dueDate"]:
         d["timingProvenance"]["dueAt"]["basis"] = "student-date-only"
         d["timingProvenance"]["dueAt"]["defaultTime"] = "23:59 IST"
     return d

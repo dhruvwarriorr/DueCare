@@ -4,6 +4,7 @@ import uuid
 
 from sqlalchemy import select, text
 
+from . import mail
 from .domain import effective_status, priority
 from .models import Profile, SourceEvent, SourceRecord, Subject, TaskEvidence, now
 
@@ -50,6 +51,7 @@ def task_out(t, db, uid):
         db.info[cache_key] = senders
     return {
         **t.data,
+        "sourceLinks": mail.source_links(t.data.get("sourceLinks", [])),
         "senderEmails": sorted(db.info[cache_key].get(t.id, ())),
         "id": str(t.id),
         "title": t.title,

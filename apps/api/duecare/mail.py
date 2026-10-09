@@ -15,6 +15,7 @@ from email.parser import BytesParser
 from email.utils import getaddresses, parsedate_to_datetime
 from html import unescape
 from html.parser import HTMLParser
+from urllib.parse import urlparse
 
 MAX_TEXT = 200_000
 MAX_LINKS = 25
@@ -46,6 +47,39 @@ PROMOTION = re.compile(
     r"webinars?|workshops?|councils?)\b",
     re.I | re.S,
 )
+
+SOCIAL_HOSTS = {
+    "facebook.com",
+    "fb.com",
+    "instagram.com",
+    "twitter.com",
+    "x.com",
+    "youtube.com",
+    "youtu.be",
+    "linkedin.com",
+}
+
+
+def source_links(links):
+    """Signature social profiles and institution homepages are not academic source links."""
+    result = []
+    for link in links or []:
+        if not isinstance(link, str):
+            continue
+        try:
+            parsed = urlparse(link)
+            host = (parsed.hostname or "").lower()
+        except ValueError:
+            continue
+        if parsed.scheme not in ("https", "http") or not host:
+            continue
+        if any(host == h or host.endswith("." + h) for h in SOCIAL_HOSTS):
+            continue
+        if host.endswith("somaiya-ayurvihar.org") and parsed.path.rstrip("/") in ("", "/en"):
+            continue
+        if link not in result:
+            result.append(link)
+    return result
 
 
 def academic_exclusion(subject, sender_email=None, sender_name=None, text=None):
@@ -344,7 +378,7 @@ def decode(raw: bytes) -> Decoded:
     linkable = "\n".join(s.text for s in sections if s.kind in ("authored", "quoted", "forwarded"))
     for url in [*html_links, *URL.findall(linkable)]:
         url = url.rstrip(".,;")
-        if url in seen or len(url) > 2000 or FOOTER.search(url):
+        if url in seen or len(url) > 2000 or FOOTER.search(url) or not source_links([url]):
             continue
         seen.add(url)
         links.append({"kind": "link", "title": None, "reference": url, "mediaType": None, "sizeBytes": None})

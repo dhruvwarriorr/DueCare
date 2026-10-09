@@ -42,7 +42,6 @@ export function ProfileForm({ profile }: { profile: Profile }) {
     },
   });
   const fields = [
-    ["classYear", "Class / year"],
     ["currentSemester", "Current semester"],
     ["division", "Division"],
     ["generalBatch", "Batch"],
@@ -90,6 +89,29 @@ export function ProfileForm({ profile }: { profile: Profile }) {
             ))}
           </select>
         </Field>
+        <fieldset className="omr-field">
+          <legend>Class / year</legend>
+          <div className="omr-grid">
+            {classYears.map((year, i) => (
+              <label className="omr-cell" key={year}>
+                <input
+                  type="radio"
+                  value={year}
+                  required
+                  {...form.register("classYear")}
+                />
+                {year}
+                <span className="bubble" aria-hidden="true" />
+                <small>{["First", "Second", "Third", "Final"][i]} year</small>
+              </label>
+            ))}
+          </div>
+          {form.formState.errors.classYear && (
+            <p className="error-text" role="alert">
+              Choose your class / year
+            </p>
+          )}
+        </fieldset>
         {fields.map(([name, label]) => (
           <Field
             key={name}
@@ -97,36 +119,34 @@ export function ProfileForm({ profile }: { profile: Profile }) {
             id={name}
             error={form.formState.errors[name]?.message}
           >
-            {name === "classYear" ? (
-              <select id={name} required {...form.register(name)}>
-                <option value="" disabled>
-                  Choose your class / year
-                </option>
-                {classYears.map((year) => (
-                  <option key={year} value={year}>
-                    {year}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                id={name}
-                required
-                type={name === "currentSemester" ? "number" : "text"}
-                {...form.register(name, {
-                  valueAsNumber: name === "currentSemester",
-                })}
-              />
-            )}
+            <input
+              id={name}
+              required
+              type={name === "currentSemester" ? "number" : "text"}
+              {...form.register(name, {
+                valueAsNumber: name === "currentSemester",
+              })}
+            />
           </Field>
         ))}
-        <Field label="Appearance" id="theme">
-          <select id="theme" {...form.register("theme")}>
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </Field>
+        <fieldset className="omr-field">
+          <legend>Appearance</legend>
+          <div className="omr-grid">
+            {(
+              [
+                ["system", "System"],
+                ["light", "Light"],
+                ["dark", "Dark"],
+              ] as const
+            ).map(([value, label]) => (
+              <label className="omr-cell" key={value}>
+                <input type="radio" value={value} {...form.register("theme")} />
+                {label}
+                <span className="bubble" aria-hidden="true" />
+              </label>
+            ))}
+          </div>
+        </fieldset>
       </div>
       <p className="form-help">
         Enter your batch once. It applies to every theory, lab, and tutorial

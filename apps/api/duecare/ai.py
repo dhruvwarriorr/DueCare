@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .config import settings
 
-PROMPT_VERSION = "branch-extract-4"
+PROMPT_VERSION = "branch-extract-5"
 log = logging.getLogger("duecare.ai")
 _deadline = ContextVar("ai_deadline", default=None)
 _slots = BoundedSemaphore(1)
@@ -197,7 +197,10 @@ Rules:
   sections use their own earlier dates and are history unless the current section relies on them.
 - Keep roles separate: reporting/login/start/end/upload opening/closing/online availability.
   For a fixed-session test dueAt equals startsAt; for an online attempt window dueAt equals
-  availabilityClosesAt. A date with no time: put it in dateOnly. A range of possible days: use
+  availabilityClosesAt. A date with no time: put it only in dateOnly and leave all precise
+  timestamps null; the application applies 11:59 pm Asia/Kolkata as its deadline default.
+  Never invent midnight, a start time, or an ISO timestamp for a date-only notice.
+  A range of possible days: use
   dateWindowStart/dateWindowEnd. Tentative choices: alternatives. Never pick one for the student.
 - A time derived from the student's weekly slot requires timetableSlotId and "derived" listing
   the field; only when the text says the regular session timing and exactly one slot matches.

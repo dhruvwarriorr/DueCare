@@ -11,7 +11,15 @@ const todayIST = () =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(
     new Date(),
   );
-export function Calendar({ onOpen }: { onOpen: (id: string) => void }) {
+export function Calendar({
+  onOpen,
+  controls,
+  children,
+}: {
+  onOpen: (id: string) => void;
+  controls?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
   const [month, setMonth] = useState(() => todayIST().slice(0, 7));
   const [selected, setSelected] = useState(todayIST());
   const [year, m] = month.split("-").map(Number);
@@ -78,7 +86,8 @@ export function Calendar({ onOpen }: { onOpen: (id: string) => void }) {
             Confirmed cutoffs in IST. Unknown exam times stay off the calendar.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="week-controls">
+          {controls}
           <Button
             variant="outline"
             size="icon"
@@ -106,6 +115,7 @@ export function Calendar({ onOpen }: { onOpen: (id: string) => void }) {
           </Button>
         </div>
       </div>
+      {children}
       <ErrorNotice error={query.error} retry={() => query.refetch()} />
       {query.isPending && <p role="status">Loading calendar…</p>}
       <div className="calendar panel">
@@ -133,7 +143,7 @@ export function Calendar({ onOpen }: { onOpen: (id: string) => void }) {
                 {byDay(d.key)
                   .slice(0, 2)
                   .map((t) => (
-                    <span key={t.id} className={"day-task " + t.type}>
+                    <span key={t.id} className={"day-task " + t.status}>
                       {t.title}
                     </span>
                   ))}
@@ -148,7 +158,14 @@ export function Calendar({ onOpen }: { onOpen: (id: string) => void }) {
         </div>
       </div>
       <section className="mt-6 panel p-5">
-        <h3>{selected}</h3>
+        <h3>
+          {new Date(selected + "T00:00:00Z").toLocaleDateString("en-IN", {
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+            timeZone: "UTC",
+          })}
+        </h3>
         {byDay(selected).length === 0 ? (
           <p className="text-secondary mt-3">
             No confirmed cutoffs on this day.

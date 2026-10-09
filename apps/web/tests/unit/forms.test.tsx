@@ -39,22 +39,32 @@ describe("manual data entry", () => {
     );
     expect(screen.getByLabelText("Branch")).toBeRequired();
     expect(screen.getByRole("option", { name: "COMPS" })).toHaveValue("COMPS");
-    for (const label of ["Institution", "Programme", "Department", "Admission year", "General batch"])
+    for (const label of [
+      "Institution",
+      "Programme",
+      "Department",
+      "Admission year",
+      "General batch",
+    ])
       expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
   });
-  it("shows attempt-window timing and keeps task status outside the editor", () => {
+  it("asks only for a deadline date and optional time", () => {
     wrap(<TaskEditor subjects={[]} onClose={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText("Type"), {
-      target: { value: "test" },
+    const time = screen.getByLabelText("Deadline time (optional)");
+    expect(time).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Deadline date"), {
+      target: { value: "2026-10-20" },
     });
-    fireEvent.change(screen.getByLabelText("Timing"), {
-      target: { value: "attempt_window" },
-    });
+    expect(time).not.toBeDisabled();
     expect(
-      screen.getByText(
-        "The closing time determines when an incomplete test is missed.",
-      ),
+      screen.getByText("Without a time, it's due by 23:59 IST that day."),
     ).toBeInTheDocument();
-    expect(screen.queryByLabelText("Status")).not.toBeInTheDocument();
+    for (const label of [
+      "Status",
+      "Instructions",
+      "Estimated effort (minutes)",
+      "Timing",
+    ])
+      expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
   });
 });

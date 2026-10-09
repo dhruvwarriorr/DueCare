@@ -25,7 +25,7 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
     "Choose your branch", "COMPS", "IT", "AIDS", "CSBS", "VLSI", "CCE", "EXTC", "EXCP", "MECH", "RAI", "CIVIL",
   ]);
   await page.getByLabel("Branch", { exact: true }).selectOption("COMPS");
-  await page.getByLabel("Class / year", { exact: true }).selectOption("SY");
+  await page.getByRole("radio", { name: /^SY\b/ }).check();
   const values = {
     "Current semester": "3",
     Division: "B",
@@ -36,7 +36,7 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
     await page.getByLabel(label, { exact: true }).fill(value);
   await page.getByRole("button", { name: "Save profile", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Your work, in view." }),
+    page.getByRole("heading", { name: /This week/ }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.reload();
@@ -66,14 +66,11 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
     .getByLabel("Subject", { exact: true })
     .selectOption({ label: "Database lab · lab" });
   await page.getByLabel("Personal notes").fill("Keep this personal note");
-  await page
-    .getByText("Timing and assessment details", { exact: true })
-    .click();
-  await page.getByLabel("Date-only deadline").fill("2026-10-20");
+  await page.getByLabel("Deadline date").fill("2026-10-20");
   await page.getByRole("button", { name: "Save task", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
-  await page.getByRole("button", { name: /Browser lab report/ }).click();
+  await page.getByRole("button", { name: /^Browser lab report/ }).click();
   await expect(
     page.getByText("Keep this personal note", { exact: true }),
   ).toBeVisible();
@@ -87,8 +84,8 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
   await page.getByLabel("Personal notes").fill("Edited while completed");
   await page.getByRole("button", { name: "Save task", exact: true }).click();
   await page.reload();
-  await page.getByLabel("Status filter").selectOption("completed");
-  await page.getByRole("button", { name: /Browser lab report/ }).click();
+  await page.getByRole("radio", { name: "Completed", exact: true }).check();
+  await page.getByRole("button", { name: /^Browser lab report/ }).click();
   await expect(
     page.getByRole("button", { name: "Reopen task", exact: true }),
   ).toBeVisible();
@@ -100,7 +97,8 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
     page.getByRole("button", { name: "Mark completed", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Close dialog" }).click();
-  await page.getByRole("button", { name: "Calendar", exact: true }).click();
+  await page.getByRole("button", { name: "Week", exact: true }).click();
+  await page.getByRole("button", { name: "Month", exact: true }).click();
   const currentMonth = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kolkata",
   })
@@ -121,7 +119,7 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
   ).toBeVisible();
   await page.getByRole("button", { name: "2026-10-20, 1 tasks" }).click();
   await expect(
-    page.getByRole("button", { name: /Browser lab report/ }).last(),
+    page.getByRole("button", { name: /^Browser lab report/ }).last(),
   ).toBeVisible();
   await page.screenshot({
     path: "../../.local/calendar-desktop.png",
@@ -138,12 +136,12 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
   ).toBeTruthy();
   await page.getByRole("button", { name: "Open navigation" }).click();
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
-  await page.getByLabel("Status filter").selectOption("");
+  await page.getByRole("radio", { name: "All", exact: true }).check();
   await page.screenshot({
     path: "../../.local/tasks-mobile.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: /Browser lab report/ }).click();
+  await page.getByRole("button", { name: /^Browser lab report/ }).click();
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   await page.getByRole("button", { name: "Confirm deletion" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -165,10 +163,10 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
   const quiz = await quizResponse.json();
   await page.reload();
   await expect(
-    page.getByRole("button", { name: /Live cutoff quiz/ }),
+    page.getByRole("button", { name: /^Live cutoff quiz/ }),
   ).toContainText("due");
   await expect(
-    page.getByRole("button", { name: /Live cutoff quiz/ }),
+    page.getByRole("button", { name: /^Live cutoff quiz/ }),
   ).toContainText("missed", { timeout: 10000 });
   const afterCsrf = await page.request.get("/auth/csrf");
   const afterToken = (await afterCsrf.json()).token;
@@ -186,7 +184,7 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
   await page.reload();
   await page.getByRole("button", { name: "Open navigation" }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByLabel("Appearance", { exact: true }).selectOption("dark");
+  await page.getByRole("radio", { name: "Dark", exact: true }).check();
   await page.getByRole("button", { name: "Save profile", exact: true }).click();
   await expect(page.locator("html")).toHaveClass("dark");
   await page.reload();

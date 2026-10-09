@@ -5,11 +5,13 @@ import uuid
 from sqlalchemy import select
 
 from . import faculty, interpret, mail, targeting
+from .domain import effective_status
 from .models import (
     Connection,
     History,
     Profile,
     ReviewItem,
+    SourceAttachment,
     SourceEvent,
     SourceRecord,
     Task,
@@ -21,12 +23,61 @@ from .models import (
 def ensure_source_policy(db, uid):
     """Apply the saved-mail policy once per owner under the caller's work lock."""
     profile = db.get(Profile, uuid.UUID(str(uid)))
-    version = "academic-faculty-receipts-2"
+    version = "academic-end-of-day-links-3"
     if not profile or profile.data.get("sourcePolicyVersion") == version:
         return
-    result = refresh_attention(db, uid)
+    cleaned = refresh_saved_source_data(db, uid)
+    result = {**refresh_attention(db, uid), **cleaned}
     profile.data = {**profile.data, "sourcePolicyVersion": version, "sourcePolicyRefresh": result}
     profile.revision += 1
+
+
+def refresh_saved_source_data(db, uid):
+    """Remove saved signature URLs and normalize date-only proposals before acceptance."""
+    counts = {"linksRemoved": 0, "dateOnlyFixed": 0}
+    for model in (SourceEvent, ReviewItem, Task):
+        for row in db.scalars(select(model).where(model.user_id == uid)):
+            data = dict(row.data)
+            for key in ("links", "sourceLinks"):
+                if key in data:
+                    filtered = mail.source_links(data[key])
+                    counts["linksRemoved"] += len(data[key] or []) - len(filtered)
+                    data[key] = filtered
+            if model in (SourceEvent, ReviewItem) and (data.get("proposal") or {}).get("dueDate"):
+                proposal = interpret.source_fields(data["proposal"])
+                counts["dateOnlyFixed"] += int(proposal != data["proposal"])
+                data["proposal"] = proposal
+                if model == SourceEvent:
+                    data["timing"] = {
+                        k: v
+                        for k, v in (data.get("timing") or {}).items()
+                        if k
+                        not in ("dueAt", "startsAt", "endsAt", "availabilityOpensAt", "availabilityClosesAt")
+                    }
+            if (
+                model == Task
+                and data.get("dueDate")
+                and not any(
+                    key in (data.get("manualFieldOverrides") or {})
+                    for key in ("dueAt", "startsAt", "availabilityClosesAt")
+                )
+            ):
+                normalized = interpret.task_input(data)
+                if data.get("dueAt") != normalized["dueAt"]:
+                    data.update({k: normalized[k] for k in interpret.SCHEDULE_FIELDS})
+                    row.due_at = interpret.parse_dt(normalized["dueAt"])
+                    row.status = effective_status(row, now())
+                    counts["dateOnlyFixed"] += 1
+            if data != row.data:
+                row.data = data
+                row.revision += 1
+    for link in db.scalars(
+        select(SourceAttachment).where(SourceAttachment.user_id == uid, SourceAttachment.kind == "link")
+    ):
+        if not mail.source_links([link.reference]):
+            db.delete(link)
+            counts["linksRemoved"] += 1
+    return counts
 
 
 def refresh_faculty_reviews(db, uid):

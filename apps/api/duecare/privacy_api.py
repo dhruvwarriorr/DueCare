@@ -3,7 +3,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from . import auth, privacy
 from .common import User, finish, owned, page, replay, revision, work
@@ -74,6 +74,17 @@ def mark_read(id: uuid.UUID, body: ReadInput, user=User):
         revision(row, body.revision)
         row.read_at, row.revision = (now() if body.read else None), row.revision + 1
         return activity_out(row)
+
+
+@router.post("/activity/read-all")
+def mark_all_read(user=User):
+    with work(user) as db:
+        result = db.execute(
+            update(Activity)
+            .where(Activity.user_id == user["id"], Activity.read_at.is_(None))
+            .values(read_at=now(), revision=Activity.revision + 1)
+        )
+        return {"updated": result.rowcount}
 
 
 @router.get("/privacy/jobs")

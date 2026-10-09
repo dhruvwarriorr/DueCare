@@ -112,5 +112,5 @@ export function formatTime(value: string | null | undefined) {
         hour: "numeric",
         minute: "2-digit",
       }).format(new Date(value))
-    : "No precise cutoff";
+    : "No due date yet";
 }

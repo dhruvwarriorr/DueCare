@@ -948,7 +948,19 @@ def proposal(cand, subject_id):
         out["dateWindowStart"], out["dateWindowEnd"] = cand.window
     if cand.date_only:
         out["dueDate"] = cand.date_only
-    return {k: v for k, v in out.items() if v not in (None, "")}
+    return source_fields({k: v for k, v in out.items() if v not in (None, "")})
+
+
+def source_fields(fields):
+    """A stated date without a source time uses the local end-of-day default."""
+    fields = dict(fields)
+    if fields.get("dueDate"):
+        # Models sometimes return both dateOnly and an invented midnight timestamp.
+        # dateOnly records that no exact time was supplied; keep that distinction.
+        for key in ("dueAt", "startsAt", "endsAt", "availabilityOpensAt", "availabilityClosesAt"):
+            fields.pop(key, None)
+        fields["timingMode"] = "deadline_only"
+    return fields
 
 
 def candidate_from_event(event, record, fields=None):
@@ -987,7 +999,7 @@ def candidate_from_event(event, record, fields=None):
 def task_input(fields):
     """Validate a source proposal through the same contract as manual tasks."""
     allowed = {f.alias for f in TaskInput.model_fields.values()}
-    clean = {k: v for k, v in fields.items() if k in allowed}
+    clean = source_fields({k: v for k, v in fields.items() if k in allowed})
     if clean.get("type") == "test" and clean.get("startsAt") and not clean.get("timingMode"):
         clean["timingMode"] = "fixed_session"
     if clean.get("type") == "test" and clean.get("availabilityClosesAt") and not clean.get("startsAt"):
@@ -1007,14 +1019,14 @@ def task_input(fields):
 
 def unresolved(cand):
     """Timing the source does not settle: never invent a slot, date, or start time."""
+    if cand.date_only and not cand.window and not cand.alternatives:
+        return None
     if cand.question:
         return cand.question
     if cand.window:
         return "Exact date has not been announced. Which date in this window applies to you?"
     if cand.alternatives:
         return "The notice gives tentative alternatives. Which date applies?"
-    if cand.task_type == "test" and cand.date_only:
-        return "Exact start time has not been announced."
     if cand.mode == "unresolved":
         return "The source does not settle the timing for this work."
     return None
@@ -1064,6 +1076,8 @@ def create_task(db, uid, ctx, record, event, cand, subject_id, method, fields=No
             "sourceTime": source_order(db, event)[0].isoformat(),
             "evidenceRef": str(event.id),
         }
+    if d.get("dueDate"):
+        provenance["dueAt"] = {**provenance["dueAt"], "basis": "source-date-only", "defaultTime": "23:59 IST"}
     if timing_omitted:
         # Clearing uncertain timing is also a source decision: an older notice must not
         # fill it back in merely because the accepted values are now null.
@@ -1078,7 +1092,7 @@ def create_task(db, uid, ctx, record, event, cand, subject_id, method, fields=No
     d["academicContext"] = academic.context(p)
     d["manualFieldOverrides"] = {}
     d["sources"] = [cand.source]
-    d["sourceLinks"] = cand.links
+    d["sourceLinks"] = mail.source_links(cand.links)
     d["observedTargeting"] = cand.observed
     d["groupWork"] = cand.group_work
     if cand.subject_link:
@@ -1389,6 +1403,12 @@ def update_task(db, task, cand, event, explicit, method):
                     "sourceTime": incoming_order[0].isoformat(),
                     "evidenceRef": str(event.id),
                 }
+            if d.get("dueDate"):
+                prov["dueAt"] = {
+                    **prov.get("dueAt", {}),
+                    "basis": "source-date-only",
+                    "defaultTime": "23:59 IST",
+                }
             keep = {k: task.data[k] for k in task.data if k not in allowed}
             task.data = {
                 **keep,
@@ -1531,7 +1551,7 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
             "provenance": cand.provenance,
             "validation": cand.validation,
             "excerpt": cand.excerpt,
-            "links": cand.links,
+            "links": mail.source_links(cand.links),
             "proposal": proposal(cand, cand.subject_id),
         },
     )

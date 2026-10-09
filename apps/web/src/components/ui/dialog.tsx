@@ -8,6 +8,7 @@ export function Dialog({
   description,
   children,
   className,
+  side,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -15,25 +16,23 @@ export function Dialog({
   description: string;
   children: React.ReactNode;
   className?: string;
+  // "right" renders the panel as a full-height tray instead of a centred sheet.
+  side?: "right";
 }) {
+  const panel = ["dialog-panel", side === "right" && "drawer", className]
+    .filter(Boolean)
+    .join(" ");
   return (
     <D.Root open={open} onOpenChange={onOpenChange}>
       <D.Portal>
-        <D.Overlay className="fixed inset-0 z-40 bg-black/45" />
-        <D.Content
-          className={className ? "dialog-panel " + className : "dialog-panel"}
-        >
+        <D.Overlay className="dialog-overlay" />
+        <D.Content className={panel}>
           <div className="dialog-heading">
-            <D.Title className="text-xl font-semibold">{title}</D.Title>
-            <D.Description className="mt-1 text-sm text-secondary">
-              {description}
-            </D.Description>
+            <D.Title className="dialog-title">{title}</D.Title>
+            <D.Description className="dialog-desc">{description}</D.Description>
           </div>
-          <D.Close
-            className="absolute right-4 top-4 rounded-md p-2 hover:bg-muted"
-            aria-label="Close dialog"
-          >
-            <X size={18} />
+          <D.Close className="dialog-close" aria-label="Close dialog">
+            <X size={20} />
           </D.Close>
           {children}
         </D.Content>

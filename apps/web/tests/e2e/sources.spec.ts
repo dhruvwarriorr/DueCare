@@ -95,7 +95,7 @@ test("sources connect, sync in the browser, honour blocks, and link Classroom co
   // The LMS reminder is the student's own work: it becomes a task without asking. No subject of
   // theirs matches "Data Structures", so it is kept without one.
   await page.goto("/?view=tasks");
-  await expect(page.getByRole("button", { name: /EXP3-Queue/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^EXP3-Queue/ })).toBeVisible();
   await page.goto("/?view=dashboard");
   await expect(page.locator(".sync-overview")).toContainText(
     "personal.gmail@example.com",

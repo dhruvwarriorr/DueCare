@@ -124,6 +124,10 @@ def test_activity_read_paging_and_owner_isolation(client, headers, student, sour
         json={"read": False, "revision": marked["revision"]},
     )
     assert client.get("/api/v1/activity", headers=headers).json()["unreadCount"] == 1
+    # Marking everything read leaves other students' activity untouched.
+    assert client.post("/api/v1/activity/read-all", headers=fresh(other.headers)).json() == {"updated": 0}
+    assert client.post("/api/v1/activity/read-all", headers=fresh(headers)).json() == {"updated": 1}
+    assert client.get("/api/v1/activity", headers=headers).json()["unreadCount"] == 0
 
 
 def test_source_deletion_preserves_student_work_and_other_source(client, headers, student, source):

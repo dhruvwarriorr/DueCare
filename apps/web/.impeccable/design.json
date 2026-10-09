@@ -1,0 +1,914 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-09T16:07:18+00:00",
+  "title": "Design System: DueCare",
+  "extensions": {
+    "colorMeta": {
+      "ink": {
+        "role": "primary",
+        "displayName": "Drop-out Rose",
+        "canonical": "#c21c58",
+        "oklch": "oklch(53.2% 0.199 7.2)",
+        "tonalRamp": [
+          "#310003",
+          "#5d0016",
+          "#8b002f",
+          "#b4004d",
+          "#dd3c6d",
+          "#ff648f",
+          "#ff96b6",
+          "#ffc5de"
+        ]
+      },
+      "ink-line": {
+        "role": "primary",
+        "displayName": "Rose Line",
+        "canonical": "#d4668b",
+        "oklch": "oklch(65.2% 0.143 0.6)",
+        "tonalRamp": [
+          "#290009",
+          "#510022",
+          "#790d3e",
+          "#9e355d",
+          "#c5587e",
+          "#ec7ca0",
+          "#ffa3c4",
+          "#ffceea"
+        ]
+      },
+      "ink-rule": {
+        "role": "primary",
+        "displayName": "Rose Rule",
+        "canonical": "#efc3d2",
+        "oklch": "oklch(86.0% 0.054 355.9)",
+        "tonalRamp": [
+          "#1b020c",
+          "#391926",
+          "#593643",
+          "#7a5562",
+          "#9d7583",
+          "#c198a6",
+          "#e7bbca",
+          "#ffe0f0"
+        ]
+      },
+      "ink-tint": {
+        "role": "primary",
+        "displayName": "Rose Tint",
+        "canonical": "#fbe4ec",
+        "oklch": "oklch(94.0% 0.027 354.5)",
+        "tonalRamp": [
+          "#14060c",
+          "#302026",
+          "#4e3c43",
+          "#6e5b62",
+          "#907c83",
+          "#b49ea6",
+          "#d9c2ca",
+          "#fee7ef"
+        ]
+      },
+      "ink-wash": {
+        "role": "primary",
+        "displayName": "Rose Wash",
+        "canonical": "#fdf3f7",
+        "oklch": "oklch(97.3% 0.012 351.0)",
+        "tonalRamp": [
+          "#0f090c",
+          "#2a2326",
+          "#473f43",
+          "#675f62",
+          "#888083",
+          "#aba2a6",
+          "#d0c6ca",
+          "#f5ebef"
+        ]
+      },
+      "graphite": {
+        "role": "secondary",
+        "displayName": "Graphite",
+        "canonical": "#18171b",
+        "oklch": "oklch(20.8% 0.008 297.1)",
+        "tonalRamp": [
+          "#0b0a0e",
+          "#252429",
+          "#424146",
+          "#616065",
+          "#838187",
+          "#a5a4a9",
+          "#c9c8ce",
+          "#efedf3"
+        ]
+      },
+      "graphite-2": {
+        "role": "secondary",
+        "displayName": "Soft Graphite",
+        "canonical": "#5d4a53",
+        "oklch": "oklch(43.2% 0.029 348.3)",
+        "tonalRamp": [
+          "#14060d",
+          "#301f27",
+          "#4e3c45",
+          "#6e5b64",
+          "#907c85",
+          "#b49ea8",
+          "#d9c2cc",
+          "#ffe7f2"
+        ]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Cool Paper",
+        "canonical": "#f4f5f8",
+        "oklch": "oklch(97.0% 0.004 271.4)",
+        "tonalRamp": [
+          "#0a0b0d",
+          "#242527",
+          "#414244",
+          "#606164",
+          "#818285",
+          "#a4a5a8",
+          "#c8c9cc",
+          "#edeef1"
+        ]
+      },
+      "sheet": {
+        "role": "neutral",
+        "displayName": "Sheet White",
+        "canonical": "#ffffff",
+        "oklch": "oklch(100.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ]
+      },
+      "ink-dark": {
+        "role": "primary",
+        "displayName": "Lit Rose (dark)",
+        "canonical": "#ff6f9c",
+        "oklch": "oklch(72.8% 0.180 3.1)",
+        "tonalRamp": [
+          "#2e0006",
+          "#58001d",
+          "#850039",
+          "#ac1d57",
+          "#d44878",
+          "#fd6d9a",
+          "#ff9abf",
+          "#ffc8e6"
+        ]
+      },
+      "ink-line-dark": {
+        "role": "primary",
+        "displayName": "Rose Line (dark)",
+        "canonical": "#b94e76",
+        "oklch": "oklch(57.3% 0.144 359.3)",
+        "tonalRamp": [
+          "#29000a",
+          "#510023",
+          "#780c40",
+          "#9e355f",
+          "#c45880",
+          "#ec7ba2",
+          "#ffa3c7",
+          "#ffceec"
+        ]
+      },
+      "ink-rule-dark": {
+        "role": "primary",
+        "displayName": "Rose Rule (dark)",
+        "canonical": "#3f2430",
+        "oklch": "oklch(29.9% 0.045 352.0)",
+        "tonalRamp": [
+          "#18030d",
+          "#361b27",
+          "#553844",
+          "#765764",
+          "#987885",
+          "#bc9aa8",
+          "#e2becc",
+          "#ffe3f2"
+        ]
+      },
+      "ink-tint-dark": {
+        "role": "primary",
+        "displayName": "Rose Tint (dark)",
+        "canonical": "#33202a",
+        "oklch": "oklch(27.1% 0.034 346.7)",
+        "tonalRamp": [
+          "#15050e",
+          "#311e28",
+          "#503b46",
+          "#705a65",
+          "#927b86",
+          "#b69da9",
+          "#dbc1cd",
+          "#ffe6f3"
+        ]
+      },
+      "ink-wash-dark": {
+        "role": "primary",
+        "displayName": "Rose Wash (dark)",
+        "canonical": "#221b21",
+        "oklch": "oklch(23.3% 0.016 330.8)",
+        "tonalRamp": [
+          "#0f090e",
+          "#2a2229",
+          "#473f46",
+          "#675e65",
+          "#887f87",
+          "#aba2aa",
+          "#cfc6ce",
+          "#f5ebf3"
+        ]
+      },
+      "graphite-dark": {
+        "role": "secondary",
+        "displayName": "Chalk (dark graphite)",
+        "canonical": "#efeaec",
+        "oklch": "oklch(94.1% 0.006 350.8)",
+        "tonalRamp": [
+          "#0d0a0b",
+          "#272425",
+          "#454142",
+          "#646062",
+          "#858183",
+          "#a8a3a5",
+          "#ccc8c9",
+          "#f2edef"
+        ]
+      },
+      "graphite-2-dark": {
+        "role": "secondary",
+        "displayName": "Soft Chalk (dark graphite-2)",
+        "canonical": "#b8a7af",
+        "oklch": "oklch(74.5% 0.023 347.5)",
+        "tonalRamp": [
+          "#12070d",
+          "#2e2127",
+          "#4b3d44",
+          "#6b5c64",
+          "#8d7d85",
+          "#b0a0a8",
+          "#d5c4cc",
+          "#fbe9f1"
+        ]
+      },
+      "paper-dark": {
+        "role": "neutral",
+        "displayName": "Carbon Paper (dark)",
+        "canonical": "#121014",
+        "oklch": "oklch(17.7% 0.009 307.9)",
+        "tonalRamp": [
+          "#0c0a0e",
+          "#262428",
+          "#434146",
+          "#626065",
+          "#848186",
+          "#a6a4a9",
+          "#cbc8ce",
+          "#f0edf3"
+        ]
+      },
+      "sheet-dark": {
+        "role": "neutral",
+        "displayName": "Carbon Sheet (dark)",
+        "canonical": "#1a171c",
+        "oklch": "oklch(21.0% 0.011 312.0)",
+        "tonalRamp": [
+          "#0d0a0e",
+          "#272429",
+          "#444046",
+          "#636066",
+          "#848187",
+          "#a7a3aa",
+          "#cbc7ce",
+          "#f1ecf4"
+        ]
+      },
+      "on-dark": {
+        "role": "neutral",
+        "displayName": "On-ink (dark)",
+        "canonical": "#141216",
+        "oklch": "oklch(18.6% 0.009 308.0)",
+        "tonalRamp": [
+          "#0c0a0e",
+          "#262428",
+          "#434146",
+          "#626065",
+          "#848186",
+          "#a6a4a9",
+          "#cbc8cd",
+          "#f0edf3"
+        ]
+      },
+      "good": {
+        "role": "tertiary",
+        "displayName": "Done Green",
+        "canonical": "#1d7440",
+        "oklch": "oklch(49.5% 0.115 152.4)",
+        "tonalRamp": [
+          "#001500",
+          "#003403",
+          "#005523",
+          "#237844",
+          "#4c9d66",
+          "#72c38a",
+          "#95e7ac",
+          "#b2ffc9"
+        ]
+      },
+      "good-tint": {
+        "role": "tertiary",
+        "displayName": "Done Tint",
+        "canonical": "#e5f5ea",
+        "oklch": "oklch(95.5% 0.022 155.9)",
+        "tonalRamp": [
+          "#040e07",
+          "#1e2a22",
+          "#3c4940",
+          "#5c6a61",
+          "#7f8d84",
+          "#a3b2a8",
+          "#c6d6cb",
+          "#e3f3e8"
+        ]
+      },
+      "due": {
+        "role": "tertiary",
+        "displayName": "Due Yellow",
+        "canonical": "#f5c400",
+        "oklch": "oklch(84.0% 0.172 90.4)",
+        "tonalRamp": [
+          "#210000",
+          "#421b00",
+          "#683a00",
+          "#8b5d00",
+          "#b18100",
+          "#d7a700",
+          "#fccb1b",
+          "#ffea6c"
+        ]
+      },
+      "due-line": {
+        "role": "tertiary",
+        "displayName": "Due Line",
+        "canonical": "#d9ad00",
+        "oklch": "oklch(76.6% 0.156 90.3)",
+        "tonalRamp": [
+          "#210000",
+          "#421b00",
+          "#653c00",
+          "#885e00",
+          "#ad8200",
+          "#d4a800",
+          "#f8cc40",
+          "#ffea6c"
+        ]
+      },
+      "due-tint": {
+        "role": "tertiary",
+        "displayName": "Due Tint",
+        "canonical": "#fff6d6",
+        "oklch": "oklch(97.2% 0.043 94.1)",
+        "tonalRamp": [
+          "#110a00",
+          "#2d260b",
+          "#4c452a",
+          "#6e664a",
+          "#91896c",
+          "#b7ae90",
+          "#dad1b2",
+          "#f8efcf"
+        ]
+      },
+      "due-text": {
+        "role": "tertiary",
+        "displayName": "Due Text",
+        "canonical": "#7a5800",
+        "oklch": "oklch(48.3% 0.100 82.4)",
+        "tonalRamp": [
+          "#1e0200",
+          "#3d1e00",
+          "#5f3e00",
+          "#82600f",
+          "#a7833c",
+          "#cda861",
+          "#f1cb84",
+          "#ffe9a0"
+        ]
+      },
+      "on-due": {
+        "role": "tertiary",
+        "displayName": "On-Due",
+        "canonical": "#2b2100",
+        "oklch": "oklch(25.2% 0.052 92.1)",
+        "tonalRamp": [
+          "#130900",
+          "#2f2503",
+          "#4f4423",
+          "#716543",
+          "#948965",
+          "#b9ae89",
+          "#ddd1ab",
+          "#fbeec8"
+        ]
+      },
+      "bad": {
+        "role": "tertiary",
+        "displayName": "Late Red",
+        "canonical": "#c8261e",
+        "oklch": "oklch(54.0% 0.198 28.8)",
+        "tonalRamp": [
+          "#340000",
+          "#5b0000",
+          "#930000",
+          "#bd1612",
+          "#e8493c",
+          "#ff7261",
+          "#ff9783",
+          "#ffc6b4"
+        ]
+      },
+      "bad-tint": {
+        "role": "tertiary",
+        "displayName": "Red Tint",
+        "canonical": "#fde8e5",
+        "oklch": "oklch(94.7% 0.023 27.3)",
+        "tonalRamp": [
+          "#140706",
+          "#312220",
+          "#51403e",
+          "#73615f",
+          "#978481",
+          "#bca9a6",
+          "#e0ccc9",
+          "#fee9e6"
+        ]
+      },
+      "bad-text": {
+        "role": "tertiary",
+        "displayName": "Red Text",
+        "canonical": "#b4231b",
+        "oklch": "oklch(50.1% 0.182 28.8)",
+        "tonalRamp": [
+          "#340000",
+          "#5b0000",
+          "#8e0000",
+          "#b7271e",
+          "#e25244",
+          "#ff7968",
+          "#ff9d8a",
+          "#ffc6b4"
+        ]
+      },
+      "band": {
+        "role": "secondary",
+        "displayName": "Night Band",
+        "canonical": "#18171b",
+        "oklch": "oklch(20.8% 0.008 297.1)",
+        "tonalRamp": [
+          "#0b0a0e",
+          "#27262a",
+          "#454449",
+          "#66656a",
+          "#89888d",
+          "#aeadb2",
+          "#d1d0d6",
+          "#efedf3"
+        ]
+      },
+      "good-dark": {
+        "role": "tertiary",
+        "displayName": "Done Green (dark)",
+        "canonical": "#4fc37f",
+        "oklch": "oklch(73.4% 0.145 154.6)",
+        "tonalRamp": [
+          "#001700",
+          "#003700",
+          "#00591c",
+          "#007d3e",
+          "#25a260",
+          "#55c884",
+          "#7beda6",
+          "#9affc3"
+        ]
+      },
+      "good-tint-dark": {
+        "role": "tertiary",
+        "displayName": "Done Tint (dark)",
+        "canonical": "#15301f",
+        "oklch": "oklch(28.2% 0.046 154.5)",
+        "tonalRamp": [
+          "#001004",
+          "#122d1c",
+          "#314c3a",
+          "#516e5a",
+          "#74927d",
+          "#98b7a1",
+          "#badac4",
+          "#d8f8e1"
+        ]
+      },
+      "due-dark": {
+        "role": "tertiary",
+        "displayName": "Due Yellow (dark)",
+        "canonical": "#f5c518",
+        "oklch": "oklch(84.2% 0.168 90.4)",
+        "tonalRamp": [
+          "#210000",
+          "#421b00",
+          "#673a00",
+          "#8b5d00",
+          "#b08200",
+          "#d7a700",
+          "#fbcb26",
+          "#ffea6c"
+        ]
+      },
+      "due-line-dark": {
+        "role": "tertiary",
+        "displayName": "Due Line (dark)",
+        "canonical": "#c9a10f",
+        "oklch": "oklch(72.5% 0.146 90.4)",
+        "tonalRamp": [
+          "#210000",
+          "#411c00",
+          "#623d00",
+          "#865f00",
+          "#ab8300",
+          "#d1a921",
+          "#f5cc51",
+          "#ffea71"
+        ]
+      },
+      "due-tint-dark": {
+        "role": "tertiary",
+        "displayName": "Due Tint (dark)",
+        "canonical": "#33290a",
+        "oklch": "oklch(28.5% 0.048 91.0)",
+        "tonalRamp": [
+          "#130900",
+          "#2f2506",
+          "#4f4426",
+          "#706546",
+          "#948968",
+          "#b9ad8c",
+          "#ddd0ae",
+          "#faeecb"
+        ]
+      },
+      "due-text-dark": {
+        "role": "tertiary",
+        "displayName": "Due Text (dark)",
+        "canonical": "#f5c84b",
+        "oklch": "oklch(85.0% 0.147 88.7)",
+        "tonalRamp": [
+          "#220000",
+          "#431a00",
+          "#643c00",
+          "#885e00",
+          "#ad8200",
+          "#d4a81d",
+          "#f8cb4f",
+          "#ffe96f"
+        ]
+      },
+      "bad-dark": {
+        "role": "tertiary",
+        "displayName": "Late Red (dark)",
+        "canonical": "#ff6b5e",
+        "oklch": "oklch(70.9% 0.183 27.7)",
+        "tonalRamp": [
+          "#340000",
+          "#5b0000",
+          "#8e0000",
+          "#b82521",
+          "#e25146",
+          "#ff786a",
+          "#ff9c8c",
+          "#ffc6b6"
+        ]
+      },
+      "bad-tint-dark": {
+        "role": "tertiary",
+        "displayName": "Red Tint (dark)",
+        "canonical": "#3a1715",
+        "oklch": "oklch(25.7% 0.056 25.1)",
+        "tonalRamp": [
+          "#1d0102",
+          "#3e1a18",
+          "#603936",
+          "#835a56",
+          "#a97c78",
+          "#cfa19c",
+          "#f4c4bf",
+          "#ffe1dc"
+        ]
+      },
+      "bad-text-dark": {
+        "role": "tertiary",
+        "displayName": "Red Text (dark)",
+        "canonical": "#ff7b70",
+        "oklch": "oklch(73.4% 0.163 26.6)",
+        "tonalRamp": [
+          "#340000",
+          "#5b0000",
+          "#870008",
+          "#b0332e",
+          "#da5a51",
+          "#ff8075",
+          "#ffa497",
+          "#ffc6b8"
+        ]
+      },
+      "band-dark": {
+        "role": "secondary",
+        "displayName": "Night Band (dark)",
+        "canonical": "#2b262d",
+        "oklch": "oklch(27.7% 0.015 316.4)",
+        "tonalRamp": [
+          "#0e090f",
+          "#29242b",
+          "#48434a",
+          "#69646c",
+          "#8d878f",
+          "#b2abb4",
+          "#d5ced7",
+          "#f2ecf5"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Week Title",
+        "purpose": "The week heading, with the date range beneath in 15px Sofia Sans."
+      },
+      "display-cover": {
+        "displayName": "Cover Display",
+        "purpose": "Sign-in cover headline only; rose <em> for the key word."
+      },
+      "headline": {
+        "displayName": "Section Headline",
+        "purpose": "Page section bars such as All tasks."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Default h2, dialog titles (800), panel headings at 22px."
+      },
+      "subtitle": {
+        "displayName": "Subtitle",
+        "purpose": "h3 in panels and subject cards."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Reading text; secondary at 13-14px in Soft Graphite."
+      },
+      "numeral": {
+        "displayName": "Printed Numeral",
+        "purpose": "Day numbers, countdown, summary counts and task dates; always tabular."
+      },
+      "label": {
+        "displayName": "Printed Caps",
+        "purpose": "Day names, row and field labels, status pills and priority flags; never decorative eyebrows."
+      }
+    },
+    "shadows": [],
+    "borders": [
+      {
+        "name": "frame",
+        "value": "1px solid var(--graphite)",
+        "purpose": "Outer frame of the week sheet, dialogs, account menu, header underline."
+      },
+      {
+        "name": "panel",
+        "value": "1px solid var(--ink-line)",
+        "purpose": "Panels, task list, inputs, slot outlines, subject cards."
+      },
+      {
+        "name": "rule",
+        "value": "1px solid var(--ink-rule)",
+        "purpose": "Internal dividers, column and row rules, summary chips."
+      },
+      {
+        "name": "active-tab",
+        "value": "4px solid var(--graphite)",
+        "purpose": "Underline under the active header tab and over the active bottom-bar item."
+      },
+      {
+        "name": "dialog-top",
+        "value": "6px solid var(--graphite)",
+        "purpose": "Top rule of a centred dialog in place of elevation."
+      }
+    ],
+    "patterns": [
+      {
+        "name": "hatch",
+        "value": "repeating-linear-gradient(-45deg, var(--ink-tint) 0 2px, transparent 2px 7px)",
+        "purpose": "Do-not-write fill for review-pending items and days outside the current month."
+      },
+      {
+        "name": "scrim",
+        "value": "rgb(24 23 27 / 0.55)",
+        "purpose": "Dialog overlay (dark: rgb(0 0 0 / 0.6))."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-house",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Single easing for every transition and entrance."
+      },
+      {
+        "name": "state",
+        "value": "160ms",
+        "purpose": "Button, row, tab underline and hover changes."
+      },
+      {
+        "name": "bubble-fill",
+        "value": "220ms",
+        "purpose": "Bubble fills on state change."
+      },
+      {
+        "name": "dialog-rise",
+        "value": "260ms",
+        "purpose": "Dialog rises 14px with fade."
+      },
+      {
+        "name": "drawer-slide",
+        "value": "300ms",
+        "purpose": "Drawer slides 40px; mobile sidebar 280ms."
+      },
+      {
+        "name": "scan",
+        "value": "940ms",
+        "purpose": "The now line sweeps to the current time on load; glow fades over 1300ms."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "none",
+        "purpose": "All transitions and animations disabled under prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "tab-compact",
+        "value": "1100px"
+      },
+      {
+        "name": "mobile",
+        "value": "860px"
+      }
+    ],
+    "layout": {
+      "container": "1480px",
+      "gutter": "36px",
+      "header": "64px",
+      "hour": "58px",
+      "rail": "56px",
+      "bottomBar": "60px",
+      "drawer": "300px",
+      "accountMenu": "260px",
+      "minTarget": "44px"
+    }
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Graphite action; turns rose on hover.",
+      "html": "<button class=\"ds-btn ds-btn-primary\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 5v14M5 12h14\"/></svg>Add task</button>",
+      "css": ".ds-btn{display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 18px;border:1px solid transparent;border-radius:0;font-family:var(--font-body),\"Sofia Sans\",system-ui,sans-serif;font-weight:600;font-size:14px;line-height:1;cursor:pointer;transition:background-color 160ms cubic-bezier(0.16,1,0.3,1),color 160ms,border-color 160ms}.ds-btn:focus-visible{outline:2px solid var(--graphite,#18171b);outline-offset:2px}.ds-btn-primary{background:var(--graphite,#18171b);border-color:var(--graphite,#18171b);color:var(--on-graphite,#fff)}.ds-btn-primary:hover{background:var(--ink,#c21c58);border-color:var(--ink,#c21c58);color:var(--on-ink,#fff)}"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Secondary action on sheet; rose on hover.",
+      "html": "<button class=\"ds-btn-o\">Today</button>",
+      "css": ".ds-btn-o{height:44px;padding:0 18px;border:1px solid var(--graphite,#18171b);border-radius:0;background:var(--sheet,#fff);color:var(--graphite,#18171b);font-weight:600;font-size:14px;cursor:pointer;transition:background-color 160ms cubic-bezier(0.16,1,0.3,1),color 160ms,border-color 160ms}.ds-btn-o:hover{background:var(--ink-wash,#fdf3f7);border-color:var(--ink,#c21c58);color:var(--ink,#c21c58)}.ds-btn-o:focus-visible{outline:2px solid var(--graphite,#18171b);outline-offset:2px}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Square field with printed rose caps label.",
+      "html": "<label class=\"ds-field\"><span>Title</span><input placeholder=\"DBMS ER diagram\"></label>",
+      "css": ".ds-field{display:grid;gap:6px;width:280px}.ds-field span{font-family:var(--font-condensed),\"Sofia Sans Condensed\",\"Arial Narrow\",sans-serif;font-weight:700;font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink,#c21c58)}.ds-field input{min-height:44px;padding:10px 12px;border:1px solid var(--ink-line,#d4668b);border-radius:0;background:var(--sheet,#fff);color:var(--graphite,#18171b);font:inherit;caret-color:var(--ink,#c21c58)}.ds-field input:hover{border-color:var(--ink,#c21c58)}.ds-field input:focus{outline:2px solid var(--graphite,#18171b);outline-offset:0;border-color:var(--graphite,#18171b)}"
+    },
+    {
+      "name": "Header Tabs",
+      "kind": "nav",
+      "refersTo": "nav-tab",
+      "description": "One-row header with plain text tabs; active tab has a 4px graphite underline.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-i ds-on\" href=\"#\">Week</a><a class=\"ds-nav-i\" href=\"#\">Tasks</a><a class=\"ds-nav-i\" href=\"#\">Review</a><a class=\"ds-nav-i\" href=\"#\">Subjects</a><a class=\"ds-nav-i\" href=\"#\">Settings</a></nav>",
+      "css": ".ds-nav{display:flex;height:64px;border-bottom:1px solid var(--graphite,#18171b);background:var(--sheet,#fff)}.ds-nav-i{position:relative;display:inline-flex;align-items:center;padding:0 16px;font-size:15px;font-weight:500;color:var(--graphite,#18171b);text-decoration:none}.ds-nav-i::after{content:\"\";position:absolute;left:16px;right:16px;bottom:-1px;height:4px;background:transparent;transition:background-color 160ms cubic-bezier(0.16,1,0.3,1)}.ds-nav-i:hover:not(.ds-on)::after{background:var(--ink-rule,#efc3d2)}.ds-nav-i.ds-on{font-weight:700}.ds-nav-i.ds-on::after{background:var(--graphite,#18171b)}.ds-nav-i:focus-visible{outline:2px solid var(--graphite,#18171b);outline-offset:-2px}"
+    },
+    {
+      "name": "Status Pill",
+      "kind": "chip",
+      "refersTo": "status-due",
+      "description": "Square caps pill coloured by state: yellow due, green done, red overdue, red tint struck missed.",
+      "html": "<span class=\"ds-st\">Due</span> <span class=\"ds-st ds-st-done\">Done</span> <span class=\"ds-st ds-st-over\">Overdue</span> <span class=\"ds-st ds-st-miss\">Missed</span>",
+      "css": ".ds-st{display:inline-flex;align-items:center;height:26px;padding:0 10px;border:1px solid var(--due-line,#d9ad00);background:var(--due,#f5c400);color:var(--on-due,#2b2100);font-family:var(--font-condensed),\"Sofia Sans Condensed\",\"Arial Narrow\",sans-serif;font-weight:700;font-size:12px;letter-spacing:.07em;text-transform:uppercase}.ds-st-done{background:var(--good,#1d7440);border-color:var(--good,#1d7440);color:var(--on-good,#fff)}.ds-st-over{background:var(--bad,#c8261e);border-color:var(--bad,#c8261e);color:var(--on-bad,#fff)}.ds-st-miss{background:var(--bad-tint,#fde8e5);border-color:var(--bad,#c8261e);color:var(--bad-text,#b4231b);text-decoration:line-through}"
+    },
+    {
+      "name": "Due Item",
+      "kind": "custom",
+      "refersTo": "due-item",
+      "description": "A deadline in the week's Due row, in plain words and coloured by state.",
+      "html": "<div class=\"ds-due\"><button class=\"ds-di\"><i></i><span><b>OS Lab write-up 4</b><small>23:59</small></span></button><button class=\"ds-di ds-di-done\"><i></i><span><b>DS Experiment 3 upload</b><small>23:59 · <strong>done</strong></small></span></button><button class=\"ds-di ds-di-over\"><i></i><span><b>DBMS ER diagram</b><small>17:00 · <strong>overdue</strong></small></span></button><button class=\"ds-di ds-di-miss\"><i></i><span><b>CN Quiz 1</b><small>10:30 · <strong>missed</strong></small></span></button></div>",
+      "css": ".ds-due{display:grid;gap:5px;width:200px}.ds-di{display:flex;align-items:flex-start;gap:7px;padding:6px 7px;border:1px solid var(--due-line,#d9ad00);background:var(--due-tint,#fff6d6);color:var(--graphite,#18171b);text-align:left;cursor:pointer;transition:border-color 160ms cubic-bezier(0.16,1,0.3,1)}.ds-di:hover{border-color:var(--graphite,#18171b)}.ds-di:focus-visible{outline:2px solid var(--graphite,#18171b);outline-offset:2px}.ds-di i{flex-shrink:0;width:14px;height:10px;margin-top:3px;border:1.5px solid var(--due-line,#d9ad00);border-radius:50%;background:var(--due,#f5c400)}.ds-di span{display:grid}.ds-di b{font-size:12.5px;font-weight:600;line-height:1.25}.ds-di small{margin-top:2px;font-size:11.5px;color:var(--graphite-2,#5d4a53);font-variant-numeric:tabular-nums}.ds-di-done{background:var(--good-tint,#e5f5ea);border-color:var(--good,#1d7440)}.ds-di-done i{background:var(--good,#1d7440);border-color:var(--good,#1d7440)}.ds-di-done strong{color:var(--good,#1d7440)}.ds-di-over{background:var(--bad,#c8261e);border-color:var(--bad,#c8261e);color:var(--on-bad,#fff)}.ds-di-over small{color:inherit;opacity:.9}.ds-di-over i{background:var(--on-bad,#fff);border-color:var(--on-bad,#fff)}.ds-di-miss{background:var(--bad-tint,#fde8e5);border-color:var(--bad,#c8261e)}.ds-di-miss b{text-decoration:line-through;text-decoration-color:var(--bad,#c8261e)}.ds-di-miss strong{color:var(--bad-text,#b4231b)}.ds-di-miss i{background:var(--sheet,#fff);border-color:var(--bad,#c8261e)}"
+    },
+    {
+      "name": "Summary Counts",
+      "kind": "chip",
+      "refersTo": "summary-chip",
+      "description": "One row of count chips; due yellow, overdue and missed red, others wash.",
+      "html": "<div class=\"ds-sum\"><button class=\"ds-si\"><strong>6</strong> due</button><button class=\"ds-si ds-bad\"><strong>1</strong> overdue</button><button class=\"ds-si ds-bad\"><strong>1</strong> missed test</button><button class=\"ds-si ds-plain\"><strong>1</strong> without a date</button></div>",
+      "css": ".ds-sum{display:flex;flex-wrap:wrap;gap:8px}.ds-si{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 12px 0 4px;border:1px solid var(--ink-rule,#efc3d2);background:var(--sheet,#fff);color:var(--graphite,#18171b);font-size:14px;cursor:pointer}.ds-si:hover{border-color:var(--graphite,#18171b)}.ds-si:focus-visible{outline:2px solid var(--graphite,#18171b);outline-offset:2px}.ds-si strong{min-width:28px;padding:2px 6px;background:var(--due,#f5c400);color:var(--on-due,#2b2100);font-family:var(--font-condensed),\"Sofia Sans Condensed\",\"Arial Narrow\",sans-serif;font-weight:800;font-size:16px;line-height:1.2;text-align:center;font-variant-numeric:tabular-nums}.ds-bad strong{background:var(--bad,#c8261e);color:var(--on-bad,#fff)}.ds-plain strong{background:var(--ink-wash,#fdf3f7);color:var(--graphite,#18171b)}"
+    },
+    {
+      "name": "Next-Due Band",
+      "kind": "custom",
+      "refersTo": "next-band",
+      "description": "Single-message sticky band naming the next deadline.",
+      "html": "<button class=\"ds-band\"><span class=\"ds-band-l\">Next due</span><span class=\"ds-band-t\">OS Lab write-up 4 <small>OS Lab · 9 Oct 2026, 11:59 pm</small></span><span class=\"ds-band-c\"><small>in</small>12 h 39 min</span></button>",
+      "css": ".ds-band{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:18px;width:100%;padding:12px 36px;border:0;background:var(--band,#18171b);color:#fff;text-align:left;cursor:pointer}.ds-band-l{padding:3px 8px;background:var(--due,#f5c400);color:var(--on-due,#2b2100);font-family:var(--font-condensed),\"Sofia Sans Condensed\",\"Arial Narrow\",sans-serif;font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase}.ds-band-t{font-weight:650;font-size:16px}.ds-band-t small{font-size:13px;font-weight:400;opacity:.8;margin-left:12px}.ds-band:hover .ds-band-t{text-decoration:underline;text-decoration-color:var(--due,#f5c400)}.ds-band:focus-visible{outline:2px solid var(--due,#f5c400);outline-offset:-4px}.ds-band-c{font-family:var(--font-condensed),\"Sofia Sans Condensed\",\"Arial Narrow\",sans-serif;font-weight:800;font-size:22px;font-variant-numeric:tabular-nums}.ds-band-c small{font-size:14px;font-weight:600;margin-right:6px;opacity:.8}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Answer Sheet",
+    "overview": "**Creative North Star: \"The Answer Sheet\"**\n\nDueCare is still drawn like a printed answer sheet: white stock, ruled lines, condensed printed labels and square boxes. Rose drop-out ink prints the structure the institution owns (field and column labels, timetable slot outlines, hour rules, the now line). Graphite carries the student's text and actions. On top of those two inks sits one more layer the owner asked for directly: status colour. Completed is green, due is yellow, overdue is solid red, and missed is red tint with the title struck through. That colour appears only where a deadline's state is shown, so a glance at the week answers \"what's done, what's due, what's late\".\n\nThe interface is meant to be simple to move around. One header row holds the wordmark, five plain text tabs, the bell, Add task and the account button. The week sheet reads top to bottom: day heads, a \"Due\" row listing each day's deadlines in plain words, then a timeline of classes with the now line. There are no shadows and no rounded rectangles. Depth comes from 1px rules and solid fills.\n\nDark mode is a carbon sheet. The paper turns near-black, rose brightens to #ff6f9c, graphite becomes the light ink, and each status colour has its own dark value. The next-due band stays a dark strip (#2b262d) in both modes.",
+    "keyCharacteristics": [
+      "Rose prints structure, graphite carries text and action, and green, yellow and red show status only.",
+      "One-row header with plain text tabs and a 4px graphite underline on the active tab.",
+      "Square corners everywhere. The oval bubble is the only curve.",
+      "No shadows. Depth comes from 1px rules and solid fills.",
+      "Condensed face for labels and numerals, Sofia Sans for reading, tabular numerals for every time and count."
+    ],
+    "rules": [
+      {
+        "name": "The Status Colour Rule",
+        "body": "Completed is green, due is yellow, overdue is solid red, missed is red tint with strike-through (owner commitment). These colours appear wherever a deadline's state is shown (status pills, due items, month chips, summary counts, day ticks, review badges) and nowhere else. They are never used for structure, decoration or buttons.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two-Ink Rule",
+        "body": "Outside status, a fill is sheet, a rose density, or graphite. Rose prints structure and graphite carries text and action. No neutral grey surface exists.",
+        "section": "colors"
+      },
+      {
+        "name": "The Hatch Rule",
+        "body": "Anything waiting for the student's review, and any day outside the current month, takes the diagonal \"do not write\" hatch (-45deg, Rose Tint 2px every 7px). This covers the attention banner, import rows that need a fix, and outside days in the month view.",
+        "section": "colors"
+      },
+      {
+        "name": "The Printed Caps Rule",
+        "body": "Uppercase condensed caps are reserved for labels the sheet itself would print: a field name, a day name, a row label, a status, or a priority flag. They label data that sits right next to them. They never sit above a heading as a decorative eyebrow.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Rule",
+        "body": "Every time, date and count uses `tabular-nums`.",
+        "section": "typography"
+      },
+      {
+        "name": "The No-Shadow Rule",
+        "body": "`box-shadow` and `text-shadow` are banned (owner commitment). If something needs to lift, give it a heavier rule or a solid fill instead.",
+        "section": "elevation"
+      },
+      {
+        "name": "The One Curve Rule",
+        "body": "Rounded corners are banned (owner commitment). Only the bubble curves. It is either empty with a rose stroke, filled graphite for a selection, or filled with the item's status colour on a due item.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "**Do** colour every deadline state the same way everywhere: green completed, yellow due, solid red overdue, red tint with strike-through missed (the Status Colour Rule).",
+      "**Do** keep every non-status surface sheet white, a rose density, or graphite.",
+      "**Do** use 1px Rose Rule for internal divisions and 1px graphite for the outer frame of a working sheet.",
+      "**Do** write state in plain words next to its colour (\"done\", \"overdue\", \"missed\"), so colour is never the only signal.",
+      "**Do** set every time, date and count in Sofia Sans Condensed with tabular numerals.",
+      "**Do** mark review-pending items with the -45deg Rose Tint hatch.",
+      "**Do** keep targets at 44px or taller and the focus outline at 2px graphite.",
+      "**Do** use the house easing cubic-bezier(0.16, 1, 0.3, 1) at 160 to 300ms, and drop all motion under prefers-reduced-motion."
+    ],
+    "donts": [
+      "**Don't** use drop shadows or text shadows anywhere (owner commitment).",
+      "**Don't** round corners. Radius is 0 everywhere except the oval bubble (owner commitment).",
+      "**Don't** use green, yellow or red for anything that isn't a deadline's state: no coloured buttons, headers or decoration.",
+      "**Don't** introduce neutral grey surfaces or hues beyond rose, graphite and the three status colours.",
+      "**Don't** put caps above a heading as a decorative eyebrow. Printed caps label data, not sections.",
+      "**Don't** add a second navigation row or boxed header fields. The header is one row.",
+      "**Don't** build the sidebar + KPI-card + chart dashboard. Information sits on the sheet, in ruled boxes."
+    ]
+  }
+}
