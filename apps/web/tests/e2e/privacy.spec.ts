@@ -38,10 +38,7 @@ async function onboard(page: Page) {
   const me = await (await page.request.get("/api/v1/me")).json();
   await write(page, "patch", "/api/v1/me", {
     revision: me.revision,
-    institution: "Example University",
-    programme: "Engineering",
-    department: "Computing",
-    admissionYear: 2025,
+    branchCode: "COMPS",
     classYear: "SY",
     currentSemester: 3,
     division: "B",

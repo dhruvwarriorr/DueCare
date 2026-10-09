@@ -13,9 +13,9 @@ Complete each phase's acceptance checks before building dependent functionality.
 - Scaffold the approved Next.js/TypeScript frontend and FastAPI backend, using the documented UI, validation, database, and testing libraries.
 - Establish the browser → Next.js gateway → FastAPI → PostgreSQL request path, environment configuration, migrations, API schemas, and structured errors.
 - Configure Supabase Google sign-in. Require verified Somaiya identity, enforce ownership, validate sessions, and implement server-managed cookies, session refresh, CSRF protection, and database isolation.
-- Build onboarding with all nine required academic fields. Preserve roll-number formatting. Google supplies identity; students enter their academic context.
-- Build manual subject management with separate theory, lab, and tutorial subjects. Store one general batch in the profile, applicable across every subject.
-- Add optional manual weekly timetable slots with term/validity boundaries and revision checks.
+- Build onboarding with all six required academic fields. Preserve roll-number formatting. Google supplies identity; students enter their academic context.
+- Build manual subject management with separate theory, lab, and tutorial subjects. Store one batch in the profile, applicable across every subject.
+- Add optional manual weekly timetable slots with day, local start/end times, room/instructor, and revision checks. Do not show Valid from/Valid until inputs; preserve any existing stored bounds when saving.
 - Implement manual task creation, editing, completion, reopening, and deletion, including priority and documented timing roles.
 - Support exactly four task statuses: `due`, `completed`, `overdue`, and `missed`. Incomplete assignments become overdue; incomplete tests become missed at their applicable boundary. Online attempt windows expire at closing. Undated work remains due until completed.
 - Build the responsive application shell, dashboard, searchable task list, calendar, task detail, profile, subject, and timetable screens. Include keyboard support and appropriate loading, empty, and error states.
@@ -61,7 +61,7 @@ Complete each phase's acceptance checks before building dependent functionality.
 
 ### Implementation
 
-- Apply academic targeting before accepting tasks: institution/programme/department where relevant, class/year, semester, division, general batch, subject, and subject kind.
+- Apply academic targeting before accepting tasks: fixed KJSSE/BTech and branch code/full name where relevant, class/year, semester, division, batch, subject, and subject kind.
 - Ignore confirmed wrong-cohort work. Send ambiguous or insufficient applicability to student review. Evaluate mixed-cohort message sections separately and support otherwise applicable all-batch notices.
 - Recognize `lms-kjsse@somaiya.edu` and relevant faculty/student-added senders without treating sender inclusion as proof of academic applicability or submission validity.
 - Implement structured OpenAI extraction, validation/repair, Gemini fallback, and recoverable failures. Treat message and attachment contents as evidence, never executable instructions.

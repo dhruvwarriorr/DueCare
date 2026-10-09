@@ -11,6 +11,8 @@ never rewrite the profile. Room codes such as B115A are venues, not batches.
 
 import re
 
+from .academic import branch_code, profile_data
+
 YEARS = {
     "fy": 1, "first": 1, "1st": 1, "i": 1, "1": 1,
     "sy": 2, "second": 2, "2nd": 2, "ii": 2, "2": 2,
@@ -98,7 +100,7 @@ def merge(*observations):
             continue
         scope = "course" if obs.get("scope") == "course" else "activity"
         target = out[scope]
-        for key in ("classYears", "semesters", "divisions", "batches"):
+        for key in ("branches", "classYears", "semesters", "divisions", "batches"):
             if obs.get(key):
                 target[key] = sorted({*target.get(key, []), *map(str, obs[key])})
         for key in ("allBatches", "allDivisions", "excludesStudent", "conditional"):
@@ -113,11 +115,18 @@ def evaluate(observed, profile, *, subject_kind=None, trusted=False):
     """Return (outcome, reason, question). ``trusted`` means a student-confirmed source context
     (an explicitly linked Classroom course or a personal LMS notification) establishes membership."""
     student = student_context(profile)
+    student_branch = profile_data(profile)["branchCode"]
     question = None
     for scope in ("activity", "course"):
         obs = observed.get(scope, {})
         if obs.get("excludesStudent"):
             return "mismatch", f"{scope} explicitly excludes this class or batch", None
+        branches = {branch_code(b) for b in obs.get("branches", [])}
+        if branches:
+            if student_branch and None not in branches and student_branch not in branches:
+                return "mismatch", f"{scope} targets another branch", None
+            if not student_branch or (None in branches and student_branch not in branches):
+                question = "Does this branch targeting apply to you?"
         years = {year_number(y) for y in obs.get("classYears", [])} - {None}
         if years and student["year"] and student["year"] not in years:
             return "mismatch", f"{scope} targets another class/year", None
@@ -139,7 +148,7 @@ def evaluate(observed, profile, *, subject_kind=None, trusted=False):
     if activity.get("conditional") or course.get("conditional"):
         return "review", "conditional eligibility", "Does this eligibility condition apply to you?"
     if question:
-        return "review", "ambiguous batch label", question
+        return "review", "ambiguous academic targeting", question
     batch_known = bool(
         ({b.upper() for b in activity.get("batches", [])} & student["batchLabels"])
         or activity.get("allBatches")

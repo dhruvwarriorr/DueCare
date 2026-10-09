@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 
-from . import ai, google, lms, mail, rules, targeting
+from . import academic, ai, google, lms, mail, rules, targeting
 from .classroom_time import due_at
 from .common import work
 from .config import settings
@@ -156,7 +156,7 @@ def lms_senders():
 
 
 def load_context(db, uid, record):
-    profile = (db.get(Profile, uuid.UUID(str(uid))) or Profile(data={})).data
+    profile = academic.profile_data((db.get(Profile, uuid.UUID(str(uid))) or Profile(data={})).data)
     subjects = [
         {
             "id": str(s.id),
@@ -303,18 +303,7 @@ def ai_payload(ctx, source, sections, allowed_subjects=None):
     p = ctx["profile"]
     return {
         "now": now().isoformat(),
-        "student": {
-            k: p.get(k)
-            for k in (
-                "institution",
-                "programme",
-                "department",
-                "classYear",
-                "currentSemester",
-                "division",
-                "generalBatch",
-            )
-        },
+        "student": academic.context(p),
         "note": "The student's single general batch applies to every subject.",
         "subjects": subjects,
         "weeklySlots": [
@@ -757,10 +746,7 @@ def create_task(db, uid, ctx, record, event, cand, subject_id, method, fields=No
             provenance[name] = {**prov, "evidenceRef": str(event.id)}
     d["timingProvenance"] = provenance
     p = ctx["profile"]
-    d["academicContext"] = {
-        k: p.get(k)
-        for k in ("institution", "programme", "department", "classYear", "currentSemester", "division")
-    }
+    d["academicContext"] = academic.context(p)
     d["manualFieldOverrides"] = {}
     d["sources"] = [cand.source]
     d["sourceLinks"] = cand.links
@@ -994,9 +980,7 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
         return done("ignored_mismatch")  # No task, review, completion change, or activity.
     context = {
         "observed": cand.observed,
-        "student": {
-            k: ctx["profile"].get(k) for k in ("classYear", "currentSemester", "division", "generalBatch")
-        },
+        "student": academic.context(ctx["profile"]),
         "excerpt": cand.excerpt,
         "sourceTitle": record.title,
         "sourceKind": record.kind,

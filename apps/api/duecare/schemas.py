@@ -2,8 +2,10 @@ from datetime import date, datetime, time
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
+
+from .academic import BRANCHES
 
 
 class Input(BaseModel):
@@ -14,16 +16,20 @@ class Input(BaseModel):
 
 class ProfilePatch(Input):
     revision: int = Field(ge=1)
-    institution: str | None = Field(None, min_length=1, max_length=200)
-    programme: str | None = Field(None, min_length=1, max_length=200)
-    department: str | None = Field(None, min_length=1, max_length=200)
-    admission_year: int | None = Field(None, ge=1950, le=2200)
-    class_year: str | None = Field(None, min_length=1, max_length=100)
+    branch_code: str | None = Field(None, min_length=1, max_length=10)
+    class_year: Literal["FY", "SY", "TY", "LY"] | None = None
     current_semester: int | None = Field(None, ge=1, le=30)
     division: str | None = Field(None, min_length=1, max_length=50)
     general_batch: str | None = Field(None, min_length=1, max_length=50)
     roll_number: str | None = Field(None, min_length=1, max_length=100)
     theme: Literal["system", "light", "dark"] | None = None
+
+    @field_validator("branch_code")
+    @classmethod
+    def fixed_branch(cls, value):
+        if value is not None and value not in BRANCHES:
+            raise ValueError("Choose a supported KJSSE branch code")
+        return value
 
 
 class SubjectInput(Input):

@@ -43,7 +43,7 @@ Students can:
 
 - Create, edit, complete, reopen, and delete tasks.
 - Connect Gmail, Classroom, or both.
-- Manually add theory, lab, and tutorial subjects and link subjects to Classroom sources when needed; the student's general batch applies to every subject.
+- Manually add theory, lab, and tutorial subjects and link subjects to Classroom sources when needed; the student's batch applies to every subject.
 - Manually enter optional weekly class/lab/tutorial slots as interpretation context.
 - Add relevant sender email addresses and completely block unwanted senders from DueCare processing.
 - Review incomplete or contradictory imported information.
@@ -59,34 +59,52 @@ Connections are optional. Students can begin with manual tasks.
 
 1. Sign in with Google using a verified Somaiya account.
 2. Display the Google-provided name, email, and photo as read-only identity information when available.
-3. Require these nine manually entered academic fields so academic targeting can be checked explicitly:
+3. Require these six manually entered academic fields so academic targeting can be checked explicitly. Institution is always `KJSSE` and programme is always `BTech`; neither is editable. Admission year is not collected:
 
 | Field | Input |
 |---|---|
-| Institution | Text |
-| Programme | Text |
-| Department | Text |
-| Admission year | Number |
-| Class/year | Text identifying the student's current class or year |
+| Branch | Fixed dropdown of short codes; store both `branchCode` and its canonical full `branchName` |
+| Class/year | Fixed dropdown: FY, SY, TY, LY |
 | Current semester | Number |
 | Division | Text |
-| General batch | Text; entered once and applicable to every theory, lab, and tutorial subject |
+| Batch | Text; entered once and applicable to every theory, lab, and tutorial subject |
 | Roll number | Text, preserving letters and leading zeros |
+
+The branch dropdown displays the following supplied abbreviations. Full names are canonical server-derived values, retained alongside the code for AI context, task academic context, and explicit recipient-cohort matching:
+
+| Code | Full name |
+|---|---|
+| COMPS | Computer Engineering |
+| IT | Information Technology |
+| AIDS | Artificial Intelligence & Data Science |
+| CSBS | Computer Science & Business Systems |
+| VLSI | Electronics Engineering (VLSI Design & Technology) |
+| CCE | Computer & Communication Engineering |
+| EXTC | Electronics & Telecommunication Engineering |
+| EXCP | Electronics & Computer Engineering |
+| MECH | Mechanical Engineering |
+| RAI | Robotics & Artificial Intelligence |
+| CIVIL | Civil Engineering |
+
+The API accepts only these branch codes. It derives the full name, fixes KJSSE/BTech, and rejects attempts to edit institution/programme, supply a full-name override, or collect admission year. Existing department values matching a supplied abbreviation or full name are normalized; unknown legacy values require the student to choose a branch. Canonical values replace the legacy department/admission-year keys on the next profile save. The existing JSON/API key `generalBatch` continues to store the single student batch; its visible label is **Batch**.
+
+Explicit recipient branch targeting accepts either a code or its full name. Confirmed other-branch work is ignored, unresolved branch targeting requires review, and a minor's offering department or sender's department alone is not a recipient mismatch. The word “it” in ordinary prose must not be classified as the IT branch. Admission cohort mentions in reference notices remain evidence only; unknown admission-cohort or admission-route eligibility requires review.
 
 4. Complete onboarding.
 5. Offer optional source connections.
-6. Let the student manually add subjects and identify each as theory, lab, or tutorial. Use the general batch already entered in the profile for all subject-related processing. Offer optional manual weekly timetable entry for those subjects; it is not another onboarding requirement.
+6. Let the student manually add subjects and identify each as theory, lab, or tutorial. Use the batch already entered in the profile for all subject-related processing. Offer optional manual weekly timetable entry for those subjects; it is not another onboarding requirement.
 
 Google sign-in supplies identity information. It does not supply the student's academic profile or complete college history. DueCare history means the subjects, tasks, submissions, and changes tracked within the application.
 
-### Manually added subjects and the student's general batch
+### Manually added subjects and the student's batch
 
 Subjects are always created by the student. Connecting Classroom or receiving an email must not automatically create a subject, enroll the student in one, or add subjects through a course-selection step.
 
-- Each subject has a name, a subject kind (`theory`, `lab`, or `tutorial`), and optional code/aliases. Student academic context comes from the profile.
+- The add/edit subject form contains only Subject name and Subject kind (`theory`, `lab`, or `tutorial`). Course code, aliases, academic term, and class/section code are not form inputs. Existing matching metadata is preserved when editing a subject. Student academic context comes from the profile.
+- The timetable form exposes day, start/end times in IST, room/location, and instructor. Valid from and Valid until controls are removed. Existing stored validity bounds are retained on save; new UI-created slots have no date bounds.
 - Theory, lab, and tutorial subjects are separate records, even when they share a base name or subject code. A shared confirmed course code can identify related components without merging their work, mappings, or timetable slots.
-- Store exactly one student batch in the profile. That general batch applies to every subject, including every lab.
-- Keep class/year, semester, division, and general batch as distinct profile values. Subjects inherit this academic context; they do not define or override student batch membership.
+- Store exactly one student batch in the profile. That batch applies to every subject, including every lab.
+- Keep class/year, semester, division, and batch as distinct profile values. Subjects inherit this academic context; they do not define or override student batch membership.
 - Do not request a batch when adding a subject or store per-subject batch membership. Batch targeting stated in an assignment is source information to compare with the single profile batch.
 - Read the current profile batch during processing instead of copying membership into subject records. A profile batch edit changes the context for all subjects together; previously ignored items still require explicit reprocessing.
 - Students may manually link an existing subject to Classroom course metadata. Source metadata helps mapping but does not create subjects.
@@ -97,7 +115,7 @@ Subjects are always created by the student. Connecting Classroom or receiving an
 
 The user confirmed separate manually added tutorial subjects after reviewing the supplied course details. Their instructor, class/section code, room, time, and assignment context must not be collapsed into the theory subject's details. For example, Discrete Maths theory and Discrete Maths tutorial can share course code 16U2604 while using different class codes and instructors. Both inherit the same general student batch.
 
-AI must receive this context before applicability assessment, extraction, matching, or receipt association: institution, programme, department, class/year, semester, division, the student's single general batch; manually added subject IDs, names, aliases, kinds, confirmed class codes and term context; relevant manually entered weekly slots; and existing source mappings. It must distinguish theory, lab, and tutorial work and compare all assignment batch targeting against that same profile batch.
+AI must receive this context before applicability assessment, extraction, matching, or receipt association: fixed institution/programme, branch code and full name, class/year, semester, division, the student's single batch; manually added subject IDs, names, aliases, kinds, confirmed class codes and term context; relevant manually entered weekly slots; and existing source mappings. It must distinguish theory, lab, and tutorial work and compare all assignment batch targeting against that same profile batch.
 
 For example, Database Theory and Database Lab are separate subjects, but a student whose profile batch is B1 belongs to B1 for both. An assignment addressed exclusively to B2 must be ignored regardless of which subject it concerns.
 
@@ -252,7 +270,7 @@ Reminder dates also retain their role. A quiz's online closing time is not autom
 2. Preserve the header sender mailbox separately from a quoted or displayed author, recipient-group context, message sent time, Gmail occurrence metadata, and referenced thread identity. A copied sender name is not authenticated sender evidence.
 3. Separate the current authored section, quoted earlier messages, tables, signatures, subscription footers, and attachment references. Do not remove all quoted text: it can hold the unchanged test date or original task identity needed to interpret a later room update.
 4. Build candidate obligations and field-level updates. Use current authored changes first, then retain non-conflicting earlier details for the same established obligation. The current sentence about login does not erase an earlier confirmed test start.
-5. Preserve table relationships while interpreting academic targeting. Room identifiers such as B115A and B116A are venues, not student batch labels. Select the row applicable to the student's general batch; never combine rooms from other rows.
+5. Preserve table relationships while interpreting academic targeting. Room identifiers such as B115A and B116A are venues, not student batch labels. Select the row applicable to the student's batch; never combine rooms from other rows.
 6. Apply the mandatory applicability check per candidate and section before detailed extraction or association. A quoted Division A roster cannot supply dates for a Division B student.
 7. Ignore signatures, disclaimer text, unsubscribe instructions, unrelated links, and reference-only material as task triggers. Retain only necessary academic instructions for accepted tasks.
 
@@ -279,7 +297,7 @@ Blocking applies within DueCare; it does not delete mail or prevent delivery in 
 
 1. Read source metadata and apply the complete sender blocklist for Gmail. Blocked mail stops here.
 2. Check normal sender eligibility or the student's included-sender preferences, then identify whether the item is potentially an included assignment, test, or related update. Clearly unrelated mail is ignored.
-3. Compare candidate academic work with the student's class/year, semester, division, single general batch, and theory/lab/tutorial subject context before creating a task or applying an update.
+3. Compare candidate academic work with the student's class/year, semester, division, single batch, and theory/lab/tutorial subject context before creating a task or applying an update.
 4. Ignore confirmed academic-targeting mismatches. Route insufficient or ambiguous targeting to Needs attention. Only confirmed applicable work proceeds to detailed extraction, matching, duplicate handling, and validated submission processing.
 5. Apply remaining task relevance and priority rules within those boundaries, then persist accepted results and evidence idempotently.
 
@@ -304,7 +322,7 @@ Initial import includes:
 
 Removing a subject's Classroom mapping stops future syncing through that mapping and preserves existing tasks. Source disappearance or loss of access produces a source notice without changing completion status.
 
-Classroom source mappings must retain theory/lab/tutorial context and use the student's general batch for applicability checks. They cannot define an alternative student batch. A source course may supply work for more than one manually added subject; resolve each item using subject kind and profile context rather than treating a Classroom course as a single automatically created subject.
+Classroom source mappings must retain theory/lab/tutorial context and use the student's batch for applicability checks. They cannot define an alternative student batch. A source course may supply work for more than one manually added subject; resolve each item using subject kind and profile context rather than treating a Classroom course as a single automatically created subject.
 
 #### Assignment and announcement reconciliation
 
@@ -319,7 +337,7 @@ Classroom source mappings must retain theory/lab/tutorial context and use the st
 
 ### Relevance and profile matching
 
-The first academic check compares each candidate assignment/test with the student's institution, programme, department, class/year, semester, division, subject kind, and general batch. The profile batch is the sole student batch value used for every subject and source. Do not infer a different batch for a lab, subject, or Classroom mapping.
+The first academic check compares each candidate assignment/test with the student's fixed institution/programme, branch code and full name, class/year, semester, division, subject kind, and batch. The profile batch is the sole student batch value used for every subject and source. Do not infer a different batch for a lab, subject, or Classroom mapping.
 
 Use three processing outcomes, separate from task statuses:
 
@@ -333,11 +351,11 @@ A message explicitly intended for another batch or division must be ignored by A
 
 Normalize labels without inventing membership:
 
-- Division B plus general batch 2 can correspond to the combined source label B2. Retain the original text and the normalization basis. A naked “2” without established division context cannot resolve an otherwise ambiguous batch.
+- Division B plus batch 2 can correspond to the combined source label B2. Retain the original text and the normalization basis. A naked “2” without established division context cannot resolve an otherwise ambiguous batch.
 - SY and second year, and semester III and 3, can be equivalent labels. Academic year 2026–27, admission year 2025, calendar year 2026, and current semester 3 remain different values.
 - `DS_B_ODD_26-27` can supply course, division, and term context; it is not a deadline. A group label describing a cohort can support context after student confirmation, but delivery to a mailing list alone is not proof of the student's exact batch or enrolment in every mentioned subject.
 - “SY all” in an explicitly mapped minor course is broader targeting rather than a division mismatch. Evaluate the enrolled subject and actual intended audience together.
-- Admission-route exceptions such as diploma entrants versus transfer students are not implied by admission year, roll number, or Google identity. When such eligibility is decisive and unknown, route that candidate to review. Do not add a tenth required profile field or infer the answer.
+- Admission-route exceptions such as diploma entrants versus transfer students are not implied by admission year, roll number, or Google identity. When such eligibility is decisive and unknown, route that candidate to review. Do not add an admission-route field or infer the answer.
 
 The new ITVC examples use the combined course audience `A-B-C-D_SY_ODD_26-27`. Interpret the divisions as the set A, B, C, and D, which includes Division B; do not reject it because the first token is A or rewrite the student's division. Course-level audience, activity-level audience, and batch qualifiers are separate observations. An explicit B1-only or other-class qualifier on an activity takes precedence over a broader course-level audience that includes B2.
 
@@ -349,9 +367,9 @@ Assess targeting per assignment/test or clearly separated message section. If on
 
 Sender inclusion, priority rules, and manually linked Classroom subjects cannot override a confirmed academic mismatch or silently rewrite student context. Missing or ambiguous targeting cannot be auto-accepted through an include rule.
 
-Review must show the observed class/semester/division/batch, the student's relevant profile values, and the missing or contradictory details. The student can confirm applicability, choose a manually added subject, or dismiss the item. A student confirmation applies to that item and is retained in its history; it must not silently change the academic profile or general batch. Recheck blocks and current academic context before applying the resolution.
+Review must show the observed class/semester/division/batch, the student's relevant profile values, and the missing or contradictory details. The student can confirm applicability, choose a manually added subject, or dismiss the item. A student confirmation applies to that item and is retained in its history; it must not silently change the academic profile or batch. Recheck blocks and current academic context before applying the resolution.
 
-Do not infer missing academic profile values, including the general batch. Store only minimal source identifiers and a mismatch reason for ignored academic work; apply the existing expiry for irrelevant processing metadata. Reconsider ignored items after profile or batch changes only through explicit reprocessing.
+Do not infer missing academic profile values, including the batch. Store only minimal source identifiers and a mismatch reason for ignored academic work; apply the existing expiry for irrelevant processing metadata. Reconsider ignored items after profile or batch changes only through explicit reprocessing.
 
 ### Completion and reopening
 
@@ -487,7 +505,7 @@ Ordinary task relevance rules do not suppress submission evidence or authorized 
 
 Rule changes apply to future processing by default. Provide an explicit reprocessing action.
 
-Use a validated, allowlisted condition structure covering source, sender, subject, subject kind, class/year, semester, division, the general batch and observed source targeting, academic targeting, keywords, and task type. Rules cannot define per-subject student batches. Natural-language interpretation cannot generate executable code, database queries, or additional actions. Exact sender inclusion/blocking is managed through dedicated sender preferences rather than being weakened by rule ordering.
+Use a validated, allowlisted condition structure covering source, sender, subject, subject kind, class/year, semester, division, the batch and observed source targeting, academic targeting, keywords, and task type. Rules cannot define per-subject student batches. Natural-language interpretation cannot generate executable code, database queries, or additional actions. Exact sender inclusion/blocking is managed through dedicated sender preferences rather than being weakened by rule ordering.
 
 ### Syncing and failure behavior
 
@@ -636,7 +654,7 @@ AI performs classification, extraction, rule interpretation, and permitted candi
 - Reject outputs that violate schemas, ownership, task-type restrictions, or candidate constraints.
 - Treat message content as untrusted input.
 - Never send blocked-sender message content to an AI provider.
-- Supply class/year, semester, division, the student's single general batch, manually added theory/lab/tutorial subjects, and relevant valid weekly slots before interpreting candidate work; use that batch for every subject.
+- Supply class/year, semester, division, the student's single batch, manually added theory/lab/tutorial subjects, and relevant valid weekly slots before interpreting candidate work; use that batch for every subject.
 - Check academic applicability before detailed task extraction and association; ignore confirmed mismatches and send ambiguous or insufficient targeting to student review.
 - Match only to existing subject IDs owned by the student; never create subjects or per-subject student batch values from AI output, or combine work with incompatible source batch targeting.
 - Send necessary academic text only.
@@ -699,7 +717,7 @@ Use revisions for editable records. Preserve source occurrence time separately f
 
 | Entity | Required stored information |
 |---|---|
-| `profiles` | Auth user ID; Google name/email/photo; nine academic fields including distinct class/year, semester, division, and general batch; onboarding state; theme preference; revision; timestamps |
+| `profiles` | Auth user ID; Google name/email/photo; six academic fields plus fixed KJSSE/BTech and canonical branch code/full name, including distinct class/year, semester, division, and batch; onboarding state; theme preference; revision; timestamps |
 | `google_accounts` | Owner; Google subject; verified email; display metadata; connection timestamps |
 | `oauth_grants` | Account; scopes; encrypted refresh token; encryption-key version; grant status; timestamps |
 | `connections` | Owner/account; Gmail or Classroom; granted permissions; status; last attempt/success; incremental checkpoint; retry time |
@@ -900,12 +918,12 @@ Representative extracted timing proposal for the revised Discrete Maths quiz (an
 | Screen | Required behavior |
 |---|---|
 | Sign-in | Somaiya Google sign-in; clear rejection for ineligible identities |
-| Onboarding | Nine required academic fields with separate class/year, semester, division, and one general batch for all subjects; manually add theory/lab/tutorial subjects without entering another batch; optional timetable and connections; no Classroom course-selection step |
+| Onboarding | Six required academic fields with fixed institution/programme and a branch dropdown with separate class/year, semester, division, and one batch for all subjects; manually add theory/lab/tutorial subjects without entering another batch; optional timetable and connections; no Classroom course-selection step |
 | Dashboard | Due, completed, overdue assignments, missed tests, undated work, Needs attention, and sync progress |
 | Tasks | Search; subject/subject-kind/batch/type/status/priority/date/source filters; due/completed/overdue/missed status filters with type-specific validity; editing, completion, and reopening actions |
 | Task detail | Instructions, assessment/deliverable labels, subject kind, profile batch versus observed targeting; clearly separate upload opening/deadline, quiz availability, and login/report/start/end; venue, date precision, personal fields, links, attachment metadata, completion origin/evidence, revision timeline |
 | Calendar | Confirmed dated assignments and tests; clear date-only labels; exam windows/tentative alternatives visibly unresolved, never plotted as an invented exact slot or all-day exam lasting the whole window |
-| Subjects | Manually add/edit theory, lab, and tutorial subjects and optional confirmed aliases/codes/term context; enter/edit/remove weekly slots with weekday, local times, optional venue/instructor/validity; use the profile's general batch without another batch input; explicitly link existing subjects to Classroom source metadata |
+| Subjects | Manually add/edit subjects using only name and theory/lab/tutorial kind; enter/edit/remove weekly slots with weekday, local times, optional venue/instructor; no Valid from/Valid until inputs; use the profile's batch without another batch input; explicitly link existing subjects to Classroom source metadata |
 | Needs attention | Show observed versus student academic context; missing/conflicting targeting or timing, tentative alternatives, unknown eligibility, and proposed withdrawal; confirm applicability, select an existing manual subject, resolve the actual question, or dismiss; do not show blocked mail or confirmed mismatches as review items |
 | Rules | Simple rule editor; natural-language interpretation preview; enable/order/edit/reprocess |
 | Sender preferences | Add included sender emails; add/remove complete blocks; show block precedence and its effect on submission receipts; offer explicit reprocessing after unblocking |
@@ -929,7 +947,7 @@ Use concrete review explanations rather than scores: “Exact exam date has not 
 - Classroom authorization, body extraction, submission interpretation, and deployed integration remain separate validation milestones.
 - The first batch supplied 12 EML exports and 23 screenshots. The second supplied 11 email paths, including the already catalogued E09 notice and 10 additional files. All 22 catalogued exports were decoded successfully. Two earlier DS follow-up exports share the same Message-ID and decoded selected body; the two EXP6 receipts are distinct messages for one activity.
 - The primary sender `lms-kjsse@somaiya.edu` appears in an actual B2 practical-test notification. Faculty/department examples cover assignments, quizzes, IA tests, ESE practical windows, seating changes, and conditional assessment notices.
-- Course details visibly establish Semester III, Division B, and general batch 2 for the supplied reference student. These are examples for documentation and evaluation; no DueCare profile has been populated or inferred automatically.
+- Course details visibly establish Semester III, Division B, and batch 2 for the supplied reference student. These are examples for documentation and evaluation; no DueCare profile has been populated or inferred automatically.
 - Screenshots demonstrate both Assigned and Turned in Classroom work, stream-only obligations, and edited coursework. They do not demonstrate a successful live Classroom API read.
 - Exported authentication-result headers are sample data, not independently verified live sender authentication.
 - Three assignment-submission-confirmation exports now establish candidate receipt patterns: two EXP6-BST messages and one ITVC IA2 message. Sender authentication, recipient ownership, template semantics, and live task association still require validation before production enablement. Test-submission and withdrawal receipt patterns have not been supplied.
@@ -944,7 +962,7 @@ Use concrete review explanations rather than scores: “Exact exam date has not 
 | Authentication | Eligible Somaiya account succeeds; personal login fails; personal source connection succeeds after eligible login |
 | Sessions | Server refresh works; tokens remain inaccessible to browser scripts; revoked native sessions are rejected |
 | Ownership | Cross-user reads, edits, source callbacks, matching, merges, and deletion are rejected |
-| Onboarding | Nine fields required; class/year, semester, division, and general batch stored separately; roll-number formatting preserved; subjects manually added; no automatic subject creation or Classroom course-selection step |
+| Onboarding | Six fields required; fixed KJSSE/BTech and branch code/full name; class/year, semester, division, and batch stored separately; roll-number formatting preserved; subjects manually added; no automatic subject creation or Classroom course-selection step |
 | Subjects and batches | Theory/lab/tutorial remain separate, including shared course codes; the same profile batch applies to every subject; changing it updates processing context across all subjects; no subject batch inputs or overrides; clear other-batch or other-division work is ignored; ambiguous or insufficient targeting requires review |
 | Manual timetable | Optional slots save/edit/remove atomically with revision checks; no batch input; validity/term boundaries enforced; derived times cite slot/revision; ambiguous “during/by lab” text reviewed; source-exact exam time wins over weekly hours |
 | Manual tasks | Title/type alone suffice; undated tasks are due until completed; completion, reopening, editing, and deletion persist correctly |
@@ -992,7 +1010,7 @@ Evaluate extraction by exact expected outcomes: correctly identified obligations
    Establish the approved stack, database migrations, API schemas, ownership checks, and test setup. Acceptance: authenticated profile access and cross-user isolation work.
 
 2. **Identity and manual-task experience**  
-   Complete sign-in, onboarding with distinct class/year, semester, division, and a single general batch inherited by all manually added theory/lab/tutorial subjects, optional manual weekly timetable context, manual tasks, dashboard, calendar, and responsive layouts. Acceptance: the product works without connected sources, has no subject-level batch input, and exposes exactly four task statuses with missed reserved for tests.
+   Complete sign-in, onboarding with distinct class/year, semester, division, and a single batch inherited by all manually added theory/lab/tutorial subjects, optional manual weekly timetable context, manual tasks, dashboard, calendar, and responsive layouts. Acceptance: the product works without connected sources, has no subject-level batch input, and exposes exactly four task statuses with missed reserved for tests.
 
 3. **Source authorization and resumable imports**  
    Complete Gmail/Classroom connections, explicit mappings to manually added subjects, batch-aware import, incremental checkpoints, active-browser syncing, and partial results. Acceptance: live authorization and interrupted-job recovery work without automatic subject creation.
@@ -1041,7 +1059,7 @@ This section records academic facts visible in the supplied materials and the be
 - `E01`–`E22` identify the catalogued email export files below. `S01`–`S23` identify screenshots in the order attached to the first request. The DS practical notice supplied again in the second batch retains E09 rather than receiving a duplicate catalogue ID.
 - Do not package the original email files, screenshots, mailing-list recipients, raw message IDs, student rosters, or private attachment URLs into the repository. Produce minimal redacted fixtures separately when implementation begins.
 - Preserve enough source structure to test current versus quoted messages, timing roles, mixed-batch table rows, and identity matching. Replace unrelated personal details with placeholders.
-- Do not treat every sample's institution, semester, division, batch, course list, or instructor as a default for all DueCare users.
+- KJSSE/BTech are fixed by the student's product decision. Do not treat sample semester, branch, division, batch, course list, or instructor as defaults for every user.
 - These samples contain notifications and examples from earlier dates as well as future assessments. Historical examples test chronology; they are not automatically current obligations or completed work.
 
 ### Reference student and academic-context distinctions
@@ -1050,11 +1068,11 @@ This section records academic facts visible in the supplied materials and the be
 |---|---|
 | Current semester III | Scheduler screenshots explicitly show Semester III. Normalize III to 3 for comparison; do not infer semester from a sample paper template |
 | Second year / SY | Assessment mail and Classroom titles use second-year/SY labels; keep current class/year distinct from admission year |
-| Division B, general batch 2 | Detailed DBMS, DS, WDL, and tutorial enrolment cards show B and 2. This supports the combined B2 label in source notices; one profile batch applies across subjects |
+| Division B, batch 2 | Detailed DBMS, DS, WDL, and tutorial enrolment cards show B and 2. This supports the combined B2 label in source notices; one profile batch applies across subjects |
 | Admission cohort and academic term | Mail-group context refers to the 2025 admission cohort, while course labels refer to the 2026–27 odd term / July–November 2026. These are different concepts |
 | Theory, practical, tutorial | Theory, lab, and tutorial are distinct manually added subjects. Tutorial classes have their own class code/instructor/time even when the course code is shared with theory |
 | Minor and basket course enrolment | AR/VR minor and Upanishadic Wisdom appear alongside major subjects. Relevant work can come from a broader audience or course-offering department |
-| Profile fields not established by all examples | The complete programme, department, admission route, and roll-number record are not universally proved by a screenshot or Google login. Keep manual onboarding and review of unknown eligibility |
+| Profile fields not established by all examples | KJSSE/BTech are fixed product values; branch, admission route, and roll-number records are not proved by Google login. Keep manual onboarding and review of unknown eligibility |
 
 The profile's global batch rule remains authoritative. Source records may mention batch-specific schedules; they do not create per-subject student membership. A later screenshot or mail referring to another batch must not silently switch the student to that batch.
 
@@ -1210,7 +1228,7 @@ Student inclusion and blocking apply exactly as specified earlier. No sample sen
 - `DS_B_ODD_26-27` supplies course/division/term context rather than a calendar date.
 - Candidate: DS **lab** `test`, confirmed applicable only against the student's profile and manually added subject/context.
 - The reference weekly DS lab is Tuesday **11:00–13:00**. The exam notice explicitly gives **09:00–11:00**, although it describes this as the regular timing.
-- Preserve the explicit exam interval and show the discrepancy in evidence. Do not change the interval to 11:00–13:00 or modify the profile's general batch to make the notice fit.
+- Preserve the explicit exam interval and show the discrepancy in evidence. Do not change the interval to 11:00–13:00 or modify the profile's batch to make the notice fit.
 - This is an assessment announcement, not submission confirmation. It must not complete an assignment merely because it came from the primary sender.
 
 #### E10: general DS OST details
@@ -1235,7 +1253,7 @@ Student inclusion and blocking apply exactly as specified earlier. No sample sen
 - The established quiz date is **28 September 2026**.
 - An older quoted notice gives a 13:05 start. A later quoted revision gives reporting **13:35**, start **13:40**, and end **13:50 IST**.
 - The newest authored section requires login by **13:30** and supplies a room table. This adds a login requirement; it does not turn 13:30 into the test start or restore the older 13:05 schedule.
-- For Division B plus general batch 2, the room table maps **B2 to B115A**. Select that row only; other batch rows do not make the whole message irrelevant.
+- For Division B plus batch 2, the room table maps **B2 to B115A**. Select that row only; other batch rows do not make the whole message irrelevant.
 - The email subject still references 13:30. A subject-line shorthand does not override the role-specific revised body details.
 - Expected result: one COA theory `test`, login 13:30, reporting 13:35, start 13:40, end 13:50, venue B115A, with separate field provenance and a visible revision timeline.
 
@@ -1277,7 +1295,7 @@ These 10 additional files extend the catalogue to E22. The second batch's repeat
 - E22 was sent on **2 October** and lists the same activity as due **9 October 2026 at 23:59 IST**, matching E04's submission-window close and E18's activity resource identifier.
 - Punctuation, case, line wrapping, and Modeling/Modelling spelling variation are normalization inputs, not a reason to duplicate an exact linked activity. Preserve identity/term/subject checks when no exact identifier is available.
 - Match only the student's applicable task. The umbrella course audience includes B, but it does not cancel an explicit different-class or different-batch qualifier on a particular activity.
-- After valid confirmation, the task is completed even if the earlier digest is imported later or another digest repeats it. Parse each future digest row independently; ignore rows that clearly exclude the student's class/division/general batch.
+- After valid confirmation, the task is completed even if the earlier digest is imported later or another digest repeats it. Parse each future digest row independently; ignore rows that clearly exclude the student's class/division/batch.
 - A seven-day heading does not establish every row's deadline or status. Parse the explicit date and time on the individual activity.
 
 #### E19: precise EXP5 deadline
@@ -1458,4 +1476,4 @@ Evidence gaps are validation work, not assumptions to fill:
 - Individual exam slots/venues for notices that announce only a window or another division's schedule.
 - Student confirmation of ambiguous aliases, exceptional eligibility, and conflicts that source evidence cannot settle.
 
-Resolving these gaps must preserve Gmail/Classroom sources, manually added subjects, the single general batch, the latest four-status decision, complete sender blocking, and mobile planning after web acceptance.
+Resolving these gaps must preserve Gmail/Classroom sources, manually added subjects, the single batch, the latest four-status decision, complete sender blocking, and mobile planning after web acceptance.

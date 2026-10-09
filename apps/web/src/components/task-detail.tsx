@@ -273,7 +273,7 @@ export function TaskDetail({
                   </dd>
                 </div>
                 <div>
-                  <dt>General batch</dt>
+                  <dt>Batch</dt>
                   <dd>{t.generalBatch || "Not set"}</dd>
                 </div>
                 <div>

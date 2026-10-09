@@ -40,7 +40,7 @@ const sourceLabel: Record<string, string> = {
 
 function Targeting({ item }: { item: ReviewItem }) {
   const observed = { ...item.observed?.course, ...item.observed?.activity };
-  const show = (["classYears", "semesters", "divisions", "batches"] as const)
+  const show = (["branches", "classYears", "semesters", "divisions", "batches"] as const)
     .map((k) => [k, observed[k]] as const)
     .filter(([, v]) => Array.isArray(v) && v.length);
   const s = item.student || {};
@@ -56,13 +56,14 @@ function Targeting({ item }: { item: ReviewItem }) {
                     `${k.replace(/s$/, "")}: ${(v as string[]).join(", ")}`,
                 )
                 .join(" · ")
-            : "No class, division, or batch stated"}
+            : "No branch, class, division, or batch stated"}
           {observed.allBatches ? " · all batches" : ""}
         </dd>
       </div>
       <div>
         <dt>Your profile</dt>
         <dd>
+          {s.branchCode ? `${s.branchCode} · ` : ""}
           {s.classYear} · Semester {s.currentSemester} · Division {s.division} ·
           Batch {s.generalBatch}
         </dd>

@@ -13,10 +13,6 @@ import { Field, ErrorNotice } from "./ui/field";
 const schema = z.object({
   name: z.string().trim().min(1),
   kind: z.enum(["theory", "lab", "tutorial"]),
-  code: z.string(),
-  aliases: z.string(),
-  term: z.string(),
-  classCode: z.string(),
 });
 type Values = z.infer<typeof schema>;
 function SubjectEditor({
@@ -32,10 +28,6 @@ function SubjectEditor({
     defaultValues: {
       name: subject?.name || "",
       kind: subject?.kind || "theory",
-      code: subject?.code || "",
-      aliases: subject?.aliases.join(", ") || "",
-      term: subject?.term || "",
-      classCode: subject?.classCode || "",
     },
   });
   const save = useMutation({
@@ -45,10 +37,15 @@ function SubjectEditor({
         subject ? "PATCH" : "POST",
         {
           ...v,
-          aliases: v.aliases
-            .split(",")
-            .map((x) => x.trim())
-            .filter(Boolean),
+          // Retain existing source-matching metadata when editing the simpler form.
+          ...(subject
+            ? {
+                code: subject.code,
+                aliases: subject.aliases,
+                term: subject.term,
+                classCode: subject.classCode,
+              }
+            : {}),
           revision: subject?.revision,
         },
       ),
@@ -69,30 +66,13 @@ function SubjectEditor({
     >
       <form onSubmit={form.handleSubmit((v) => save.mutate(v))}>
         <div className="dialog-body form-grid">
-          {(["name", "code", "aliases", "term", "classCode"] as const).map(
-            (key) => (
-              <Field
-                key={key}
-                id={key}
-                label={
-                  {
-                    name: "Subject name",
-                    code: "Course code (optional)",
-                    aliases: "Aliases (comma separated)",
-                    term: "Academic term (optional)",
-                    classCode: "Class / section code (optional)",
-                  }[key]
-                }
-                error={form.formState.errors[key]?.message}
-              >
-                <input
-                  id={key}
-                  required={key === "name"}
-                  {...form.register(key)}
-                />
-              </Field>
-            ),
-          )}
+          <Field
+            label="Subject name"
+            id="name"
+            error={form.formState.errors.name?.message}
+          >
+            <input id="name" required {...form.register("name")} />
+          </Field>
           <Field label="Subject kind" id="kind">
             <select id="kind" {...form.register("kind")}>
               <option value="theory">Theory</option>
@@ -212,8 +192,6 @@ function Timetable({
                         "endTime",
                         "location",
                         "instructor",
-                        "validFrom",
-                        "validUntil",
                       ] as const
                     ).map((key) => (
                       <Field
@@ -225,21 +203,13 @@ function Timetable({
                             endTime: "Ends (IST)",
                             location: "Room / location",
                             instructor: "Instructor",
-                            validFrom: "Valid from",
-                            validUntil: "Valid until",
                           }[key]
                         }
                       >
                         <input
                           id={key + i}
                           required={key === "startTime" || key === "endTime"}
-                          type={
-                            key.endsWith("Time")
-                              ? "time"
-                              : key.startsWith("valid")
-                                ? "date"
-                                : "text"
-                          }
+                          type={key.endsWith("Time") ? "time" : "text"}
                           value={s[key] || ""}
                           onChange={(e) => change(i, key, e.target.value)}
                         />
@@ -312,7 +282,7 @@ export function Subjects({
         <div>
           <h2>Your subjects</h2>
           <p className="text-secondary">
-            General batch {batch || "not set"} applies to every subject.
+            Batch {batch || "not set"} applies to every subject.
           </p>
         </div>
         <Button onClick={() => setEditing(null)}>
@@ -332,10 +302,11 @@ export function Subjects({
             <article className="panel subject-panel" key={s.id}>
               <span className="kind-label">{s.kind}</span>
               <h3>{s.name}</h3>
-              <p className="text-secondary text-sm">
-                {s.code || "No course code"}
-                {s.term ? " · " + s.term : ""}
-              </p>
+              {(s.code || s.term) && (
+                <p className="text-secondary text-sm">
+                  {[s.code, s.term].filter(Boolean).join(" · ")}
+                </p>
+              )}
               {s.aliases.length > 0 && (
                 <p className="text-sm">Also known as {s.aliases.join(", ")}</p>
               )}

@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .config import settings
 
-PROMPT_VERSION = "phase3-extract-1"
+PROMPT_VERSION = "branch-extract-2"
 
 
 class AIUnavailable(Exception):
@@ -30,6 +30,7 @@ class Model(BaseModel):
 
 
 class Targeting(Model):
+    branches: list[str] = Field(default_factory=list, max_length=20)
     classYears: list[str] = Field(default_factory=list, max_length=10)
     semesters: list[str] = Field(default_factory=list, max_length=10)
     divisions: list[str] = Field(default_factory=list, max_length=26)
@@ -109,7 +110,7 @@ Return JSON only, matching this shape:
 {"items":[{"intent":"new_work|revision|due_notice|supporting|submission|withdrawal|unknown",
 "section":"authored|quoted-N","taskType":"assignment|test|null","title":"...","assessmentLabel":null,
 "deliverableLabel":null,"subjectId":"one of the given subject ids or null","componentHint":null,
-"targeting":{"classYears":[],"semesters":[],"divisions":[],"batches":[],"allBatches":false,
+"targeting":{"branches":[],"classYears":[],"semesters":[],"divisions":[],"batches":[],"allBatches":false,
 "allDivisions":false,"excludesStudent":false,"conditional":false,"evidence":"exact words"},
 "timing":{"mode":null,"dueAt":null,"submissionOpensAt":null,"availabilityOpensAt":null,
 "availabilityClosesAt":null,"loginByAt":null,"reportingAt":null,"startsAt":null,"endsAt":null,
@@ -136,6 +137,9 @@ Rules:
   classYears ["SY"], "all batches" -> allBatches). Room codes like B115A are not batches.
   Set excludesStudent only when explicit targeting excludes the student's given context; set
   conditional when eligibility depends on facts not given (e.g. diploma/transfer students).
+- The student branchCode and branchName identify the same branch. Record explicit recipient
+  branch codes or full names in targeting.branches. A sender's department or an enrolled minor's
+  offering branch is not recipient targeting. The word "it" alone is not the IT branch.
 - A submission confirmation is intent "submission"; a reminder or overdue label is "due_notice"
   and never implies the student has or has not submitted. A cancelled requirement is "withdrawal".
 - When the text does not settle something essential, keep the field null and ask one concrete

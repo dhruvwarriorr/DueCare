@@ -7,12 +7,10 @@ import { api } from "@/lib/api";
 import type { Profile } from "@/lib/types";
 import { Field, ErrorNotice } from "./ui/field";
 import { Button } from "./ui/button";
+const classYears = ["FY", "SY", "TY", "LY"] as const;
 const schema = z.object({
-  institution: z.string().trim().min(1),
-  programme: z.string().trim().min(1),
-  department: z.string().trim().min(1),
-  admissionYear: z.number().int().min(1950).max(2200),
-  classYear: z.string().trim().min(1),
+  branchCode: z.string().trim().min(1, "Choose your branch"),
+  classYear: z.enum(classYears),
   currentSemester: z.number().int().min(1).max(30),
   division: z.string().trim().min(1),
   generalBatch: z.string().trim().min(1),
@@ -25,11 +23,8 @@ export function ProfileForm({ profile }: { profile: Profile }) {
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
-      institution: profile.institution || "",
-      programme: profile.programme || "",
-      department: profile.department || "",
-      admissionYear: profile.admissionYear,
-      classYear: profile.classYear || "",
+      branchCode: profile.branchCode || "",
+      classYear: classYears.find((year) => year === profile.classYear?.toUpperCase()),
       currentSemester: profile.currentSemester,
       division: profile.division || "",
       generalBatch: profile.generalBatch || "",
@@ -47,14 +42,10 @@ export function ProfileForm({ profile }: { profile: Profile }) {
     },
   });
   const fields = [
-    ["institution", "Institution"],
-    ["programme", "Programme"],
-    ["department", "Department"],
-    ["admissionYear", "Admission year"],
     ["classYear", "Class / year"],
     ["currentSemester", "Current semester"],
     ["division", "Division"],
-    ["generalBatch", "General batch"],
+    ["generalBatch", "Batch"],
     ["rollNumber", "Roll number"],
   ] as const;
   return (
@@ -69,8 +60,8 @@ export function ProfileForm({ profile }: { profile: Profile }) {
             : "Set up your academic profile"}
         </h2>
         <p className="text-secondary mt-2">
-          Your class, semester, division, and batch give your work the right
-          context.
+          Your branch, class, semester, division, and batch give your work the
+          right context.
         </p>
       </div>
       <div className="identity-row">
@@ -83,6 +74,22 @@ export function ProfileForm({ profile }: { profile: Profile }) {
         </div>
       </div>
       <div className="form-grid">
+        <Field
+          label="Branch"
+          id="branchCode"
+          error={form.formState.errors.branchCode?.message}
+        >
+          <select id="branchCode" required {...form.register("branchCode")}>
+            <option value="" disabled>
+              Choose your branch
+            </option>
+            {profile.branchOptions.map(({ code, name }) => (
+              <option key={code} value={code} title={name}>
+                {code}
+              </option>
+            ))}
+          </select>
+        </Field>
         {fields.map(([name, label]) => (
           <Field
             key={name}
@@ -90,19 +97,27 @@ export function ProfileForm({ profile }: { profile: Profile }) {
             id={name}
             error={form.formState.errors[name]?.message}
           >
-            <input
-              id={name}
-              required
-              type={
-                name === "admissionYear" || name === "currentSemester"
-                  ? "number"
-                  : "text"
-              }
-              {...form.register(name, {
-                valueAsNumber:
-                  name === "admissionYear" || name === "currentSemester",
-              })}
-            />
+            {name === "classYear" ? (
+              <select id={name} required {...form.register(name)}>
+                <option value="" disabled>
+                  Choose your class / year
+                </option>
+                {classYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                id={name}
+                required
+                type={name === "currentSemester" ? "number" : "text"}
+                {...form.register(name, {
+                  valueAsNumber: name === "currentSemester",
+                })}
+              />
+            )}
           </Field>
         ))}
         <Field label="Appearance" id="theme">

@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from . import auth, phase3_api, privacy_api, sources_api
+from . import academic, auth, phase3_api, privacy_api, sources_api
 from .common import User, finish, owned, page, replay, revision, work
 from .db import transaction
 from .domain import effective_status, task_data
@@ -134,11 +134,9 @@ def logout(request: Request):
 
 
 def profile_out(p, user):
+    data = academic.profile_data(p.data)
     fields = (
-        "institution",
-        "programme",
-        "department",
-        "admissionYear",
+        "branchCode",
         "classYear",
         "currentSemester",
         "division",
@@ -146,12 +144,13 @@ def profile_out(p, user):
         "rollNumber",
     )
     return {
-        **p.data,
+        **data,
+        "branchOptions": [{"code": code, "name": name} for code, name in academic.BRANCHES.items()],
         "theme": p.data.get("theme", "system"),
         "id": str(p.user_id),
         "identity": user,
         "revision": p.revision,
-        "onboardingComplete": all(p.data.get(f) for f in fields),
+        "onboardingComplete": all(data.get(f) for f in fields),
     }
 
 
@@ -188,7 +187,7 @@ def update_me(body: ProfilePatch, user=User):
         changes = body.model_dump(mode="json", by_alias=True, exclude_unset=True, exclude={"revision"})
         if any(v is None for v in changes.values()):
             raise ApiError(422, "INVALID_PROFILE", "Profile fields cannot be cleared")
-        p.data = {**p.data, **changes}
+        p.data = academic.profile_data({**p.data, **changes})
         p.revision += 1
         db.flush()
         return profile_out(p, user)
@@ -395,10 +394,7 @@ def add_task(body: TaskInput, user=User):
         if body.subject_id:
             owned(db, Subject, body.subject_id, user["id"])
         p = profile(db, user["id"])
-        d["academicContext"] = {
-            k: p.data.get(k)
-            for k in ("institution", "programme", "department", "classYear", "currentSemester", "division")
-        }
+        d["academicContext"] = academic.context(p.data)
         d["manualFieldOverrides"] = {
             k: {"recordedAt": now().isoformat()}
             for k in {TaskInput.model_fields[name].alias for name in body.model_fields_set}

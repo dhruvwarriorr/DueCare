@@ -19,15 +19,17 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
     },
   ]);
   await page.goto("/");
+  for (const label of ["Institution", "Programme", "Department", "Admission year", "General batch"])
+    await expect(page.getByLabel(label, { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Branch", { exact: true }).locator("option")).toHaveText([
+    "Choose your branch", "COMPS", "IT", "AIDS", "CSBS", "VLSI", "CCE", "EXTC", "EXCP", "MECH", "RAI", "CIVIL",
+  ]);
+  await page.getByLabel("Branch", { exact: true }).selectOption("COMPS");
+  await page.getByLabel("Class / year", { exact: true }).selectOption("SY");
   const values = {
-    Institution: "Example University",
-    Programme: "Engineering",
-    Department: "Computing",
-    "Admission year": "2025",
-    "Class / year": "SY",
     "Current semester": "3",
     Division: "B",
-    "General batch": "2",
+    Batch: "2",
     "Roll number": "001A",
   };
   for (const [label, value] of Object.entries(values))
@@ -36,6 +38,13 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
   await expect(
     page.getByRole("heading", { name: "Your work, in view." }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.reload();
+  await expect(page.getByLabel("Branch", { exact: true })).toHaveValue("COMPS");
+  const profile = await page.request.get("/api/v1/me");
+  expect(await profile.json()).toMatchObject({
+    institution: "KJSSE", programme: "BTech", branchCode: "COMPS", branchName: "Computer Engineering",
+  });
   await page.getByRole("button", { name: "Subjects", exact: true }).click();
   await page.getByRole("button", { name: "Add subject", exact: true }).click();
   await page.getByLabel("Subject name", { exact: true }).fill("Database lab");

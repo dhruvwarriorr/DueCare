@@ -29,14 +29,18 @@ describe("manual data entry", () => {
       },
       theme: "system",
       onboardingComplete: false,
+      branchOptions: [{ code: "COMPS", name: "Computer Engineering" }],
     } as Profile;
     wrap(<ProfileForm profile={p} />);
-    expect(screen.getAllByLabelText("General batch")).toHaveLength(1);
+    expect(screen.getAllByLabelText("Batch")).toHaveLength(1);
     expect(screen.getByLabelText("Roll number")).toHaveAttribute(
       "type",
       "text",
     );
-    expect(screen.getByLabelText("Institution")).toBeRequired();
+    expect(screen.getByLabelText("Branch")).toBeRequired();
+    expect(screen.getByRole("option", { name: "COMPS" })).toHaveValue("COMPS");
+    for (const label of ["Institution", "Programme", "Department", "Admission year", "General batch"])
+      expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
   });
   it("shows attempt-window timing and keeps task status outside the editor", () => {
     wrap(<TaskEditor subjects={[]} onClose={vi.fn()} />);

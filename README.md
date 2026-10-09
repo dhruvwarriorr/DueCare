@@ -2,6 +2,8 @@
 
 DueCare combines Somaiya Google sign-in, academic onboarding, manually added subjects and weekly timetable context, tasks, calendar, read-only Gmail/Classroom imports, academic targeting, student review, rules and completion reconciliation. Activity tracks changes and sync issues. Settings provides resumable privacy operations, deleted-import suppression/restore and account deletion. The current web scope is **localhost only**; native mobile apps and public deployment remain future scope.
 
+Academic profiles use fixed KJSSE/BTech context and six student-entered fields: branch, class/year, semester, division, batch, and roll number. Branch choices display the supplied abbreviations and retain canonical code/full-name pairs for message matching. Admission year is not collected. Legacy recognized department values carry over; the next profile save replaces deprecated fields with the canonical profile shape.
+
 The approved behavior lives in [the specification](docs/ProjectDocumentation.md) and [four-phase plan](docs/ImplementationPhases.md). See [current verification and live evidence gaps](docs/Phase4Validation.md) and [local operation/recovery](docs/OperationsLocal.md). Earlier phase verification files remain historical snapshots.
 
 ## Repository

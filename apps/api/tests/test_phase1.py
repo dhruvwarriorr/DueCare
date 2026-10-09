@@ -5,16 +5,13 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine, text
 
-from duecare import auth
+from duecare import academic, auth, interpret, targeting
 from duecare.db import transaction
 from duecare.models import Task, WebSession, now
 from tests.conftest import KEY, account, config, issue
 
 PROFILE = {
-    "institution": "Example University",
-    "programme": "Engineering",
-    "department": "Computing",
-    "admissionYear": 2025,
+    "branchCode": "COMPS",
     "classYear": "SY",
     "currentSemester": 3,
     "division": "B",
@@ -28,6 +25,9 @@ def test_profile_required_fields_batch_and_conflicts(client, headers):
     assert not p["onboardingComplete"]
     p = client.patch("/api/v1/me", headers=headers, json={**PROFILE, "revision": p["revision"]}).json()
     assert p["onboardingComplete"] and p["rollNumber"] == "001A"
+    assert (p["institution"], p["programme"]) == ("KJSSE", "BTech")
+    assert (p["branchCode"], p["branchName"]) == ("COMPS", "Computer Engineering")
+    assert "admissionYear" not in p and "department" not in p
     assert (
         client.patch("/api/v1/me", headers=headers, json={"revision": 1, "division": "A"}).status_code == 409
     )
@@ -41,6 +41,95 @@ def test_profile_required_fields_batch_and_conflicts(client, headers):
         "/api/v1/subjects", headers=headers, json={"name": "Database", "kind": "lab", "batch": "3"}
     )
     assert s.status_code == 422
+
+
+@pytest.mark.parametrize("code,name", academic.BRANCHES.items())
+def test_branch_profile_canonical_storage_and_ai_context(client, headers, student, code, name):
+    p = client.get("/api/v1/me", headers=headers).json()
+    response = client.patch(
+        "/api/v1/me",
+        headers=headers,
+        json={**PROFILE, "branchCode": code, "revision": p["revision"]},
+    )
+    assert response.status_code == 200
+    p = response.json()
+    assert p["branchName"] == name
+    with transaction(student.uid) as db:
+        from duecare.models import Profile
+
+        stored = db.get(Profile, student.uid).data
+        assert stored["branchCode"] == code and stored["branchName"] == name
+    payload = interpret.ai_payload({"profile": p, "subjects": [], "slots": [], "tasks": []}, {}, [])
+    assert payload["student"]["branchCode"] == code
+    assert payload["student"]["branchName"] == name
+    for label in (code, name):
+        observed = targeting.merge({"branches": [label], "divisions": ["B"]})
+        assert targeting.evaluate(observed, p)[0] == "applicable"
+    other = "IT" if code != "IT" else "COMPS"
+    assert (
+        targeting.evaluate(
+            targeting.merge({"branches": [other], "divisions": ["B"]}),
+            p,
+            trusted=True,
+        )[0]
+        == "mismatch"
+    )
+    assert (
+        targeting.evaluate(
+            targeting.merge({"branches": ["unknown branch"], "divisions": ["B"]}),
+            p,
+        )[0]
+        == "review"
+    )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"branchCode": "UNKNOWN"},
+        {"institution": "Other"},
+        {"programme": "Other"},
+        {"department": "COMPS"},
+        {"admissionYear": 2025},
+        {"branchName": "Forged name"},
+    ],
+)
+def test_profile_rejects_removed_or_unrecognized_fields(client, headers, changes):
+    p = client.get("/api/v1/me", headers=headers).json()
+    assert (
+        client.patch(
+            "/api/v1/me",
+            headers=headers,
+            json={"revision": p["revision"], **changes},
+        ).status_code
+        == 422
+    )
+
+
+def test_legacy_department_carries_over_and_removed_fields_are_cleaned_on_save(client, headers, student):
+    from duecare.models import Profile
+
+    client.get("/api/v1/me", headers=headers)
+    with transaction(student.uid) as db:
+        p = db.get(Profile, student.uid)
+        p.data = {
+            **PROFILE,
+            "branchCode": None,
+            "department": "Computer Engineering",
+            "admissionYear": 2025,
+            "institution": "Old",
+            "programme": "Old",
+        }
+        db.commit()
+    p = client.get("/api/v1/me", headers=headers).json()
+    assert p["branchCode"] == "COMPS" and p["onboardingComplete"]
+    assert p["institution"] == "KJSSE" and "admissionYear" not in p
+    client.patch("/api/v1/me", headers=headers, json={"revision": p["revision"], "theme": "dark"})
+    with transaction(student.uid) as db:
+        stored = db.get(Profile, student.uid).data
+        assert "department" not in stored and "admissionYear" not in stored
+        assert stored["branchName"] == "Computer Engineering"
+    assert academic.profile_data({"department": "Unrecognized"})["branchCode"] is None
 
 
 @pytest.mark.parametrize(

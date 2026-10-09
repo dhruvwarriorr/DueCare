@@ -11,8 +11,9 @@ export type Profile = {
   theme: "system" | "light" | "dark";
   institution?: string;
   programme?: string;
-  department?: string;
-  admissionYear?: number;
+  branchCode?: string | null;
+  branchName?: string | null;
+  branchOptions: { code: string; name: string }[];
   classYear?: string;
   currentSemester?: number;
   division?: string;
