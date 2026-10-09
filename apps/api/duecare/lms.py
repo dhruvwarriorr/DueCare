@@ -26,6 +26,21 @@ DATE = re.compile(
 CLOCK = re.compile(r"(\d{1,2}):(\d{2})\s*(am|pm)", re.I)
 ACTIVITY = re.compile(r"/mod/(assign|quiz|forum)/(?:view|discuss)\.php", re.I)
 RECEIPT = re.compile(r"you have submitted an assignment submission for '(.+?)'\.", re.I | re.S)
+RECEIPT_HTML = re.compile(
+    r"your assignment submission for ['\u2018\u2019](.+?)['\u2018\u2019] has been submitted\.", re.I
+)
+RECEIPT_SUBJECT = re.compile(
+    r"^(?:assignment|quiz|test) submission confirmation\b|^submission confirmation\s*:", re.I
+)
+QUIZ_RECEIPT = re.compile(
+    r"thank you for submitting your answers to ['\u2018\u2019](.+?)['\u2018\u2019] in course ['\u2018\u2019](.+?)['\u2018\u2019] at ",
+    re.I,
+)
+QUIZ_AUTOSUBMIT = re.compile(
+    r"the time for the quiz ['\u2018\u2019](.+?)['\u2018\u2019] in the course ['\u2018\u2019](.+?)['\u2018\u2019] expired\. "
+    r"your answers were submitted automatically at ",
+    re.I,
+)
 
 
 @dataclass
@@ -110,7 +125,7 @@ def parse(subject, text, links):
     """Return (template name, candidates) or (None, []) when the message is not a known template."""
     body, subject = text or "", flat(subject)
     plain = flat(body)
-    m = RECEIPT.search(plain)
+    m = RECEIPT.search(plain) or RECEIPT_HTML.search(plain)
     if subject.lower().startswith("assignment submission confirmation") and m:
         crumb = re.match(r"^(\S+?)\s*->\s*Assignment\s*->", plain)
         return "assignment_receipt", [
@@ -121,6 +136,22 @@ def parse(subject, text, links):
                 course_label=crumb.group(1) if crumb else None,
                 identity_key=first_activity([lnk for lnk in links if "/mod/assign/view.php" in lnk]),
                 template="assignment_receipt",
+            )
+        ]
+    quiz = QUIZ_RECEIPT.search(plain) or QUIZ_AUTOSUBMIT.search(plain)
+    if (
+        RECEIPT_SUBJECT.search(subject)
+        and quiz
+        and "this message confirms that your answers have been saved" in plain.lower()
+    ):
+        return "quiz_receipt", [
+            Candidate(
+                intent="submission",
+                task_type="test",
+                title=flat(quiz.group(1)),
+                course_label=flat(quiz.group(2)),
+                identity_key=first_activity([lnk for lnk in links if "/mod/quiz/view.php" in lnk]),
+                template="quiz_receipt",
             )
         ]
     if subject.lower().startswith("due on ") and "is due soon" in plain.lower():

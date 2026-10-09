@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -12,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from . import academic, auth, phase3_api, privacy_api, sources_api, timetable_api
 from .common import User, finish, owned, page, replay, revision, work
+from .config import settings
 from .db import transaction
 from .domain import effective_status, task_data
 from .errors import ApiError
@@ -20,7 +23,23 @@ from .safe_logs import configure
 from .schemas import ProfilePatch, SubjectInput, TaskInput, TaskPatch, TimetableInput
 from .views import profile, task_out
 
-app = FastAPI(title="DueCare API", version="0.2.0", openapi_url="/api/v1/openapi.json")
+
+@asynccontextmanager
+async def lifespan(app):
+    from .worker import Worker
+
+    worker = Worker() if settings().database_url else None
+    app.state.worker = worker
+    if worker:
+        worker.start()
+    try:
+        yield
+    finally:
+        if worker:
+            await asyncio.to_thread(worker.close)
+
+
+app = FastAPI(title="DueCare API", version="0.2.0", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
 configure()
 
 
@@ -99,6 +118,9 @@ def health():
 
 @app.get("/ready")
 def ready():
+    worker = getattr(app.state, "worker", None)
+    if worker and not worker.thread.is_alive():
+        raise ApiError(503, "WORKER_UNAVAILABLE", "Background processing is temporarily unavailable")
     with transaction() as db:
         for table in (
             "duecare.profiles",
@@ -109,6 +131,8 @@ def ready():
             "duecare_internal.account_deletions",
         ):
             db.execute(text(f"select 1 from {table} limit 1"))
+        if not db.scalar(text("select to_regprocedure('duecare_internal.pending_background_jobs()')")):
+            raise ApiError(503, "DATABASE_CONFIGURATION", "Background job migration is required")
     return {"status": "ok"}
 
 
@@ -545,6 +569,9 @@ def task_history(id: uuid.UUID, limit: int = Query(50, ge=1, le=100), cursor: st
 @app.get("/api/v1/overview")
 def overview(user=User):
     with work(user) as db:
+        from .reconcile import ensure_source_policy
+
+        ensure_source_policy(db, user["id"])
         current = now()
         effective = case(
             (Task.completed_at.is_not(None), "completed"),

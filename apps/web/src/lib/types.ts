@@ -33,7 +33,14 @@ export type Subject = {
   classroomMappings?: ClassroomMapping[];
 };
 export type Task = {
+  senderEmails?: string[];
   id: string;
+  // How an imported task's subject was chosen: course name/short form, AI, or none fitted.
+  subjectLink?: {
+    method: "name" | "ai" | "none";
+    model?: string | null;
+    reason?: string;
+  };
   revision: number;
   title: string;
   type: "assignment" | "test";
@@ -108,6 +115,7 @@ export type ClassroomMapping = {
   section: string | null;
   sourceAvailable: boolean;
   subjectKind: string | null;
+  automatic?: boolean;
   accountEmail: string | null;
 };
 export type SyncJob = {
@@ -166,7 +174,12 @@ export type ClassroomCourse = {
   courseState: string | null;
   alternateLink: string | null;
   available: boolean;
-  mappings: { subjectId: string; subjectName: string; subjectKind: string }[];
+  mappings: {
+    subjectId: string;
+    subjectName: string;
+    subjectKind: string;
+    automatic?: boolean;
+  }[];
 };
 export type SenderPreference = {
   email: string;

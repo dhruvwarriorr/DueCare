@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   useInfiniteQuery,
   useMutation,
@@ -36,6 +36,13 @@ export function PrivacyControls() {
           new URLSearchParams(pageParam ? { cursor: pageParam } : {}),
       ),
     getNextPageParam: (p) => p.nextCursor || undefined,
+    refetchInterval: (q) =>
+      q.state.data?.pages.some((p) =>
+        p.items.some((j) => j.status !== "completed"),
+      )
+        ? 2000
+        : false,
+    refetchIntervalInBackground: true,
   });
   const suppressed = useInfiniteQuery({
     queryKey: ["suppressions"],
@@ -49,43 +56,19 @@ export function PrivacyControls() {
   });
   const [confirm, setConfirm] = useState<Connection | "account" | null>(null);
   const [word, setWord] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<Error | null>(null);
   const [notice, setNotice] = useState("");
   const refresh = async () => {
     await client.invalidateQueries();
   };
-  async function drive(job: PrivacyJob) {
-    setBusy(job.id);
-    setError(null);
-    try {
-      while (
-        job.status !== "completed" &&
-        document.visibilityState === "visible"
-      ) {
-        job = await api<PrivacyJob>(
-          "/privacy/jobs/" + job.id + "/advance",
-          "POST",
-        );
-        if (job.status === "waiting_retry") break;
-      }
-      await refresh();
-    } catch (e) {
-      setError(e as Error);
-      await refresh();
-    } finally {
-      setBusy(null);
-    }
-  }
   const remove = useMutation({
     mutationFn: (c: Connection) =>
       api<PrivacyJob>("/privacy/source-data-deletions", "POST", {
         connectionId: c.id,
         revision: c.revision,
       }),
-    onSuccess: (job) => {
+    onSuccess: async () => {
       setConfirm(null);
-      void drive(job);
+      await refresh();
     },
   });
   const restore = useMutation({
@@ -115,6 +98,25 @@ export function PrivacyControls() {
       window.location.assign("/privacy/deletion");
     },
   });
+  const busy = remove.isPending || account.isPending;
+  const completed =
+    jobs.data?.pages
+      .flatMap((p) => p.items)
+      .filter((j) => j.status === "completed")
+      .map((j) => j.id)
+      .join(",") || "";
+  useEffect(() => {
+    if (!completed) return;
+    for (const key of [
+      "connections",
+      "tasks",
+      "overview",
+      "review-items",
+      "evidence",
+      "history",
+    ])
+      void client.invalidateQueries({ queryKey: [key] });
+  }, [client, completed]);
   return (
     <section className="panel privacy-panel">
       <h2>Privacy and your data</h2>
@@ -125,7 +127,6 @@ export function PrivacyControls() {
       </p>
       <ErrorNotice
         error={
-          error ||
           connections.error ||
           jobs.error ||
           suppressed.error ||
@@ -189,7 +190,7 @@ export function PrivacyControls() {
               </strong>
               <p className="text-secondary">
                 {j.status === "completed" ? "Complete" : "Step: " + j.stage}
-                {j.errorCode ? " · Retry needed" : ""}
+                {j.errorCode ? " · Retrying automatically" : ""}
               </p>
               {j.status === "completed" && (
                 <small>
@@ -199,8 +200,8 @@ export function PrivacyControls() {
               )}
             </div>
             {j.status !== "completed" && (
-              <Button disabled={!!busy} onClick={() => drive(j)}>
-                {busy === j.id ? "Working…" : "Resume"}
+              <Button disabled={jobs.isFetching} onClick={() => jobs.refetch()}>
+                {jobs.isFetching ? "Refreshing…" : "Refresh progress"}
               </Button>
             )}
           </div>

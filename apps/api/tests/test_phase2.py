@@ -1,7 +1,9 @@
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import parse_qs, quote, urlparse
 
 import pytest
@@ -313,7 +315,8 @@ def test_incremental_history_and_expired_history_fallback(client, headers, stude
     fake.add_message("m7", eml("teacher@somaiya.edu", "New quiz", "Quiz", "<m7@x>"))
     fake.calls.clear()
     job = run(client, headers, conn)
-    assert job["status"] == "completed" and "gmail_list" not in fake.calls and "gmail_history" in fake.calls
+    assert job["status"] == "completed" and "gmail_list" in fake.calls and "gmail_history" in fake.calls
+    assert fake.calls.index("gmail_list") < fake.calls.index("gmail_history")
     assert len(records(student.uid)) == before + 1 and job["progress"]["stored"] == 1
     fake.history_expired = True
     job = run(client, headers, conn)
@@ -326,8 +329,18 @@ def test_interrupted_job_resumes_from_checkpoint_and_lease_blocks_other_tabs(
 ):
     gmail_fixture(fake)
     conn = connect(client, headers, fake)
-    clock = iter(range(10_000))
-    monkeypatch.setattr(sync.time, "monotonic", lambda: next(clock))
+    # Expire the advance just after its first listing, independently of how often
+    # the concurrent interpretation lane checks the time.
+    clock = [time.monotonic()]
+    monkeypatch.setattr(sync, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    listing = fake.gmail_list
+
+    def slow_listing(*args, **kwargs):
+        page = listing(*args, **kwargs)
+        clock[0] += 4
+        return page
+
+    monkeypatch.setattr(fake, "gmail_list", slow_listing)
     monkeypatch.setattr(settings(), "sync_work_budget_seconds", 3)
     job = client.post(
         f"/api/v1/connections/{conn}/sync", headers=fresh(headers), json={"trigger": "open"}
@@ -566,10 +579,16 @@ def test_classroom_discovery_explicit_mapping_and_initial_import_rules(client, h
     assert job["status"] == "completed"
     with transaction(student.uid) as db:
         assert db.scalar(select(func.count()).select_from(Subject)) == 2  # Discovery never creates subjects.
-    assert records(student.uid) == [] and not [c for c in fake.calls if c.startswith("coursework:")]
     courses = client.get(f"/api/v1/connections/{conn}/classroom-courses", headers=headers).json()["items"]
     assert {c["externalCourseId"] for c in courses} == {"c-dbms", "c-lab", "c-unmapped"}
-    # One source course can supply work for separate theory and lab subjects; kinds stay distinct.
+    # Courses named by a subject's short form link themselves to every subject of that course;
+    # "Unlinked course" matches none and is never read.
+    assert "coursework:c-dbms" in fake.calls and "coursework:c-unmapped" not in fake.calls
+    for subject in (theory, lab):
+        mapped = client.get("/api/v1/subjects/" + subject["id"], headers=headers).json()["classroomMappings"]
+        assert {m["externalCourseId"] for m in mapped} == {"c-dbms", "c-lab"}
+        assert all(m["automatic"] for m in mapped)
+    # Explicit linking still works and keeps kinds distinct.
     for subject in (theory, lab):
         r = client.put(
             f"/api/v1/subjects/{subject['id']}/classroom-mappings/{conn}/c-dbms", headers=fresh(headers)
@@ -582,7 +601,9 @@ def test_classroom_discovery_explicit_mapping_and_initial_import_rules(client, h
         == 404
     )
     subject = client.get("/api/v1/subjects/" + lab["id"], headers=headers).json()
-    assert subject["kind"] == "lab" and subject["classroomMappings"][0]["externalCourseId"] == "c-dbms"
+    assert subject["kind"] == "lab" and "c-dbms" in {
+        m["externalCourseId"] for m in subject["classroomMappings"]
+    }
     assert "batch" not in json.dumps(subject["classroomMappings"]).lower()
     fake.calls.clear()
     job = run(client, headers, conn)
@@ -620,7 +641,8 @@ def test_classroom_discovery_explicit_mapping_and_initial_import_rules(client, h
     fake.courses = [c for c in fake.courses if c["id"] != "c-dbms"]
     run(client, headers, conn)
     subject = client.get("/api/v1/subjects/" + theory["id"], headers=headers).json()
-    assert subject["classroomMappings"][0]["sourceAvailable"] is False
+    gone = [m for m in subject["classroomMappings"] if m["externalCourseId"] == "c-dbms"]
+    assert gone[0]["sourceAvailable"] is False
     assert len(records(student.uid, kind="classroom_coursework")) == 3
 
     # Removing a mapping stops future coursework reads for it.
@@ -632,7 +654,7 @@ def test_classroom_discovery_explicit_mapping_and_initial_import_rules(client, h
     fake.courses.append({"id": "c-dbms", "name": "26-27 dbms Div B"})
     fake.calls.clear()
     run(client, headers, conn)
-    assert "coursework:c-dbms" not in fake.calls
+    assert "coursework:c-dbms" not in fake.calls  # An unlinked course is never relinked automatically.
 
 
 def test_cross_user_access_to_sources_is_rejected(client, headers, student, fake):
@@ -819,3 +841,79 @@ def test_sign_in_grants_gmail_and_classroom_without_separate_connect(client, stu
     r = client.post("/internal/auth/callback", headers=gateway, json={"state": start["state"], "code": "c"})
     assert r.status_code == 200
     assert client.get("/api/v1/connections", headers=other.headers).json()["items"] == []
+
+
+def test_streaming_duplicate_survives_minimized_original(client, headers, student, fake, monkeypatch):
+    raw = eml("teacher@somaiya.edu", "Campus newsletter", "Campus news", "<stream-copy@example.test>")
+    fake.add_message("original", raw, ts=now())
+    fake.add_message("copy", raw, ts=now() - timedelta(minutes=1))
+    metadata = fake.gmail_metadata
+
+    def after_interpretation(token, gid):
+        if gid == "copy":
+            timeout = time.monotonic() + 10
+            while time.monotonic() < timeout:
+                saved = records(student.uid)
+                if saved and saved[0].processing_state == "ignored":
+                    assert saved[0].content_hash is None and saved[0].data == {}
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("original was not interpreted while importing")
+        return metadata(token, gid)
+
+    monkeypatch.setattr(fake, "gmail_metadata", after_interpretation)
+    monkeypatch.setattr(settings(), "sync_work_budget_seconds", 30)
+    conn = connect(client, headers, fake)
+    job = run(client, headers, conn)
+    assert job["status"] == "completed", job
+    states = {r.provider_id.rsplit(":", 1)[1]: r.processing_state for r in records(student.uid)}
+    assert states == {"original": "ignored", "copy": "duplicate"}
+    with transaction(student.uid) as db:
+        assert "messageFingerprints" not in db.get(SyncJob, job["id"]).checkpoint
+
+
+def test_gmail_30_day_window_applies_to_initial_import_and_history(client, headers, student, fake):
+    for name, age in [("old", 31), ("recent", 29), ("newest", 1)]:
+        fake.add_message(
+            name,
+            eml("teacher@somaiya.edu", "Campus news", "News", f"<{name}@window.test>"),
+            ts=now() - timedelta(days=age),
+        )
+    conn = connect(client, headers, fake)
+    assert run(client, headers, conn)["status"] == "completed"
+    assert {r.provider_id.rsplit(":", 1)[1] for r in records(student.uid)} == {"recent", "newest"}
+    assert "gmail_raw:old" not in fake.calls
+    fake.calls.clear()
+    fake.add_message(
+        "old-history",
+        eml("teacher@somaiya.edu", "Old mail", "News", "<old-history@window.test>"),
+        ts=now() - timedelta(days=40),
+    )
+    fake.add_message("fresh", eml("teacher@somaiya.edu", "Fresh mail", "News", "<fresh@window.test>"))
+    job = run(client, headers, conn)
+    assert job["status"] == "completed" and job["progress"]["outsideWindow"] == 1
+    assert "gmail_raw:old-history" not in fake.calls
+    assert fake.calls.index("gmail_list") < fake.calls.index("gmail_history")
+
+
+def test_existing_90_day_gmail_job_restarts_inside_30_day_window(client, headers, student, fake):
+    fake.add_message(
+        "old", eml("teacher@somaiya.edu", "Old", "News", "<old@window.test>"), ts=now() - timedelta(days=40)
+    )
+    fake.add_message("new", eml("teacher@somaiya.edu", "New", "News", "<new@window.test>"))
+    conn = connect(client, headers, fake)
+    job = client.post(f"/api/v1/connections/{conn}/sync", headers=fresh(headers), json={}).json()["job"]
+    with transaction(student.uid) as db:
+        row = db.get(SyncJob, job["id"])
+        row.checkpoint = {
+            "stage": "listing",
+            "source": "list",
+            "query": f"after:{int((now() - timedelta(days=90)).timestamp())}",
+            "pending": ["old"],
+            "more": True,
+        }
+        db.commit()
+    assert run(client, headers, conn)["status"] == "completed"
+    assert "gmail_raw:old" not in fake.calls
+    assert len(records(student.uid)) == 1

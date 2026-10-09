@@ -205,6 +205,7 @@ def advance_source(db, job, conn):
     if job.status == "completed":
         return job_out(job)
     job.error_code = None
+    job.data = {k: v for k, v in job.data.items() if k != "nextRetryAt"}
     if job.kind == "disconnect":
         remaining = db.scalar(
             select(Connection.id)
@@ -220,6 +221,8 @@ def advance_source(db, job, conn):
         )
         if not remaining and not revoke_grant(grant):
             job.status, job.error_code = "waiting_retry", "GOOGLE_REVOCATION_RETRY"
+            job.data = {**job.data, "nextRetryAt": (now() + timedelta(seconds=30)).isoformat()}
+            job.revision += 1
             return job_out(job)
         job.data = {"googleAccessRevoked": not bool(remaining)}
         job.stage = "finish"
@@ -400,6 +403,7 @@ def resume_account(token, advance):
             return account_out(job)
         db.execute(text("select set_config('app.user_id', :id, true)"), {"id": str(uid)})
         job.error_code, job.status = None, "pending"
+        job.next_retry_at = None
         if job.stage == "revoke":
             grant = db.scalar(
                 select(OAuthGrant)
@@ -411,6 +415,7 @@ def resume_account(token, advance):
             if grant:
                 if not revoke_grant(grant):
                     job.status, job.error_code = "waiting_retry", "GOOGLE_REVOCATION_RETRY"
+                    job.next_retry_at = now() + timedelta(seconds=30)
             else:
                 job.stage = "data"
         elif job.stage == "data":

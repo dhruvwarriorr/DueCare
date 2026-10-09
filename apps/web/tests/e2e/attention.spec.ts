@@ -69,28 +69,17 @@ test("imported LMS work is resolved in Needs attention, completed from confirmed
   const gmail = page.locator(".connection-card", { hasText: "Gmail" });
   await expect(gmail).toContainText("Last synced", { timeout: 15000 });
 
-  // The course name matches both theory and lab subjects, so DueCare asks instead of guessing.
+  // "DS" names both the theory and lab subjects; EXP3 is lab work, so the lab is linked
+  // automatically and no subject question is asked.
   await page.goto("/?view=attention");
-  const card = page.locator(".review-card", { hasText: "EXP3-Queue" });
-  await expect(card).toContainText("Which of your subjects is this for?");
+  await expect(
+    page.getByText("Which of your subjects is this for?"),
+  ).toHaveCount(0);
   await expect(page.locator(".nav-badge")).toHaveText(/\d+/);
-  await page.screenshot({ path: "../../.local/attention-desktop.png", fullPage: true });
-  await card
-    .getByLabel("Subject", { exact: true })
-    .selectOption({ label: "Data Structures Laboratory · lab" });
-  await card.getByRole("button", { name: "Add task" }).click();
-  await expect(card).toHaveCount(0);
-
-  // Reprocessing reconsiders the receipt that arrived before the task existed.
-  await page.goto("/?view=connections");
-  const reprocessed = page.waitForResponse(
-    (r) => r.url().includes("/reprocess") && r.request().method() === "POST",
-    { timeout: 20000 },
-  );
-  await gmail.getByRole("button", { name: "Reprocess" }).click();
-  expect((await reprocessed).ok()).toBeTruthy();
-  await expect(gmail).not.toContainText("Syncing", { timeout: 20000 });
-  await page.goto("/?view=attention");
+  await page.screenshot({
+    path: "../../.local/attention-desktop.png",
+    fullPage: true,
+  });
   const receipt = page.locator(".review-card", { hasText: "Submission found" });
   await expect(receipt).toContainText("Mark this task completed?", {
     timeout: 15000,
@@ -106,8 +95,16 @@ test("imported LMS work is resolved in Needs attention, completed from confirmed
     "Confirmed by you from submission evidence",
   );
   await expect(dialog).toContainText("Gmail");
-  await expect(dialog.getByText("Submission evidence", { exact: true })).toBeVisible();
-  await expect(dialog.getByText("Due / overdue notice", { exact: true })).toBeVisible();
+  await expect(dialog).toContainText("Data Structures Laboratory");
+  await expect(dialog).toContainText(
+    "Linked automatically from the course name",
+  );
+  await expect(
+    dialog.getByText("Submission evidence", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText("Due / overdue notice", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Close dialog" }).click();
 
   await page.goto("/?view=rules");

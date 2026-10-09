@@ -92,11 +92,10 @@ test("sources connect, sync in the browser, honour blocks, and link Classroom co
   await expect(gmail).toContainText("1 waiting for AI interpretation");
   await expect(gmail).toContainText("1 from blocked senders");
 
-  // Imported source content is not an accepted task until Phase 3 interpretation.
+  // The LMS reminder is the student's own work: it becomes a task without asking. No subject of
+  // theirs matches "Data Structures", so it is kept without one.
   await page.goto("/?view=tasks");
-  await expect(
-    page.getByRole("heading", { name: "No tasks in this view" }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /EXP3-Queue/ })).toBeVisible();
   await page.goto("/?view=dashboard");
   await expect(page.locator(".sync-overview")).toContainText(
     "personal.gmail@example.com",
@@ -109,12 +108,10 @@ test("sources connect, sync in the browser, honour blocks, and link Classroom co
   await expect(classroom).toContainText("Synthetic Databases Div B", {
     timeout: 15000,
   });
-  await classroom
-    .getByLabel("Subject for Synthetic Databases Div B")
-    .selectOption({ label: "Databases · theory" });
-  await classroom.getByRole("button", { name: "Link", exact: true }).click();
-  await expect(classroom.locator(".chip")).toContainText("Databases · theory");
-  await classroom.getByRole("button", { name: "Sync now" }).click();
+  // The course names the student's subject, so it links itself and its work is read at once.
+  await expect(classroom.locator(".chip")).toContainText(
+    "Databases · theory · auto",
+  );
   await expect(classroom).toContainText("1 waiting for AI interpretation", {
     timeout: 15000,
   });

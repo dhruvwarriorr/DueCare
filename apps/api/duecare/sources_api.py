@@ -11,7 +11,7 @@ from datetime import timedelta
 from fastapi import APIRouter, Query, Request
 from sqlalchemy import func, or_, select
 
-from . import auth, google, sync
+from . import auth, faculty, google, interpret, mail, sync
 from .common import User, finish, owned, page, replay, revision, work
 from .config import settings
 from .db import transaction
@@ -65,6 +65,7 @@ def connection_out(db, conn):
             .where(
                 SourceRecord.connection_id == conn.id,
                 or_(SourceRecord.expires_at.is_(None), SourceRecord.expires_at > now()),
+                or_(SourceRecord.processing_state != "awaiting_interpretation", interpret.in_gmail_window()),
             )
             .group_by(SourceRecord.processing_state)
         ).all()
@@ -76,6 +77,7 @@ def connection_out(db, conn):
             SourceRecord.connection_id == conn.id,
             SourceRecord.processing_state == "awaiting_interpretation",
             SourceRecord.data["aiPausedReason"].astext.is_not(None),
+            interpret.in_gmail_window(),
         )
     )
     return {
@@ -414,7 +416,12 @@ def classroom_courses(
             )
         ):
             mapped.setdefault(m.external_course_id, []).append(
-                {"subjectId": str(s.id), "subjectName": s.name, "subjectKind": s.kind}
+                {
+                    "subjectId": str(s.id),
+                    "subjectName": s.name,
+                    "subjectKind": s.kind,
+                    "automatic": bool(m.data.get("automatic")),
+                }
             )
         return {
             "items": [
@@ -441,6 +448,7 @@ def mapping_out(m, account=None):
         "section": m.data.get("section"),
         "sourceAvailable": m.source_available,
         "subjectKind": m.data.get("subjectKind"),
+        "automatic": bool(m.data.get("automatic")),
         "accountEmail": account.email if account else None,
     }
 
@@ -520,6 +528,14 @@ def unmap_course(id: uuid.UUID, connection_id: uuid.UUID, course_id: str, reques
         )
         if mapping:
             db.delete(mapping)
+            # A course the student unlinked is never linked again automatically.
+            course = db.scalar(
+                select(SourceCourse).where(
+                    SourceCourse.connection_id == connection_id, SourceCourse.external_course_id == course_id
+                )
+            )
+            if course:
+                course.data = {**course.data, "autoLinkDeclined": True}
         # Future syncs stop using this mapping; existing tasks and source records are preserved.
         return finish(db, op, {"ok": True, "removed": bool(mapping)})
 
@@ -541,6 +557,58 @@ def sender_address(value):
             422, "INVALID_SENDER", "Enter one exact sender email address", {"email": "Invalid address"}
         )
     return email
+
+
+def faculty_out(db, uid):
+    return {
+        "items": [
+            {"email": email, **data}
+            for email, data in sorted(faculty.entries(db, uid).items())
+            if data.get("approved")
+        ]
+    }
+
+
+@router.get("/approved-faculty")
+def approved_faculty(user=User):
+    with work(user) as db:
+        from .reconcile import ensure_source_policy
+
+        ensure_source_policy(db, user["id"])
+        return faculty_out(db, user["id"])
+
+
+@router.put("/approved-faculty/{sender_email}")
+def approve_faculty(sender_email: str, user=User):
+    email = sender_address(sender_email)
+    with work(user) as db:
+        sync.lock_sender(db, user["id"], email)
+        records = db.scalars(
+            select(SourceRecord).where(
+                SourceRecord.user_id == user["id"],
+                SourceRecord.kind == "gmail_message",
+                SourceRecord.sender_email == email,
+                SourceRecord.processing_state.not_in(("ignored", "blocked")),
+            )
+        ).all()
+        if not any(
+            not mail.academic_exclusion(r.title, email, r.data.get("senderName"), r.excerpt) for r in records
+        ):
+            raise ApiError(422, "FACULTY_UNAVAILABLE", "Only a sender of your academic mail can be approved")
+        if not faculty.approve(db, user["id"], email, "student"):
+            raise ApiError(409, "SENDER_BLOCKED", "Unblock this sender before approving them")
+        from .reconcile import refresh_faculty_reviews
+
+        resolved = refresh_faculty_reviews(db, user["id"])
+        return {**faculty_out(db, user["id"]), "reviewsResolved": resolved}
+
+
+@router.delete("/approved-faculty/{sender_email}")
+def revoke_faculty(sender_email: str, user=User):
+    email = sender_address(sender_email)
+    with work(user) as db:
+        faculty.revoke(db, user["id"], email)
+        return faculty_out(db, user["id"])
 
 
 @router.get("/sender-preferences")

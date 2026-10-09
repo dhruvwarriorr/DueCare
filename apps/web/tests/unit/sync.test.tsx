@@ -1,6 +1,6 @@
 import { render, waitFor, act, cleanup } from "@testing-library/react";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { SyncProvider } from "@/lib/sync";
 
 const connection = {
@@ -68,10 +68,51 @@ function mount() {
 }
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   setVisibility("visible");
 });
 
 describe("active-browser sync", () => {
+  it("refreshes tasks while an advance request is still running", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setVisibility("visible");
+    server();
+    const fetch = global.fetch;
+    let release!: () => void;
+    let advancing = false;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/advance")) {
+        advancing = true;
+        await gate;
+        return new Response(JSON.stringify(job("completed")), { status: 200 });
+      }
+      return fetch(input, init);
+    }) as typeof fetch;
+    let reads = 0;
+    function Tasks() {
+      const tasks = useQuery({ queryKey: ["tasks"], queryFn: async () => ++reads });
+      return <span>{tasks.data}</span>;
+    }
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SyncProvider enabled><Tasks /></SyncProvider>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(advancing && reads > 0).toBe(true));
+    try {
+      const before = reads;
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(reads).toBeGreaterThan(before);
+      setVisibility("hidden");
+      const hidden = reads;
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(reads).toBe(hidden);
+    } finally {
+      await act(async () => { release(); });
+    }
+  });
+
   it("starts on open and keeps advancing bounded requests until the job finishes", async () => {
     setVisibility("visible");
     const s = server();

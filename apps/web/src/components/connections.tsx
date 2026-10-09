@@ -24,6 +24,7 @@ import type {
   Subject,
   SyncJob,
 } from "@/lib/types";
+import { FacultyApproval } from "./faculty-approval";
 import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
 import { ErrorNotice, Field } from "./ui/field";
@@ -107,7 +108,11 @@ function SyncStatus({ c, driving }: { c: Connection; driving: boolean }) {
     return (
       <p className="sync-line active" role="status">
         <RefreshCw size={14} className={driving ? "spin" : ""} />
-        {driving || job.leased ? "Syncing" : "Paused until you return"}
+        {driving || job.leased
+          ? job.phase === "interpreting"
+            ? "Adding tasks"
+            : "Syncing and adding tasks"
+          : "Paused until you return"}
         {" · "}
         {jobSummary(job)}
       </p>
@@ -176,8 +181,10 @@ function CourseLinks({ connection }: { connection: Connection }) {
     <div className="course-links">
       <h4>Link Classroom courses to your subjects</h4>
       <p className="text-secondary text-xs">
-        Only linked courses are imported. Courses are never added as subjects;
-        one course can be linked to separate theory, lab, or tutorial subjects.
+        Courses link to your subjects automatically on each sync, by name or
+        short form and with AI when needed (marked “auto”). Change or add links
+        here; a course you unlink stays unlinked. Only linked courses are
+        imported, and courses are never added as subjects.
       </p>
       <ErrorNotice error={courses.error} retry={() => courses.refetch()} />
       <ErrorNotice error={change.error} />
@@ -210,6 +217,12 @@ function CourseLinks({ connection }: { connection: Connection }) {
                   {course.mappings.map((m) => (
                     <span key={m.subjectId} className="chip">
                       {m.subjectName} · {m.subjectKind}
+                      {m.automatic && (
+                        <small title="Linked automatically from the course name">
+                          {" "}
+                          · auto
+                        </small>
+                      )}
                       <button
                         type="button"
                         aria-label={`Unlink ${m.subjectName} from ${course.name}`}
@@ -346,7 +359,7 @@ function ConnectionCard({
               c.records.awaitingInterpretation - c.records.aiPaused > 0 &&
                 `${c.records.awaitingInterpretation - c.records.aiPaused} waiting to be interpreted`,
               c.records.aiPaused > 0 &&
-                `${c.records.aiPaused} waiting for AI interpretation (retried on a later sync)`,
+                `${c.records.aiPaused} waiting for AI interpretation (retries automatically in the background)`,
               c.records.ignored > 0 &&
                 `${c.records.ignored} not academic or not for you`,
               c.records.blocked > 0 &&
@@ -656,7 +669,7 @@ export function Connections({
             </h3>
             <p className="text-secondary text-sm">
               {allActive
-                ? `Granted at sign-in for ${account}. DueCare syncs while this app is open.`
+                ? `Granted at sign-in for ${account}. Sync continues in the background, including when you switch tabs or close this page.`
                 : "Allow read-only access on Google's sign-in screen so your assignments and tests appear automatically. Your password is never shared with DueCare."}
             </p>
           </div>
@@ -717,6 +730,7 @@ export function Connections({
           ))}
         </details>
       )}
+      <FacultyApproval manage />
       <SenderPreferences />
     </>
   );

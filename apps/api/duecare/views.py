@@ -2,10 +2,10 @@
 
 import uuid
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from .domain import effective_status, priority
-from .models import Profile, Subject, now
+from .models import Profile, SourceEvent, SourceRecord, Subject, TaskEvidence, now
 
 
 def profile(db, uid):
@@ -25,8 +25,32 @@ def profile(db, uid):
 def task_out(t, db, uid):
     s = db.get(Subject, t.subject_id) if t.subject_id else None
     p = profile(db, uid)
+    cache_key = ("task_senders", str(uid))
+    if cache_key not in db.info:
+        rows = db.execute(
+            select(TaskEvidence.task_id, SourceRecord.sender_email)
+            .select_from(SourceRecord)
+            .join(
+                SourceEvent,
+                SourceEvent.source_record_id == SourceRecord.id,
+            )
+            .join(TaskEvidence, TaskEvidence.event_id == SourceEvent.id)
+            .where(
+                SourceRecord.user_id == uid,
+                SourceRecord.kind == "gmail_message",
+                SourceRecord.processing_state.not_in(("ignored", "blocked")),
+                SourceRecord.sender_email.is_not(None),
+                TaskEvidence.state == "active",
+            )
+            .distinct()
+        ).all()
+        senders = {}
+        for task_id, email in rows:
+            senders.setdefault(task_id, set()).add(email)
+        db.info[cache_key] = senders
     return {
         **t.data,
+        "senderEmails": sorted(db.info[cache_key].get(t.id, ())),
         "id": str(t.id),
         "title": t.title,
         "type": t.type,

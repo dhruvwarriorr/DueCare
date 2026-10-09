@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-query";
 import { api, formatTime, datetimeFields } from "@/lib/api";
 import type { Task, Page, History, Evidence } from "@/lib/types";
+import { FacultyApproval } from "./faculty-approval";
 import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
 import { ErrorNotice } from "./ui/field";
@@ -264,12 +265,30 @@ export function TaskDetail({
                 <span className="tag">{t.type}</span>
                 <span className="tag">{t.priority} priority</span>
               </div>
+              <FacultyApproval emails={t.senderEmails} />
               <dl className="detail-grid">
                 <div>
                   <dt>Subject</dt>
                   <dd>
                     {t.subjectName || "No subject"}
                     {t.subjectKind ? " · " + t.subjectKind : ""}
+                    {t.subjectLink && t.subjectLink.method !== "none" && (
+                      <small className="block text-xs text-secondary">
+                        Linked automatically
+                        {t.subjectLink.method === "ai"
+                          ? " by AI from the course name"
+                          : " from the course name"}
+                        . Edit the task to change it.
+                      </small>
+                    )}
+                    {t.subjectLink?.method === "none" && !t.subjectName && (
+                      <small className="block text-xs text-secondary">
+                        {t.subjectLink.reason === "ai_unavailable"
+                          ? "Couldn't be linked automatically right now."
+                          : "None of your subjects matched."}{" "}
+                        Edit the task to set one.
+                      </small>
+                    )}
                   </dd>
                 </div>
                 <div>

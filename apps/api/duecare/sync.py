@@ -1,8 +1,8 @@
-"""Bounded, resumable, leased source imports driven by the active browser.
+"""Bounded, resumable, leased source imports advanced by the API worker.
 
 Each advance request holds a lease and performs small units of work until its work budget
 ends. Google calls run outside database transactions; each unit then commits its results and
-the advanced checkpoint together, only if the lease and job revision are unchanged. A
+the advanced checkpoint together, only if the lease and saved checkpoint are unchanged. A
 checkpoint therefore never moves past unpersisted work, and an interrupted request resumes
 from the last committed unit.
 """
@@ -10,31 +10,36 @@ from the last committed unit.
 import base64
 import binascii
 import hashlib
+import hmac
 import json
 import logging
 import secrets
 import time
 import uuid
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import UTC, datetime, timedelta
+from threading import Event
 from types import SimpleNamespace
 
 from sqlalchemy import delete, exists, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 
-from . import google, interpret, mail
+from . import ai, google, interpret, mail, subject_link
 from .classroom_time import due_at
 from .common import owned, work
-from .config import settings
+from .config import GMAIL_LOOKBACK, settings
 from .errors import ApiError
 from .models import (
     Connection,
     GoogleAccount,
     OAuthGrant,
+    ReviewItem,
     SenderPreference,
     SourceAttachment,
     SourceCourse,
     SourceEvent,
     SourceRecord,
+    Subject,
     SubjectMapping,
     SyncJob,
     TaskEvidence,
@@ -114,6 +119,10 @@ def sender_decision(db, uid, email):
     )
     if action == "block":
         return "blocked", "sender_blocked"
+    from .faculty import approved
+
+    if approved(db, uid, email):
+        return "eligible", "faculty_approved"
     if action == "include":
         return "eligible", "sender_included"
     if academic_domain(email):
@@ -205,7 +214,8 @@ def ensure_job(db, uid, connection_id, mode="import", trigger="manual"):
     active = db.scalar(select(SyncJob).where(SyncJob.connection_id == conn.id, SyncJob.status.in_(ACTIVE)))
     if active:
         if mode == "reprocess" and active.mode != "reprocess":
-            raise ApiError(409, "SYNC_IN_PROGRESS", "Wait for the current sync to finish")
+            conn.data = {**conn.data, "reprocessRequested": True}
+            conn.revision += 1
         return {"job": job_out(active), "created": False, "skipped": None}
     if (
         mode == "import"
@@ -237,6 +247,10 @@ def ensure_job(db, uid, connection_id, mode="import", trigger="manual"):
 
 
 def cancel_jobs(db, connection_id, reason):
+    conn = db.get(Connection, connection_id)
+    if conn and conn.data.get("reprocessRequested"):
+        conn.data = {k: v for k, v in conn.data.items() if k != "reprocessRequested"}
+        conn.revision += 1
     count = 0
     for job in db.scalars(
         select(SyncJob)
@@ -244,13 +258,14 @@ def cancel_jobs(db, connection_id, reason):
         .with_for_update()
     ):
         job.status, job.lease_owner, job.lease_expires_at = "cancelled", None, None
+        job.checkpoint = {k: v for k, v in job.checkpoint.items() if k != "messageFingerprints"}
         job.finished_at, job.error = now(), {"code": reason, "message": "Sync stopped"}
         job.revision += 1
         count += 1
     return count
 
 
-def advance(user, job_id):
+def advance(user, job_id, stop=None):
     lease = secrets.token_hex(16)
     budget = settings().sync_work_budget_seconds
     with work(user) as db:
@@ -258,12 +273,13 @@ def advance(user, job_id):
         if job.status in TERMINAL:
             return job_out(job)
         if job.lease_owner and job.lease_expires_at and job.lease_expires_at > now():
-            raise ApiError(409, "SYNC_IN_PROGRESS", "This connection is already syncing in another tab")
+            raise ApiError(409, "SYNC_IN_PROGRESS", "This connection is already syncing")
         if job.status == "waiting_retry" and job.next_retry_at and job.next_retry_at > now():
             return job_out(job)
         conn = db.scalar(select(Connection).where(Connection.id == job.connection_id).with_for_update())
         if conn.status != "active":
             job.status, job.finished_at = "cancelled", now()
+            job.checkpoint = {k: v for k, v in job.checkpoint.items() if k != "messageFingerprints"}
             job.error = {"code": "CONNECTION_INACTIVE", "message": "Reconnect this account before syncing"}
             return job_out(job)
         job.lease_owner, job.lease_expires_at = lease, now() + timedelta(seconds=budget) + LEASE_GRACE
@@ -272,8 +288,23 @@ def advance(user, job_id):
         conn.last_attempt_at = now()
     deadline = time.monotonic() + budget
     try:
-        while time.monotonic() < deadline and step(user, job_id, lease):
-            pass
+        # Each lane owns its network calls and DB sessions. Only the importer moves the
+        # checkpoint; the interpreter merges progress under the same job/owner locks.
+        imported = Event()
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="duecare-interpret") as pool:
+            worker = pool.submit(interpret_stream, user, job_id, lease, deadline, imported, stop)
+            try:
+                with ai.request_budget(deadline):
+                    while (
+                        time.monotonic() < deadline
+                        and not (stop and stop.is_set())
+                        and step(user, job_id, lease, import_only=True)
+                    ):
+                        pass
+            finally:
+                imported.set()
+            worker.result()
+        finish_pipeline(user, job_id, lease)
     except Exception as exc:
         log.error("sync step failed type=%s job=%s", type(exc).__name__, str(job_id))
         record_failure(
@@ -305,6 +336,7 @@ def record_failure(user, job_id, lease, exc):
                 exc.kind, "SYNC_FAILED"
             )
             job.status, job.finished_at = "failed", now()
+            job.checkpoint = {k: v for k, v in job.checkpoint.items() if k != "messageFingerprints"}
             if exc.kind in ("auth", "permission") and conn.status == "active":
                 conn.status = "needs_reauth"
             error = {"code": code, "message": exc.message}
@@ -327,18 +359,19 @@ def record_failure(user, job_id, lease, exc):
     return False
 
 
-def step(user, job_id, lease):
+def step(user, job_id, lease, import_only=False):
     """Run one unit. Returns True while more work remains and the lease is still held."""
     with work(user) as db:
         job = owned(db, SyncJob, job_id, user["id"])
         if job.lease_owner != lease or job.status != "running":
+            return False
+        if import_only and job.checkpoint.get("stage") == "interpret":
             return False
         conn = db.get(Connection, job.connection_id)
         account = db.get(GoogleAccount, conn.account_id)
         snap = SimpleNamespace(
             uid=user["id"],
             job_id=job.id,
-            revision=job.revision,
             mode=job.mode,
             checkpoint=json.loads(json.dumps(job.checkpoint)),
             connection_id=conn.id,
@@ -364,15 +397,16 @@ def step(user, job_id, lease):
         return record_failure(user, job_id, lease, exc)
     with work(user) as db:
         job = owned(db, SyncJob, job_id, user["id"], lock=True)
-        if job.lease_owner != lease or job.revision != snap.revision or job.status != "running":
+        if job.lease_owner != lease or job.checkpoint != snap.checkpoint or job.status != "running":
             return False  # Lost lease or cancelled: discard this unit; nothing is persisted.
         conn = db.scalar(select(Connection).where(Connection.id == job.connection_id).with_for_update())
         if conn.status != "active":
             return False
         done = apply(db, job, conn)
         job.revision += 1
-        job.attempts, job.next_retry_at, job.error = 0, None, None
-        conn.retry_at = None
+        if job.status == "running":
+            job.attempts, job.next_retry_at, job.error = 0, None, None
+            conn.retry_at = None
         if done:
             job.status, job.phase, job.finished_at = "completed", "done", now()
             job.lease_owner = job.lease_expires_at = None
@@ -382,14 +416,196 @@ def step(user, job_id, lease):
         return not done
 
 
+def interpret_stream(user, job_id, lease, deadline, imported, stop=None):
+    """Prepare distinct saved records concurrently; apply results in short, serialized transactions."""
+    configured = settings()
+    workers = (
+        configured.openrouter_concurrency
+        if configured.openrouter_api_key and configured.openrouter_model
+        else 1
+    )
+    token = None
+    inflight = {}
+
+    def prepare_one(snap, access, record_id):
+        # ContextVars are not inherited by executor threads.
+        with ai.request_budget(deadline):
+            try:
+                return interpret.unit(snap, access, record_id=record_id)
+            except google.SourceError as exc:
+                if exc.kind != "auth":
+                    raise
+                refreshed = access_token(user, snap.connection_id, force=True)
+                return interpret.unit(snap, refreshed, record_id=record_id)
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="duecare-extract") as pool:
+        try:
+            while (time.monotonic() < deadline and not (stop and stop.is_set())) or inflight:
+                with work(user) as db:
+                    job = owned(db, SyncJob, job_id, user["id"])
+                    if job.lease_owner != lease or job.status != "running":
+                        return
+                    conn = db.get(Connection, job.connection_id)
+                    if conn.status != "active":
+                        return
+                    account = db.get(GoogleAccount, conn.account_id)
+                    stage = job.checkpoint.get("stage")
+                    snap = SimpleNamespace(
+                        uid=user["id"],
+                        connection_id=conn.id,
+                        account_email=account.email.lower(),
+                        checkpoint=dict(job.checkpoint),
+                    )
+                    ready = job.mode != "reprocess" or stage == "interpret"
+                    capacity = workers - len(inflight)
+                    ids = (
+                        interpret.pending_records(
+                            db, conn.id, capacity, tuple(v[0] for v in inflight.values())
+                        )
+                        if ready and capacity and time.monotonic() < deadline and not (stop and stop.is_set())
+                        else []
+                    )
+                if ids:
+                    try:
+                        if token is None:
+                            token = access_token(user, snap.connection_id)
+                    except google.SourceError as exc:
+                        record_failure(user, job_id, lease, exc)
+                        return
+                    for record_id in ids:
+                        future = pool.submit(prepare_one, snap, token, record_id)
+                        inflight[future] = (record_id, snap)
+                if not inflight:
+                    if imported.is_set():
+                        return
+                    imported.wait(0.2)
+                    continue
+                finished, _ = wait(inflight, timeout=1, return_when=FIRST_COMPLETED)
+                for future in finished:
+                    _, prepared_snap = inflight.pop(future)
+                    try:
+                        apply = future.result()
+                    except ai.BudgetExpired:
+                        continue
+                    except google.SourceError as exc:
+                        record_failure(user, job_id, lease, exc)
+                        return
+                    if apply is None:
+                        continue
+                    # Already-finished results remain safe to commit under this lease even when
+                    # the request budget has just ended. New work stops at the deadline above.
+                    with work(user) as db:
+                        job = owned(db, SyncJob, job_id, user["id"], lock=True)
+                        if job.lease_owner != lease or job.status != "running":
+                            return
+                        if job.checkpoint.get("run", 0) != prepared_snap.checkpoint.get("run", 0):
+                            continue
+                        conn = db.scalar(
+                            select(Connection)
+                            .where(Connection.id == prepared_snap.connection_id)
+                            .with_for_update()
+                        )
+                        if conn.status != "active":
+                            return
+                        phase = job.phase
+                        apply(db, job, conn)
+                        if job.checkpoint.get("stage") != "interpret":
+                            job.phase = phase
+                        job.revision += 1
+        finally:
+            for future in inflight:
+                future.cancel()
+
+
+def finish_pipeline(user, job_id, lease):
+    """Complete only after importing and all currently eligible interpretations are drained."""
+    with work(user) as db:
+        job = owned(db, SyncJob, job_id, user["id"], lock=True)
+        if job.lease_owner != lease or job.status != "running" or job.checkpoint.get("stage") != "interpret":
+            return
+        if interpret.pending_record(db, job.connection_id) is not None:
+            return
+        conn = db.scalar(select(Connection).where(Connection.id == job.connection_id).with_for_update())
+        if conn.status != "active":
+            return
+        if wait_for_interpretation(db, job, conn):
+            return
+        job.status, job.phase, job.finished_at = "completed", "done", now()
+        job.lease_owner = job.lease_expires_at = None
+        job.attempts, job.next_retry_at, job.error = 0, None, None
+        conn.retry_at = None
+        job.revision += 1
+        if job.mode == "import":
+            conn.last_success_at = now()
+        conn.data = {**conn.data, "lastError": None}
+
+
+def wait_for_interpretation(db, job, conn):
+    """A successful download is not a finished sync while saved records still need AI."""
+    pending = db.scalars(
+        select(SourceRecord).where(
+            SourceRecord.connection_id == conn.id,
+            SourceRecord.processing_state == "awaiting_interpretation",
+            interpret.in_gmail_window(),
+        )
+    ).all()
+    if not pending:
+        return False
+    stamp = now()
+    retry_record = min(
+        pending,
+        key=lambda r: parse_time(r.data.get("aiPausedUntil")) or stamp + timedelta(seconds=60),
+    )
+    retry_at = parse_time(retry_record.data.get("aiPausedUntil")) or stamp + timedelta(seconds=60)
+    job.status, job.phase = "waiting_retry", "interpreting"
+    job.next_retry_at = max(stamp + timedelta(seconds=1), retry_at)
+    job.finished_at = None
+    job.lease_owner = job.lease_expires_at = None
+    job.revision += 1
+    code = retry_record.data.get("aiPausedCode") or "AI_UNAVAILABLE"
+    job.error = {
+        "code": code,
+        "message": "Messages downloaded. AI is rate limited; interpretation will retry automatically."
+        if code == "AI_RATE_LIMIT"
+        else "Messages downloaded. AI interpretation is pending and will retry automatically.",
+        "at": stamp.isoformat(),
+    }
+    conn.retry_at = job.next_retry_at
+    conn.data = {**conn.data, "lastError": job.error}
+    return True
+
+
+def requeue_subject_questions(db, conn, job):
+    """Items still waiting on "Which of your subjects is this for?" (asked before subjects were linked
+    automatically) are interpreted again; the task they create settles the question."""
+    records = db.scalars(
+        select(SourceRecord).where(
+            SourceRecord.connection_id == conn.id,
+            SourceRecord.id.in_(
+                select(ReviewItem.source_record_id).where(
+                    ReviewItem.user_id == conn.user_id,
+                    ReviewItem.status == "open",
+                    ReviewItem.issue_type == "choose_subject",
+                )
+            ),
+        )
+    ).all()
+    for record in records:
+        record.processing_state, record.expires_at = "awaiting_interpretation", None
+    if records:
+        # A new run lets the same source revision be applied again.
+        job.checkpoint = {**job.checkpoint, "run": job.checkpoint.get("run", 0) + 1}
+
+
 def to_interpretation(job):
-    """Imports are followed by interpretation; explicit reprocessing first re-queues records."""
+    """Finish importing and drain remaining interpretation; reprocessing first re-queues records."""
     stage = "reinterpret" if job.mode == "reprocess" else "interpret"
-    set_checkpoint(job, {**job.checkpoint, "stage": stage}, "interpreting")
+    checkpoint = {k: v for k, v in job.checkpoint.items() if k != "messageFingerprints"}
+    set_checkpoint(job, {**checkpoint, "stage": stage}, "interpreting")
     return False
 
 
-REQUEUE = ("ignored", "interpreted", "needs_review")
+REQUEUE = ("ignored", "interpreted", "needs_review", "awaiting_interpretation")
 
 
 def interpretation_unit(snap, token):
@@ -404,13 +620,16 @@ def interpretation_unit(snap, token):
                 select(SourceRecord).where(
                     SourceRecord.connection_id == conn.id,
                     SourceRecord.processing_state.in_(REQUEUE),
+                    interpret.in_gmail_window(),
                     SourceRecord.reason.is_distinct_from("sender_not_academic"),
                     SourceRecord.reason.is_distinct_from("sender_missing"),
                 )
             ):
                 record.processing_state, record.expires_at = "awaiting_interpretation", None
                 record.data = {
-                    k: v for k, v in record.data.items() if k not in ("aiPausedUntil", "aiPausedReason")
+                    k: v
+                    for k, v in record.data.items()
+                    if k not in ("aiPausedUntil", "aiPausedReason", "aiPausedCode")
                 }
                 count += 1
             set_checkpoint(
@@ -423,7 +642,13 @@ def interpretation_unit(snap, token):
 
         return requeue
     apply = interpret.unit(snap, token)
-    return apply or (lambda db, job, conn: True)
+    if apply:
+        return apply
+
+    def finished(db, job, conn):
+        return not wait_for_interpretation(db, job, conn)
+
+    return finished
 
 
 def set_checkpoint(job, checkpoint, phase=None, progress=None):
@@ -444,10 +669,28 @@ def gmail_unit(snap, token):
         return gmail_reconsider(snap, token)
     if stage == "start":
         start = snap.conn_checkpoint.get("historyId")
-        if start:
+        if start and snap.last_success_at:
+            # Read the newest mail first, then drain history to retain a gap-free cursor.
+            new = gmail_list_start(
+                provider.gmail_profile(token),
+                max(
+                    snap.last_success_at - WATERMARK_OVERLAP,
+                    now() - GMAIL_LOOKBACK,
+                ),
+            )
+            new["resumeHistory"] = start
+        elif start:
             new = {"stage": "listing", "source": "history", "start": start, "pending": [], "more": True}
         else:
-            new = gmail_list_start(provider.gmail_profile(token), now() - LOOKBACK)
+            new = gmail_list_start(provider.gmail_profile(token), now() - GMAIL_LOOKBACK)
+        return lambda db, job, conn: set_checkpoint(job, new, "listing") or False
+    if (
+        cp.get("source") == "list"
+        and cp.get("lookbackDays") != 30
+        and (int(cp["query"].split("after:", 1)[1]) < int((now() - GMAIL_LOOKBACK).timestamp()) - 60)
+    ):
+        # Resume an older 90-day job inside the new window, newest page first.
+        new = gmail_list_start(provider.gmail_profile(token), now() - GMAIL_LOOKBACK)
         return lambda db, job, conn: set_checkpoint(job, new, "listing") or False
     if cp.get("pending"):
         gid = cp["pending"][0]
@@ -458,7 +701,8 @@ def gmail_unit(snap, token):
         return gmail_message_unit(snap, token, gid, popped, reconsider=False)
     if cp.get("more"):
         if cp["source"] == "list":
-            page = provider.gmail_list(token, cp["query"], cp.get("pageToken"))
+            query = cp["query"]
+            page = provider.gmail_list(token, query, cp.get("pageToken"))
             ids = [m["id"] for m in page.get("messages", [])]
             latest = cp.get("latestHistoryId")
         else:
@@ -468,7 +712,7 @@ def gmail_unit(snap, token):
                 if exc.kind != "not_found":
                     raise
                 # History expired: list the gap again; account-scoped identifiers prevent duplicates.
-                since = max((snap.last_success_at or now()) - timedelta(days=1), now() - LOOKBACK)
+                since = max((snap.last_success_at or now()) - timedelta(days=1), now() - GMAIL_LOOKBACK)
                 new = gmail_list_start(provider.gmail_profile(token), since)
                 return lambda db, job, conn: set_checkpoint(
                     job, new, "listing", bump(job.progress, "historyResets")
@@ -493,10 +737,23 @@ def gmail_unit(snap, token):
             return False
 
         return listed
+    if cp.get("resumeHistory"):
+        new = {
+            **cp,
+            "stage": "listing",
+            "source": "history",
+            "start": cp["resumeHistory"],
+            "pending": [],
+            "pageToken": None,
+            "more": True,
+        }
+        new.pop("resumeHistory")
+        return lambda db, job, conn: set_checkpoint(job, new, "listing") or False
     final = cp.get("latestHistoryId") or cp.get("baselineHistoryId") or cp.get("start")
 
     def finished(db, job, conn):
         conn.checkpoint = {**conn.checkpoint, "historyId": final}
+        requeue_subject_questions(db, conn, job)
         return to_interpretation(job)
 
     return finished
@@ -507,6 +764,7 @@ def gmail_list_start(profile, since):
         "stage": "listing",
         "source": "list",
         "query": f"after:{int(since.timestamp())}",
+        "lookbackDays": 30,
         "baselineHistoryId": profile.get("historyId"),
         "pending": [],
         "more": True,
@@ -521,6 +779,7 @@ def gmail_reconsider(snap, token):
             SourceRecord.connection_id == snap.connection_id,
             SourceRecord.kind == "gmail_message",
             SourceRecord.processing_state.in_(("blocked", "ignored")),
+            interpret.in_gmail_window(),
         )
         if cp.get("after"):
             stmt = stmt.where(SourceRecord.id > uuid.UUID(cp["after"]))
@@ -561,14 +820,28 @@ def gmail_message_unit(snap, token, gid, next_checkpoint, reconsider):
         if meta.get("internalDate")
         else None
     )
+    if received is None or received < now() - GMAIL_LOOKBACK:
+        # Metadata is sufficient to reject old history entries; never fetch their body.
+        return counted(next_checkpoint, "outsideWindow")
     with work({"id": snap.uid}) as db:
         decision, reason = sender_decision(db, snap.uid, sender)
+    headers = meta.get("payload", {}).get("headers", [])
+    heading = next((h["value"] for h in headers if h.get("name", "").lower() == "subject"), "")
+    sender_name = next((h["value"] for h in headers if h.get("name", "").lower() == "from"), "")
+    exclusion = mail.academic_exclusion(heading, sender, sender_name)
+    if decision == "eligible" and exclusion:
+        decision, reason = "ignored", exclusion
     decoded = None
     if decision == "eligible":
         # Only eligible, unblocked mail has its body fetched.
         try:
             raw = google.provider.gmail_raw(token, gid)["raw"]
             decoded = mail.decode(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+            exclusion = mail.academic_exclusion(
+                decoded.subject, decoded.sender_email, decoded.sender_name, decoded.authored_text
+            )
+            if exclusion:
+                decision, reason = "ignored", exclusion
         except google.SourceError as exc:
             if exc.kind != "not_found":
                 raise
@@ -607,7 +880,7 @@ def gmail_message_unit(snap, token, gid, next_checkpoint, reconsider):
             set_checkpoint(job, next_checkpoint(job.checkpoint), progress=bump(job.progress, final))
             return False
         record = store_message(
-            db, conn, record, pid, gid, meta, received, decoded, current_reason, snap.account_email
+            db, conn, job, record, pid, gid, meta, received, decoded, current_reason, snap.account_email
         )
         key = "duplicates" if record.processing_state == "duplicate" else "stored"
         set_checkpoint(job, next_checkpoint(job.checkpoint), progress=bump(job.progress, key))
@@ -624,17 +897,37 @@ def counted(next_checkpoint, key):
     return apply
 
 
-def store_message(db, conn, record, pid, gid, meta, received, decoded, reason, account_email):
+def store_message(db, conn, job, record, pid, gid, meta, received, decoded, reason, account_email):
     digest = decoded.content_hash()
     duplicate = None
+    fingerprint = None
     if decoded.message_id:
+        # Streaming can minimize an ignored original before its copy is downloaded.
+        # Keep only a keyed, opaque identity in the resumable import checkpoint, then
+        # erase the index when import ends/cancels/fails. No ignored source content is retained.
+        fingerprint = hmac.new(
+            settings().session_encryption_key.encode(),
+            json.dumps([decoded.message_id, digest]).encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        previous = job.checkpoint.get("messageFingerprints", {}).get(fingerprint)
+        if previous:
+            duplicate = db.scalar(
+                select(SourceRecord.id).where(
+                    SourceRecord.id == uuid.UUID(previous),
+                    SourceRecord.connection_id == conn.id,
+                    SourceRecord.provider_id != pid,
+                    SourceRecord.processing_state != "blocked",
+                )
+            )
+    if decoded.message_id and duplicate is None:
         duplicate = db.scalar(
             select(SourceRecord.id).where(
                 SourceRecord.connection_id == conn.id,
                 SourceRecord.message_id == decoded.message_id,
                 SourceRecord.content_hash == digest,
                 SourceRecord.provider_id != pid,
-                SourceRecord.processing_state == "awaiting_interpretation",
+                SourceRecord.processing_state.in_(("awaiting_interpretation", "interpreted", "needs_review")),
             )
         )
     if record is None:
@@ -663,6 +956,14 @@ def store_message(db, conn, record, pid, gid, meta, received, decoded, reason, a
         "duplicateOf": str(duplicate) if duplicate else None,
     }
     db.flush()
+    if fingerprint:
+        job.checkpoint = {
+            **job.checkpoint,
+            "messageFingerprints": {
+                **job.checkpoint.get("messageFingerprints", {}),
+                fingerprint: str(duplicate or record.id),
+            },
+        }
     replace_attachments(db, record, decoded.attachments + decoded.links)
     return record
 
@@ -703,11 +1004,12 @@ def classroom_unit(snap, token):
             if next_token:
                 set_checkpoint(job, {**job.checkpoint, "pageToken": next_token}, progress=progress)
                 return False
-            queue = finish_discovery(db, conn, job.id)
-            set_checkpoint(job, next_course({**job.checkpoint, "queue": queue}), "coursework", progress)
+            set_checkpoint(job, {**job.checkpoint, "stage": "automap"}, progress=progress)
             return False
 
         return discovered
+    if stage == "automap":
+        return automap_unit(snap)
     if stage == "course":
         return course_unit(snap, token)
     marks = cp.get("marks", {})
@@ -718,9 +1020,96 @@ def classroom_unit(snap, token):
             **conn.checkpoint,
             "courses": {k: {**known.get(k, {}), **v} for k, v in {**known, **marks}.items()},
         }
+        requeue_subject_questions(db, conn, job)
         return to_interpretation(job)
 
     return finished
+
+
+def automap_unit(snap):
+    """Link newly discovered Classroom courses to the student's subjects by name or short form (AI
+    for the rest), so their work imports without manual linking. A course the student unlinked is
+    never linked again automatically; each course is reconsidered when the subject list changes."""
+    with work({"id": snap.uid}) as db:
+        subjects = [
+            {
+                "id": str(s.id),
+                "name": s.name,
+                "kind": s.kind,
+                "code": s.data.get("code"),
+                "aliases": s.data.get("aliases") or [],
+            }  # fmt: skip
+            for s in db.scalars(select(Subject).where(Subject.user_id == snap.uid).order_by(Subject.name))
+        ]
+        linked = {
+            m.external_course_id
+            for m in db.scalars(
+                select(SubjectMapping).where(SubjectMapping.connection_id == snap.connection_id)
+            )
+        }
+        signature = hashlib.sha256(
+            json.dumps([[s["id"], s["name"], s["kind"]] for s in subjects]).encode()
+        ).hexdigest()[:16]
+        todo = [
+            (c.external_course_id, c.name)
+            for c in db.scalars(
+                select(SourceCourse).where(
+                    SourceCourse.connection_id == snap.connection_id, SourceCourse.available.is_(True)
+                )
+            )
+            if c.external_course_id not in linked
+            and not c.data.get("autoLinkDeclined")
+            and c.data.get("autoLinkChecked") != signature
+        ]
+    checked = {cid for cid, _ in todo}
+    try:
+        links, _ = subject_link.link_courses(todo, subjects)
+    except ai.AIUnavailable:
+        # Name matches still apply; the rest are reconsidered on a later sync.
+        links = {cid: ids for cid, name in todo if (ids := subject_link.course_subjects(name, subjects))}
+        checked = set(links)
+
+    def apply(db, job, conn):
+        kinds = {s.id: s.kind for s in db.scalars(select(Subject).where(Subject.user_id == conn.user_id))}
+        for course in db.scalars(
+            select(SourceCourse).where(
+                SourceCourse.connection_id == conn.id, SourceCourse.external_course_id.in_(checked or {""})
+            )
+        ):
+            course.data = {**course.data, "autoLinkChecked": signature}
+            if course.data.get("autoLinkDeclined"):
+                continue
+            for sid in links.get(course.external_course_id, []):
+                sid = uuid.UUID(sid)
+                if sid not in kinds or db.scalar(
+                    select(SubjectMapping.id).where(
+                        SubjectMapping.subject_id == sid,
+                        SubjectMapping.connection_id == conn.id,
+                        SubjectMapping.external_course_id == course.external_course_id,
+                    )
+                ):
+                    continue
+                db.add(
+                    SubjectMapping(
+                        user_id=conn.user_id,
+                        subject_id=sid,
+                        connection_id=conn.id,
+                        external_course_id=course.external_course_id,
+                        source_available=True,
+                        data={
+                            "courseName": course.name,
+                            "section": course.data.get("section"),
+                            "subjectKind": kinds[sid],
+                            "automatic": True,
+                        },  # fmt: skip
+                    )
+                )
+        db.flush()
+        queue = finish_discovery(db, conn, job.id)
+        set_checkpoint(job, next_course({**job.checkpoint, "queue": queue}), "coursework")
+        return False
+
+    return apply
 
 
 def next_course(cp):
@@ -748,6 +1137,8 @@ def upsert_course(db, conn, course, job_id):
     row.available = True
     # Source metadata only. Discovering a course never creates or changes a subject.
     row.data = {
+        # The student's unlinking and the last automatic-linking check survive rediscovery.
+        **{k: v for k, v in (row.data or {}).items() if k in ("autoLinkDeclined", "autoLinkChecked")},
         "section": course.get("section"),
         "room": course.get("room"),
         "courseState": course.get("courseState"),

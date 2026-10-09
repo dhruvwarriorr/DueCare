@@ -9,6 +9,7 @@ import {
 import { Inbox, Check, X, Link2 } from "lucide-react";
 import { api, formatTime, localTime, utcTime } from "@/lib/api";
 import type { Page, ReviewItem, Subject, Task } from "@/lib/types";
+import { FacultyApproval } from "./faculty-approval";
 import { Button } from "./ui/button";
 import { ErrorNotice, Field } from "./ui/field";
 
@@ -40,7 +41,9 @@ const sourceLabel: Record<string, string> = {
 
 function Targeting({ item }: { item: ReviewItem }) {
   const observed = { ...item.observed?.course, ...item.observed?.activity };
-  const show = (["branches", "classYears", "semesters", "divisions", "batches"] as const)
+  const show = (
+    ["branches", "classYears", "semesters", "divisions", "batches"] as const
+  )
     .map((k) => [k, observed[k]] as const)
     .filter(([, v]) => Array.isArray(v) && v.length);
   const s = item.student || {};
@@ -107,6 +110,8 @@ function ReviewCard({
         "overview",
         "task",
         "subjects",
+        "approved-faculty",
+        "me",
       ])
         await client.invalidateQueries({ queryKey: [key] });
     },
@@ -282,10 +287,13 @@ function ReviewCard({
           </select>
         </Field>
       )}
+      {item.sourceKind === "gmail_message" && item.senderEmail && (
+        <FacultyApproval emails={[item.senderEmail]} />
+      )}
       <ErrorNotice error={resolve.error} />
       <div className="review-actions">
         {creates && (
-          <Button disabled={resolve.isPending || !subjectId} onClick={accept}>
+          <Button disabled={resolve.isPending || !type} onClick={accept}>
             <Check size={15} />
             {item.issueType === "timing_unresolved"
               ? "Accept with this timing"

@@ -1,6 +1,10 @@
+from datetime import timedelta
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+GMAIL_LOOKBACK = timedelta(days=30)
 
 
 class Settings(BaseSettings):
@@ -22,7 +26,12 @@ class Settings(BaseSettings):
     google_request_timeout_seconds: float = 15
     academic_sender_domains: str = "somaiya.edu"
     # Phase 3 interpretation. Model IDs are deployment configuration, never hard-coded.
-    # Provider order: Groq, then the Groq fallback model, then OpenAI, then Gemini (when configured).
+    # Provider order: OpenRouter, Groq, the Groq fallback model, OpenAI, Gemini (when configured).
+    openrouter_api_key: str = ""
+    openrouter_model: str = ""
+    openrouter_concurrency: int = Field(default=10, ge=1, le=10)
+    openrouter_max_output_tokens: int = Field(default=8192, ge=1024, le=32768)
+    openrouter_reasoning_effort: str = "low"
     groq_api_key: str = ""
     groq_model: str = ""
     groq_fallback_model: str = ""
@@ -35,8 +44,8 @@ class Settings(BaseSettings):
     # The college LMS sender is the same for every Somaiya student.
     lms_senders: str = "lms-kjsse@somaiya.edu"
     lms_hosts: str = "lms-kjsce.somaiya.edu"
-    # Automatic completion is enabled per validated path only after live checks pass:
-    # lms_assignment_receipt, classroom_turned_in. Otherwise evidence asks the student to confirm.
+    # Verified LMS assignment/quiz receipts always complete their exact task.
+    # The connected student's Classroom TURNED_IN state also completes matching work.
     auto_completion_paths: str = ""
 
 

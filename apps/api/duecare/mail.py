@@ -33,6 +33,35 @@ FOOTER = re.compile(
     re.I,
 )
 
+NON_ACADEMIC = re.compile(
+    r"\b(?:recruitment|recruiting|placements?|internships?|hiring|hackathons?|"
+    r"councils?|student\s+clubs?|campus\s+ambassadors?|job\s+(?:openings?|opportunities)|"
+    r"career\s+(?:opportunities|fair)|cultural\s+fest|webinars?|workshops?|competitions?|"
+    r"exhibitions?|training\s+program(?:me)?s?|student\s+registrations?)\b",
+    re.I,
+)
+PROMOTION = re.compile(
+    r"\b(?:join|register|registration|sign\s+up|apply|applications?|invites?)\b.{0,160}"
+    r"\b(?:community|clubs?|hackathons?|recruitment|placements?|internships?|competitions?|"
+    r"webinars?|workshops?|councils?)\b",
+    re.I | re.S,
+)
+
+
+def academic_exclusion(subject, sender_email=None, sender_name=None, text=None):
+    """Exclude careers and extracurricular mail even when it mentions a test or deadline."""
+    heading = " ".join(filter(None, [subject, sender_name, sender_email])).replace("_", " ")
+    mailbox = (sender_email or "").split("@", 1)[0].lower()
+    if re.search(
+        r"recruit|placement|council|hackathon|internship|competitioncell|^(?:tpo|tnp)(?:\W|$)", mailbox
+    ):
+        return "non_academic_mail"
+    if NON_ACADEMIC.search(heading) or PROMOTION.search(subject or ""):
+        return "non_academic_mail"
+    if text and PROMOTION.search(text[:12000]):
+        return "non_academic_mail"
+    return None
+
 
 def normalize_email(value):
     """Exact mailbox comparison: trim and lower-case only; aliases are never guessed."""

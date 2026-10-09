@@ -7,7 +7,7 @@ from fastapi import APIRouter, Query, Request
 from pydantic import Field
 from sqlalchemy import func, select
 
-from . import ai, interpret, rules, targeting
+from . import ai, faculty, interpret, mail, rules, targeting
 from .common import User, finish, owned, page, replay, revision, work
 from .domain import effective_status
 from .errors import ApiError
@@ -84,6 +84,9 @@ def review_items(
     user=User,
 ):
     with work(user) as db:
+        from .reconcile import ensure_source_policy
+
+        ensure_source_policy(db, user["id"])
         rows, c = page(
             db,
             select(ReviewItem)
@@ -120,23 +123,7 @@ class Resolution(Input):
 
 
 def candidate_from(event, record):
-    data = event.data
-    return interpret.Cand(
-        intent=event.event_type,
-        task_type=data.get("taskType"),
-        title=data.get("title"),
-        assessment_label=data.get("assessmentLabel"),
-        deliverable_label=data.get("deliverableLabel"),
-        observed=data.get("observedTargeting") or {},
-        timing=data.get("timing") or {},
-        provenance=data.get("provenance") or {},
-        links=data.get("links") or [],
-        excerpt=data.get("excerpt"),
-        occurred_at=event.occurred_at,
-        identity_key=event.identity_key,
-        method=data.get("method", "review"),
-        source="classroom" if record.kind.startswith("classroom") else "gmail",
-    )
+    return interpret.candidate_from_event(event, record)
 
 
 def context(db, uid):
@@ -162,6 +149,21 @@ def resolve_review(id: uuid.UUID, body: Resolution, request: Request, user=User)
         record = db.get(SourceRecord, item.source_record_id) if item.source_record_id else None
         if record and record.expires_at and record.expires_at <= now():
             raise ApiError(410, "REVIEW_EXPIRED", "This review has expired")
+        if (
+            record
+            and record.kind == "gmail_message"
+            and body.action != "dismiss"
+            and mail.academic_exclusion(
+                record.title or item.data.get("sourceTitle"),
+                record.sender_email,
+                text=record.excerpt or item.data.get("excerpt"),
+            )
+        ):
+            raise ApiError(
+                409,
+                "NON_ACADEMIC_MAIL",
+                "This message is excluded from academic work. Dismiss it or refresh Needs attention",
+            )
         task = (
             db.scalar(select(Task).where(Task.id == item.task_id).with_for_update()) if item.task_id else None
         )
@@ -231,6 +233,8 @@ def resolve_review(id: uuid.UUID, body: Resolution, request: Request, user=User)
             target = owned(db, Task, target_id, user["id"], True)
             interpret.update_task(db, target, candidate_from(event, record), event, True, "student_link")
             event.outcome = "linked"
+            if record.kind == "gmail_message":
+                faculty.approve(db, user["id"], record.sender_email, "student")
             item.status, item.task_id = "resolved", target.id
             result["taskId"] = str(target.id)
         elif body.action in (
@@ -301,6 +305,10 @@ def resolve_review(id: uuid.UUID, body: Resolution, request: Request, user=User)
         item.resolved_at = now()
         item.revision += 1
         db.flush()
+        if body.action in ("accept", "link") and record and record.kind == "gmail_message":
+            from .reconcile import refresh_faculty_reviews
+
+            refresh_faculty_reviews(db, user["id"])
         return finish(db, op, {**result, "review": review_out(item, db)})
 
 

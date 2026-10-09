@@ -32,7 +32,7 @@ The default API and Next development request log settings avoid raw request URLs
 | Disconnect in Sources | Sync cancellation and disconnected state commit immediately; tasks/evidence remain. Revoke Google access if no other connection uses the grant. | If Google is unavailable, open Settings and Resume the pending disconnect. Reconnection waits for this operation to finish. |
 | Delete imported data in Settings | Remove the connection's imported records, reviews, evidence and source history. Preserve manual work, student edits and other-source support. Keep authorization separate from data deletion. | Saved progress survives page reload or request interruption. Open Settings and Resume. Source sync is blocked until completion. |
 | Restore import | Mark a minimal suppression identifier eligible again. | Then explicitly choose Reimport on the matching active source. Deleted content is fetched again from Google within the normal history window; no backup restore occurs. |
-| Reimport | Cancel the previous job, reset the source watermark, reconsider stored records and create an import job. | Open Sources to drive/follow the saved job. Suppression and sender blocks still apply. A disconnected source must first be reconnected. |
+| Reimport | Cancel the previous job, reset the source watermark, reconsider stored records and create an import job. | The API worker advances the saved job; open Sources to follow progress. Suppression and sender blocks still apply. A disconnected source must first be reconnected. |
 
 Source deletion processes one task and up to 25 of its evidence links per request, then up to 10 source records per request. These are internal work chunks, not product limits. Each chunk and checkpoint commit together. Counters count finalized tasks, even if evidence removal takes several requests. Source evidence removed by privacy deletion also invalidates merge-undo snapshots that contained it.
 
@@ -40,11 +40,11 @@ Deleted activities retain only owner-scoped hashed account/service and identity 
 
 ## Account deletion
 
-Choose Delete account in Settings and type `DELETE`. The gateway saves the recovery capability in an HTTP-only cookie and navigates to `/privacy/deletion`. The browser continues saved stages while visible:
+Choose Delete account in Settings and type `DELETE`. The gateway saves the recovery capability in an HTTP-only cookie and navigates to `/privacy/deletion`. The API worker continues saved stages independently of the browser:
 
 1. Freeze ordinary workspace API requests and cancel all sync jobs.
-2. Revoke one source grant at a time. A temporary Google failure saves `waiting_retry` and allows Resume.
-3. Purge up to 100 owned rows from one table per request, in dependency order; remove pending source OAuth states.
+2. Revoke one source grant at a time. A temporary Google failure saves `waiting_retry` and retries automatically after 30 seconds.
+3. Purge up to 100 owned rows from one table per worker chunk, in dependency order; remove pending source OAuth states.
 4. Remove native Supabase Auth sessions, identities and the user, then remove DueCare sessions. This final stage and completion receipt commit atomically.
 
 The private SQL function performs only checkpoint-authorized self-deletion. Runtime cannot issue general Auth writes; browser roles cannot execute the function. This design complements the API's native-session checks: deleting an Auth user alone does not invalidate an already issued stateless JWT immediately, as explained in [Supabase's user-management documentation](https://supabase.com/docs/guides/auth/managing-user-data).
@@ -59,11 +59,11 @@ Account deletion affects DueCare and its authorization grants. It does not delet
 
 Accepted evidence/history remains until its task/source/account is deleted. Irrelevant or blocked source metadata expires after 30 days, is hidden immediately, and is physically purged in bounded batches during later app activity. Linked evidence is retained. Expired review items cannot be opened or resolved. Sender blocking minimizes unlinked records and clears their review/event content while preserving existing accepted tasks.
 
-Sync resumes from its saved job on app open or refocus. A request already contacting Google may finish; its applying transaction rechecks ownership, cancellation and privacy state. One owner's application writes serialize with a transaction-scoped privacy lock. Temporary provider failures save backoff; `needs_reauth` requires renewed consent. No background scheduled sync or cron deletion worker is required for this local release.
+The embedded API worker discovers durable pending jobs once per second and advances up to four jobs concurrently. Sync leases and owner privacy locks preserve checkpoints and prevent duplicate writes across API processes. Switching tabs/apps, navigating away, closing the browser, or losing a login session does not stop already authorized work. Google and AI failures retain their saved backoff; `needs_reauth` requires renewed consent. Revocation failures retry after 30 seconds. API restarts resume saved work after any existing sync lease expires. The API service must stay running. The browser starts new imports on app open/refocus or manual request; the worker does not schedule periodic new imports.
 
 ## Migration and operational recovery
 
-Revision `0004` adds three owned tables, one private account-deletion checkpoint table, indexes and a restricted self-deletion function. The existing development project is upgraded. Readiness fails if required tables are absent.
+Revision `0004` adds three owned tables, one private account-deletion checkpoint table, indexes and a restricted self-deletion function. Revision `0005` adds a private job-routing function and durable account-deletion retry timing. Only the server runtime role can call discovery; anonymous and authenticated browser roles cannot. Source text, credentials, and recovery capabilities are never returned by discovery. Each operation runs under its owner context and existing locks. The configured development project is upgraded. Readiness fails if required tables or the worker discovery function are absent.
 
 Test rollback only on the **disposable** database configured in `.local/test-config.json`. The tested `0004 → 0003 → 0004` round-trip drops and recreates privacy/activity data; it is not a recovery procedure for real user data. Real recovery needs a database backup and a reviewed forward repair. Never downgrade the hosted project to fix an application error. Preserve active deletion checkpoints and encryption-key versions during upgrades.
 

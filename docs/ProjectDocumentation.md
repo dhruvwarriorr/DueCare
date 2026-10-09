@@ -217,6 +217,16 @@ Timetable edits affect future interpretation. They cannot silently move accepted
 
 The timetable is an interpretation reference within Subjects. It does not add scheduled syncing, reminders, automatic course history, or tasks for every class meeting.
 
+#### Automatic subject linking
+
+Imported assignments and tests are linked to the student's subjects without asking ("Which of your subjects is this for?" is no longer a review).
+
+- Order: a confirmed LMS course label; then an exact code, alias or name, or matching short form/initials ("DS_B_ODD_26-27" → Data Structures, "COA", "dbms"). Theory versus lab is decided by the work's wording: experiments, practicals, journals and write-ups go to the lab; quizzes, IA and class tests to the theory. Only then one AI call per message picks among the student's subjects, and it may return only supplied subject IDs.
+- Classroom items stay within the course's linked subjects. Work matching none of the student's subjects is created without a subject and shown as such. The task records how its subject was chosen (`subjectLink`: name, ai or none), task detail shows it, and editing the task changes it.
+- A configured but failing AI pauses the item and retries later; with no AI configured, unmatched work is created without a subject.
+- Classroom courses are linked automatically after discovery: by name or short form, or by a conservative AI match that leaves generic names such as "Maths III" unlinked. A course serving both the theory and the lab of one subject is linked to both. Links show as "auto" on the Sources page. A course the student unlinks is never linked again automatically, and courses are reconsidered when the subject list changes.
+- Subject questions left from before this change are re-interpreted on the next sync, and the created task settles them.
+
 #### KT notices
 
 Settings offers **Show KT notices** (default) or **Ignore KT notices**. KT (ATKT/backlog) notices concern only students re-taking a failed subject: KT exam timetables, forms, fees and results.
@@ -258,14 +268,18 @@ Effective priority follows this precedence:
 
 ### Gmail import
 
-- Initial lookback: 90 days.
-- Continue incrementally afterward.
+- Scan only Gmail from the last 30 days, newest first, including during incremental sync and reprocessing.
+- Read recent mail before draining incremental history; keep the same cutoff when history expires.
+- Interpret committed mail concurrently with import and add tasks/deadlines as results arrive. Previously accepted older tasks and evidence remain saved.
+- When AI is unavailable or rate limited, keep imported Gmail/Classroom records and keep the sync job pending until automatic retry. Respect the provider retry delay; report the pending interpretation separately from successful downloading.
 - Use pagination and resumable processing without imposing a total message cap.
 - Use `lms-kjsse@somaiya.edu` as a primary user-provided assignment-notification sender.
 - Also process relevant faculty and department mail about quizzes, tutorials, internal assessments, and other included assignment/test work; do not restrict detection to the primary sender.
 - Prefilter college, faculty, department, and validated academic-system senders.
 - Apply the student's complete sender blocklist before fetching message bodies or sending content to AI.
 - Allow student-defined sender inclusion to improve academic-mail relevance, subject to the mandatory academic-targeting check below.
+- Remember exact faculty addresses after automatic academic acceptance or student acceptance. Offer Approve faculty in Needs attention, Tasks, Overview, and task details, with approval management in Sources. Approved faculty can supply missing audience context; explicit class/semester/division/batch mismatches and nonacademic filters remain effective. Faculty approval never assigns a subject or proves submission.
+- Exclude competition-cell mail, exhibitions, promotional training programs, and student registrations, including `projectcompetitioncell.engg@somaiya.edu`.
 - Extract assignments, tests, relevant changes, and submission events.
 - Process necessary message text temporarily; retain source metadata and minimal evidence excerpts.
 - Store attachment names, links, and metadata only.
@@ -391,7 +405,7 @@ Assess targeting per assignment/test or clearly separated message section. If on
 
 Sender inclusion, priority rules, and manually linked Classroom subjects cannot override a confirmed academic mismatch or silently rewrite student context. Missing or ambiguous targeting cannot be auto-accepted through an include rule.
 
-Review must show the observed class/semester/division/batch, the student's relevant profile values, and the missing or contradictory details. The student can confirm applicability, choose a manually added subject, or dismiss the item. A student confirmation applies to that item and is retained in its history; it must not silently change the academic profile or batch. Recheck blocks and current academic context before applying the resolution.
+Review must show the observed class/semester/division/batch, the student's relevant profile values, and the missing or contradictory details. The student can confirm applicability, change the automatically linked subject, or dismiss the item. A student confirmation applies to that item and is retained in its history; it must not silently change the academic profile or batch. Recheck blocks and current academic context before applying the resolution.
 
 Do not infer missing academic profile values, including the batch. Store only minimal source identifiers and a mismatch reason for ignored academic work; apply the existing expiry for irrelevant processing metadata. Reconsider ignored items after profile or batch changes only through explicit reprocessing.
 
@@ -414,7 +428,7 @@ The backend enforces this rule independently of AI extraction: an accepted compl
 | Completed task | Genuinely newer validated unsubmission/withdrawal or explicit task-specific resubmission requirement | Use the existing reopening rules; uncertain evidence requires review, never a guessed reopen |
 | Student reopened after an earlier receipt | Replay of that old receipt or a generic reminder | Preserve the student's newer decision |
 
-“Latest email wins” is not a valid reconciliation strategy. Apply event authority, identity, ownership, academic applicability, explicit manual decisions, and chronology together. A permitted reopen must be tied to actual unsubmission or a new explicit obligation, not inferred from an overdue subject line. Deadline-only changes cannot reopen an assignment or test.
+The latest source publication/edit timestamp wins for conflicting source-derived dates and details on the same established task. Preserve manual edits, event authority, identity, ownership, academic applicability and completion precedence. A permitted reopen must be tied to actual unsubmission or a new explicit obligation, not inferred from an overdue subject line. Deadline-only changes cannot reopen an assignment or test.
 
 #### Gmail evidence
 
@@ -438,9 +452,13 @@ The two EXP6 confirmation exports are different messages, dated 25 September and
 
 The supplied receipts do not state an independent precise submission transaction timestamp. Preserve the receipt's source occurrence time and its known timestamp basis; do not present the email header's sent time as a separately verified actual upload time. Do not download submitted files.
 
-When several existing tasks are plausible matches, AI selects from the supplied candidate IDs. The backend must reject IDs outside that candidate set or outside the user's ownership.
+When several existing tasks are plausible matches, AI selects from the supplied candidate IDs. The backend rejects IDs outside that candidate set or outside the user's ownership, and rejects suggestions across subjects, task types or assessment numbers. Explicit course names and known short forms take precedence over an extracted subject suggestion. AI items must quote an exact excerpt from the current source, so lookup tasks cannot become invented obligations in another message.
 
-When no suitable existing task exists, skip the receipt and retain minimal processing metadata. Reconsider it only during explicit reprocessing. Process task announcements before receipts within an import cycle where possible.
+Verified LMS assignment and quiz receipts automatically complete the exact matching task. Recognized Moodle quiz confirmations must explicitly confirm submitted answers and that the answers were saved, with an exact quiz activity link; generic test notifications never prove completion.
+
+A verified receipt also completes duplicate notices with the same resolved course, obligation type and exact assessment name after course words and IA quiz/test synonyms are normalized. Different concrete LMS activity IDs remain separate. Generic titles such as “Quiz” alone never establish this fallback identity. Saved verified receipts are reconciled when matching work appears later, without another AI request. A test with no verified receipt or own Classroom turn-in remains incomplete until the student marks it completed; deadline passage does not prove attendance.
+
+When no suitable existing task exists, retain the unmatched receipt metadata and automatically requeue it when its exact task is created or linked. Gmail retries remain within the last 30 days. This allows newest-first interpretation without losing a receipt that arrived before its task.
 
 #### Classroom evidence
 
@@ -483,11 +501,11 @@ A newer applicable notice can withdraw a viva or another requirement. Record the
 - Merge exact, context-safe source identifiers or task links automatically only when subject kind and batch context are compatible.
 - Namespace identifiers by service and account context.
 - Present similarity-based duplicate candidates for student review.
-- Ignore incoming work with a confirmed academic-targeting mismatch. For ambiguous targeting or competing values on otherwise applicable work, keep previously accepted values until the student resolves the issue.
+- Ignore incoming work with a confirmed academic-targeting mismatch. For ambiguous targeting, request clarification. For competing source-derived dates/details on the same applicable work, use the latest source publication/edit timestamp automatically.
 - Never merge work from different theory/lab/tutorial subjects, or source work targeted at incompatible batches, merely because titles or subject codes are similar. Compare all batch targeting with the student's single profile batch.
-- Ask the student to resolve a later source deadline that contradicts a manual correction.
-- Put missing or contradictory imported information in Needs attention.
-- Allow students to accept a genuinely undated task during review.
+- Preserve manual field corrections without creating a source-conflict review.
+- Keep assignments/tests with missing, ambiguous or inconsistent timing as normal undated tasks. Other unresolved issues, such as unclear eligibility, can require Needs attention.
+- Import genuinely undated tasks immediately without a timing review.
 
 #### Explicit revisions and field precedence
 
@@ -496,10 +514,10 @@ A newer applicable notice can withdraw a viva or another requirement. Record the
 | A newer validated notice explicitly revises the date of the same established test | Replace the old source-derived date, keep history, and create the existing deadline-change activity |
 | A newer notice adds a room or login requirement without restating the date | Add the new role-specific information and retain compatible earlier date/start details |
 | Current message includes old quoted schedules | Keep the quoted dates as historical evidence; do not create another task for each quoted notice |
-| Two applicable sources disagree without an explicit supersession relationship | Needs attention; preserve accepted values |
-| A newer source contradicts a student-edited field | Needs attention; preserve the manual override until resolved |
+| Two applicable sources disagree about dates/details on the same task | Latest source publication/edit timestamp wins automatically; retain history and no source-conflict review |
+| A newer source contradicts a student-edited field | Preserve the manual override; no source-conflict review |
 | An explicit exam slot differs from ordinary reference hours | Use the explicit slot and expose the reference discrepancy; review any unresolved exam-specific conflict |
-| Teacher supplies a tentative interval or two alternatives | Store proposed alternatives; do not choose an exact date automatically |
+| Teacher supplies a tentative interval or two alternatives | Keep the task normally with no specific dates; retain the original alternatives as source evidence |
 | A newer general guideline refers to a known assessment without enough identity/context | Enrich only when an established association is safe; otherwise request association review |
 | A due/overdue notice disagrees with accepted completion | Keep completed; no reopen, duplicate task, or review merely for the status contradiction |
 
@@ -541,16 +559,22 @@ Start or resume syncing:
 - On tab refocus when the last automatic attempt was at least 15 minutes ago.
 - When the student selects **Sync now**.
 
-The active browser drives bounded processing requests:
+The API worker advances durable jobs after the browser enqueues them:
 
-- Each request has a 90-second work budget.
+- Each sync chunk has a 90-second work budget.
 - Configure both backend and gateway request duration to allow processing and response overhead.
-- Save durable checkpoints between requests.
+- Save durable checkpoints between chunks.
 - Show successful partial results immediately.
-- Stop starting new processing requests when the page is hidden or closed.
-- An already running request may finish.
-- Resume unfinished work when the student returns.
+- Continue processing when the page is hidden, another app is focused, or the browser closes.
+- Resume durable queued work after API restart; honor active leases and saved retry timing.
+- Account and source deletion also run in the API worker. The API must remain running.
 - Permit only one in-flight sync per connection.
+
+Within that connection's lease, import and interpretation run concurrently. The importer commits source records and its checkpoint; a separate lane interprets committed records and applies validated tasks and deadlines immediately. Refresh visible source progress, tasks, calendar, and overview every five seconds while work is active, including during a running request. Interpret submission confirmations and Classroom submission states as they arrive; retry unmatched receipts when their exact task is created. Explicit reprocessing finishes re-queuing before interpretation begins.
+
+An active Gmail import checkpoint may keep keyed, opaque duplicate fingerprints and source record IDs so duplicate detection survives early minimization of an ignored original. Erase that temporary index when importing ends, fails, or is cancelled. This does not retain ignored source text, titles, excerpts, or plain content hashes.
+
+Permit up to ten OpenRouter calls per API process across source lanes; other providers share one request slot. Respect model cooldowns after HTTP 429 and temporary server failures while continuing imports and deterministic interpretation. An exhausted request budget keeps unfinished work queued for the next request; it does not impose an AI outage pause. Persist only safe provider status codes in logs, without provider bodies or source prompts.
 
 Persist retry timing, leases, and checkpoints in PostgreSQL. Retry provider quota and temporary failures with backoff. Do not advance checkpoints past unpersisted work.
 
@@ -801,7 +825,7 @@ Important constraints:
 - Sender preferences are user-owned; block decisions supersede all inclusion and processing paths. Do not store blocked message bodies or excerpts.
 - Record academic-targeting outcomes and minimal reasons separately from the four task statuses; reject AI output that bypasses a confirmed mismatch or unresolved applicability.
 - Exactly four effective task statuses; derive incomplete status from type, timing mode, accepted cutoff, and current time. Enforce overdue-only-for-assignment and missed-only-for-test constraints. Completed always takes precedence over the clock and reminder labels.
-- A confirmed fixed-session test's `starts_at` and `due_at` agree; an attempt-window test's `availability_closes_at` and `due_at` agree. Reporting/login/opening fields do not overwrite the applicable cutoff. Reject inconsistent accepted intervals and negative durations; conflicting extracted values go to review.
+- A confirmed fixed-session test's `starts_at` and `due_at` agree; an attempt-window test's `availability_closes_at` and `due_at` agree. Reporting/login/opening fields do not overwrite the applicable cutoff. Reject inconsistent accepted intervals and negative durations; conflicting extracted timing values leave the imported task undated without a timing review.
 - Accepted completion is persisted independently of reminder labels and effective deadline calculations. The backend rejects any attempt to apply a generic reminder event as a completed-to-incomplete transition, even when AI proposes it or the event is newer.
 - Recheck the current task completion state, latest manual decision, and revision in the applying transaction. A queued reminder extracted before a receipt/user confirmation cannot commit an incomplete status after that confirmation; retries and concurrent syncs obey the same guard.
 - Preserve the latest manual completion/reopen decision and explicit permitted-reopen evidence during replay, reprocessing, merge undo, and evidence reassignment. A status change requires its own authorized action/evidence; updating a deadline cannot clear completion.
@@ -1008,13 +1032,13 @@ Use concrete review explanations rather than scores: “Exact exam date has not 
 | Receipt identity | EXP6's distinct receipts map to the same activity/task and remain separate evidence events; same title alone does not deduplicate receipts or complete another deliverable |
 | Reminder timing | Labelled absolute dates parsed by role; approximate/negative countdowns ignored as status authority; COA/DSM quiz closing times do not overwrite attendance start/end |
 | Online quiz boundary | E20 remains due before 21:00 IST, including between opening and closing; incomplete test is missed at/after 21:00; completed test remains completed |
-| Matching | Candidate-only AI selection; unmatched receipt skipped; explicit reprocessing can reconsider it |
+| Matching | Candidate-only AI selection; unmatched receipt retries when its exact task arrives, within the Gmail 30-day window |
 | Classroom | Own submissions only; explicitly mapped manual subjects only; discovering source courses never creates subjects; older outstanding/future work included |
 | Classroom content | Actionable announcements are detected; materials/sample questions do not generate tasks; decimal assessment labels remain identifiers; stream and coursework representations reconcile through exact source links |
 | Completion | Genuinely newer validated explicit withdrawal/resubmission can reopen; generic reminders never do, even when newer; manual corrections survive unchanged/old evidence |
 | Group work | One-uploader instructions do not prove the connected student's completion; independent deliverables/viva remain independent; manual group confirmation keeps its provenance |
 | Withdrawn requirements | An applicable withdrawal proposes review/deletion rather than setting completed or adding a fourth task status |
-| Conflicts | Explicit validated same-task source revisions update source-derived values with history; unexplained cross-source conflicts and manual deadline conflicts preserve accepted values until review |
+| Conflicts | Latest same-task source publication/edit timestamp wins for source-derived dates/details, independently of sync order; manual corrections stay authoritative; no source-conflict review |
 | Duplicates | Exact merge, similarity review, undo, and evidence reassignment preserve history; different theory/lab/tutorial subjects and different-batch work never merge solely by title/code |
 | Supplied fixtures | Section 6 covers all 22 catalogued exports and 23 screenshots, including earlier duplicates, EXP6 receipts/reminders, multi-division ITVC targeting, online-quiz expiry, COA thread, DS timing discrepancy, and IA2.14 state |
 | Rules | Structured preview and confirmation; ordering works below hard blocks and targeting checks; ordinary rules do not suppress valid existing-task submission updates, while complete sender blocks do |
@@ -1213,7 +1237,7 @@ Student inclusion and blocking apply exactly as specified earlier. No sample sen
 - The notice explicitly moves the quiz from **30 September to 1 October 2026**.
 - Reporting: **13:30**; start: **13:40**; end: **14:00**; duration: **20 minutes**, all IST.
 - Candidate: one Discrete Maths theory `test`; the prior date becomes historical evidence.
-- A validated revision can replace the old source-derived schedule automatically. A conflicting manual correction still requires review.
+- A newer same-task source replaces older source-derived schedule/details automatically; manual corrections stay authoritative and source disagreements do not require review.
 - Retain relevant syllabus and Safe Exam Browser instructions. The venue is not yet established; do not copy an ordinary lecture room as the quiz venue.
 
 #### E04: ITVC IA2 modelling assignment
@@ -1312,7 +1336,7 @@ These 10 additional files extend the catalogue to E22. The second batch's repeat
 - After authenticated template/owner/applicability validation, either receipt can complete a suitable existing EXP6 task. The later receipt supplements evidence and never makes completed work due again.
 - Both receipt messages are after the original deadline. Confirmed late submission still results in `completed`; do not preserve overdue simply because the upload was late.
 - Their sent times establish receipt occurrence, not independently verified transaction timestamps. File metadata is a reference; the files are not read.
-- If no suitable owned task exists, retain the established unmatched-receipt skip behavior and reconsider only during explicit reprocessing. Do not create an unrelated completed task just from the receipt.
+- If no suitable owned task exists, retain the unmatched receipt and retry when its exact task arrives, within the Gmail 30-day window. Do not create an unrelated completed task just from the receipt.
 
 #### E18 and E22: ITVC confirmation and a multi-division digest
 
@@ -1503,3 +1527,11 @@ Evidence gaps are validation work, not assumptions to fill:
 - Student confirmation of ambiguous aliases, exceptional eligibility, and conflicts that source evidence cannot settle.
 
 Resolving these gaps must preserve Gmail/Classroom sources, manually added subjects, the single batch, the latest four-status decision, complete sender blocking, and mobile planning after web acceptance.
+
+### Source policy update (9 October 2026)
+
+Source-to-source date/detail disagreements are settled using source publication/edit timestamps, including Classroom updateTime. Equal timestamps use a stable source identity tie-break. Manual field edits and completion authority remain protected. Own Classroom TURNED_IN states complete matching tasks automatically; newer verified unsubmission retains its existing reopening behavior. Recruitment, council/club, placement, internship, hackathon and promotional community mail is excluded before extraction. Existing source conflicts and completion evidence can be reconciled from saved evidence without new AI requests; uncertain eligibility remains in Needs attention. Missing, unclear or inconsistent dates/times are kept as normal undated tasks and do not create timing reviews.
+
+### Undated-task policy (9 October 2026)
+
+A missing, unclear, tentative or internally inconsistent imported deadline/date/time never blocks creation of an otherwise applicable assignment or test. Keep it in Tasks with timingMode=undated and no accepted date, date window or clock times. Existing timing-only reviews are resolved into normal tasks using saved source evidence, retaining ownership checks, sender blocks, deleted-import suppression, manual field edits and completion state. Genuine eligibility and association questions remain eligible for Needs attention. Clear later source timing or a manual edit can supply the schedule.

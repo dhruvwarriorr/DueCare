@@ -8,7 +8,7 @@ Reconciliation invariants (enforced here, independently of AI):
 - Due/overdue notices, digests, countdowns, deadline passage and source edits never clear completion.
 - Completion comes only from validated submission evidence on an enabled path, or the student.
 - A newer explicit student reopen survives replay of older receipts.
-- Manual field corrections win over sources; conflicts go to Needs attention.
+- Manual field corrections win over sources; the latest source settles source disagreements.
 - Older source events never roll back newer accepted values.
 """
 
@@ -19,12 +19,13 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from pydantic import ValidationError
+from sqlalchemy import case, func, or_, select
 
-from . import academic, ai, google, lms, mail, rules, targeting
+from . import academic, ai, faculty, google, lms, mail, rules, subject_link, targeting
 from .classroom_time import due_at
 from .common import work
-from .config import settings
+from .config import GMAIL_LOOKBACK, settings
 from .domain import effective_status, task_data
 from .errors import ApiError
 from .models import (
@@ -34,6 +35,7 @@ from .models import (
     ReviewItem,
     Rule,
     Slot,
+    SourceCourse,
     SourceEvent,
     SourceRecord,
     Subject,
@@ -44,8 +46,7 @@ from .models import (
 )
 from .schemas import TaskInput
 
-VERSION = "phase3-interpret-1"
-AI_PAUSE = timedelta(minutes=10)
+VERSION = "phase3-interpret-2"
 ACADEMIC = re.compile(
     r"\b(assignments?|submi(t|ssion)|quiz(zes)?|tests?|exams?|examination|viva|oral|practical|ost|ese|ia[- ]?\d|"
     r"internal assessment|experiments?|exp\s?-?\d+|labs?|laboratory|tutorials?|deadline|due|marks|syllabus|"
@@ -57,6 +58,7 @@ TIMING_FIELDS = (
     "startsAt", "endsAt",
 )  # fmt: skip
 DETAIL_FIELDS = ("location", "assessmentLabel", "deliverableLabel", "durationMinutes")
+SCHEDULE_FIELDS = {*TIMING_FIELDS, "dueDate", "dateWindowStart", "dateWindowEnd", "timingMode"}
 KIND_ORDER = {
     "classroom_coursework": 0,
     "classroom_announcement": 1,
@@ -100,6 +102,7 @@ class Cand:
     source: str = "gmail"
     course_label: str | None = None
     kt_only: bool = False
+    subject_link: dict | None = None
 
 
 @dataclass
@@ -110,6 +113,9 @@ class Prepared:
     ignore: str | None = None
     paused: str | None = None
     meta: dict = field(default_factory=dict)
+    receipt_retry: int = 0
+    paused_retry_after: int = 60
+    paused_code: str = "AI_UNAVAILABLE"
 
 
 def norm(text):
@@ -137,7 +143,9 @@ def parse_dt(value):
 
 
 def completion_paths():
-    return {p.strip() for p in settings().auto_completion_paths.split(",") if p.strip()}
+    return {"lms_assignment_receipt", "lms_quiz_receipt", "classroom_turned_in"} | {
+        p.strip() for p in settings().auto_completion_paths.split(",") if p.strip()
+    }
 
 
 DEFAULT_LMS_SENDER = "lms-kjsse@somaiya.edu"
@@ -175,8 +183,14 @@ def load_context(db, uid, record):
         {"id": str(s.id), "subjectId": str(s.subject_id), **s.data}
         for s in db.scalars(select(Slot).where(Slot.user_id == uid))
     ]
-    mapped = []
+    mapped, course_name = [], None
     if record.external_course_id:
+        course_name = db.scalar(
+            select(SourceCourse.name).where(
+                SourceCourse.connection_id == record.connection_id,
+                SourceCourse.external_course_id == record.external_course_id,
+            )
+        )
         mapped = [
             str(m.subject_id)
             for m in db.scalars(
@@ -215,6 +229,7 @@ def load_context(db, uid, record):
         "subjects": subjects,
         "slots": slots,
         "mapped": mapped,
+        "courseName": course_name,
         "tasks": tasks,
         "rules": rule_rows,
     }
@@ -247,25 +262,49 @@ def subject_kind(ctx, subject_id):
 # --- Preparation (network calls happen here, outside database transactions) --------------------
 
 
+def in_gmail_window():
+    return or_(
+        SourceRecord.kind != "gmail_message",
+        func.coalesce(
+            SourceRecord.received_at,
+            SourceRecord.sent_at,
+            SourceRecord.created_at,
+        )
+        >= now() - GMAIL_LOOKBACK,
+    )
+
+
+def pending_records(db, connection_id, limit=1, exclude=()):
+    order = func.coalesce(SourceRecord.sent_at, SourceRecord.published_at, SourceRecord.received_at)
+    stmt = select(SourceRecord.id, SourceRecord.kind, SourceRecord.title).where(
+        SourceRecord.connection_id == connection_id,
+        SourceRecord.processing_state == "awaiting_interpretation",
+        in_gmail_window(),
+        (SourceRecord.data["aiPausedUntil"].astext.is_(None))
+        | (SourceRecord.data["aiPausedUntil"].astext < now().isoformat()),
+    )
+    if exclude:
+        stmt = stmt.where(SourceRecord.id.not_in(exclude))
+    # Gmail's newest messages take priority over an old interpretation backlog.
+    # Classroom keeps chronological event ordering and coursework priority.
+    rows = db.execute(
+        stmt.order_by(
+            case((SourceRecord.kind == "gmail_message", order), else_=None).desc().nulls_last(),
+            order.asc().nulls_first(),
+            SourceRecord.id,
+        ).limit(200)
+    ).all()
+    return [r[0] for r in sorted(rows, key=lambda r: KIND_ORDER.get(r.kind, 9))[:limit]]
+
+
+def pending_record(db, connection_id):
+    records = pending_records(db, connection_id)
+    return records[0] if records else None
+
+
 def next_record(uid, connection_id):
     with work({"id": uid}) as db:
-        order = func.coalesce(SourceRecord.sent_at, SourceRecord.published_at, SourceRecord.received_at)
-        rows = db.execute(
-            select(SourceRecord.id, SourceRecord.kind, SourceRecord.title)
-            .where(
-                SourceRecord.connection_id == connection_id,
-                SourceRecord.processing_state == "awaiting_interpretation",
-                (SourceRecord.data["aiPausedUntil"].astext.is_(None))
-                | (SourceRecord.data["aiPausedUntil"].astext < now().isoformat()),
-            )
-            .order_by(order.asc().nulls_first(), SourceRecord.id)
-            .limit(200)
-        ).all()
-    if not rows:
-        return None
-    # Announcements and coursework before submissions; receipts after the notices they confirm.
-    receipt = lambda r: (r.title or "").lower().startswith("assignment submission confirmation")  # noqa: E731
-    return min(rows, key=lambda r: KIND_ORDER.get(r.kind, 9) + (2 if receipt(r) else 0))[0]
+        return pending_record(db, connection_id)
 
 
 def prepare(uid, record_id, token, account_email):
@@ -282,7 +321,11 @@ def prepare(uid, record_id, token, account_email):
             "title": record.title,
             "published": record.published_at or record.sent_at,
         }
-    prepared = Prepared(record_id=record_id, revision=snapshot["revision"])
+    prepared = Prepared(
+        record_id=record_id,
+        revision=snapshot["revision"],
+        receipt_retry=snapshot["data"].get("receiptRetry", 0),
+    )
     try:
         if snapshot["kind"] == "gmail_message":
             gmail_candidates(prepared, snapshot, ctx, token, account_email)
@@ -290,13 +333,83 @@ def prepare(uid, record_id, token, account_email):
             submission_candidates(prepared, snapshot)
         else:
             classroom_candidates(prepared, snapshot, ctx, token)
+        resolve_subjects(prepared, ctx, snapshot)
     except google.SourceError as exc:
         if exc.kind != "not_found":
             raise
         prepared.ignore = "source_unavailable"
+    except ai.BudgetExpired:
+        raise
     except ai.AIUnavailable as exc:
         prepared.paused = str(exc)
+        prepared.paused_retry_after = exc.retry_after
+        prepared.paused_code = exc.code
     return prepared, ctx
+
+
+LINKED_INTENTS = {"new_work", "revision", "due_notice", "submission", "withdrawal"}
+
+
+def resolve_subjects(prepared, ctx, snap):
+    """Link each work item to one of the student's subjects without asking them: short forms, names
+    and full-name initials first, then one AI call for the rest. Classroom items stay within the
+    course's linked subjects. Work no subject fits, or that cannot be linked while the AI is
+    unavailable, is created without a subject."""
+    subjects = ctx["subjects"]
+    pending = []
+    for n, c in enumerate(prepared.candidates):
+        if c.intent not in LINKED_INTENTS or not subjects:
+            continue
+        pool_ids = (
+            (set(ctx["mapped"]) if c.source == "classroom" else {s["id"] for s in subjects})
+            if c.method == "ai"
+            else (set(c.subject_choices) or {s["id"] for s in subjects})
+        )
+        pool = [s for s in subjects if s["id"] in pool_ids]
+        # An extracted subject ID is a suggestion. Explicit course words take precedence.
+        texts = [c.course_label, c.title, c.assessment_label, c.deliverable_label]
+        component = c.component_hint or subject_link.component_of(" ".join(t for t in texts if t))
+        chosen = pool[0]["id"] if len(pool) == 1 else subject_link.deterministic(texts, pool, component)
+        if chosen:
+            c.subject_id, c.subject_link = chosen, {"method": "name"}
+            continue
+        if c.subject_id in pool_ids:
+            continue
+        pending.append((n, c, pool))
+    if not pending:
+        return
+    items = [
+        {
+            "key": f"i{n}",
+            "allowed": [s["id"] for s in pool],
+            "taskType": c.task_type,
+            "title": c.title,
+            "assessmentLabel": c.assessment_label,
+            "deliverableLabel": c.deliverable_label,
+            "componentHint": c.component_hint,
+            "courseLabel": c.course_label,
+            "classroomCourse": ctx.get("courseName"),
+            "sourceTitle": snap["title"],
+            "excerpt": (c.excerpt or "")[:300],
+        }
+        for n, c, pool in pending
+    ]
+    try:
+        links, meta = subject_link.ai_links(items, subjects)
+    except ai.AIUnavailable:
+        # Linking alone is not worth holding the work back: keep it without a subject, to set later.
+        links, meta = {}, {"used": False, "unavailable": True}
+    prepared.meta = {**prepared.meta, "subjectLinking": meta}
+    for n, c, _ in pending:
+        chosen = links.get(f"i{n}")
+        c.subject_id = chosen
+        if chosen:
+            c.subject_link = {"method": "ai", "model": meta.get("model")}
+        else:
+            c.subject_link = {
+                "method": "none",
+                **({"reason": "ai_unavailable"} if meta.get("unavailable") else {}),
+            }
 
 
 def ai_payload(ctx, source, sections, allowed_subjects=None):
@@ -316,6 +429,16 @@ def ai_payload(ctx, source, sections, allowed_subjects=None):
     }
 
 
+def grounded_item(item, sections, title=None):
+    """Lookup tasks must not become obligations invented in a different source."""
+    evidence = lms.flat(item.evidence).casefold()
+    section = next((s for s in sections if s.get("id") == item.section), None)
+    if not evidence or not section:
+        return False
+    source = lms.flat(section.get("text", "")).casefold()
+    return evidence in source or (item.section == "authored" and evidence in lms.flat(title).casefold())
+
+
 def gmail_candidates(prepared, snap, ctx, token, account_email):
     gid = snap["provider_id"].split(":", 2)[2]
     raw = google.provider.gmail_raw(token, gid)["raw"]
@@ -329,6 +452,12 @@ def gmail_candidates(prepared, snap, ctx, token, account_email):
     from_lms = decoded.sender_email in lms_senders()
     template, found = lms.parse(decoded.subject, decoded.authored_text, links) if from_lms else (None, [])
     prepared.meta = {"method": template or "ai", "sender": decoded.sender_email}
+    exclusion = mail.academic_exclusion(
+        decoded.subject, decoded.sender_email, decoded.sender_name, decoded.authored_text
+    )
+    if exclusion:
+        prepared.ignore = exclusion
+        return
     if template:
         for c in found:
             course = lms.course_targeting(c.course_label)
@@ -356,14 +485,16 @@ def gmail_candidates(prepared, snap, ctx, token, account_email):
             if c.intent == "submission":
                 auth_obs = decoded.authentication or {}
                 cand.validation = {
-                    "template": "assignment_receipt",
+                    "template": template,
                     "sender": decoded.sender_email in lms_senders(),
                     "authenticated": auth_obs.get("dkim") == "pass"
                     and auth_obs.get("dmarc") == "pass"
                     and auth_obs.get("headerFrom") == decoded.sender_email.rsplit("@", 1)[1],
                     "addressedToAccount": addressed,
                     "notForwarded": not forwarded,
-                    "activityLink": bool(c.identity_key) and c.identity_key.split(":")[1] in lms_hosts(),
+                    "activityLink": bool(c.identity_key)
+                    and c.identity_key.split(":")[1] in lms_hosts()
+                    and c.identity_key.split(":")[2] == ("quiz" if c.task_type == "test" else "assign"),
                 }
             prepared.candidates.append(cand)
         return
@@ -396,6 +527,8 @@ def gmail_candidates(prepared, snap, ctx, token, account_email):
     course = targeting.merge(lms.course_targeting(label.group(1))) if label else {}
     choices = lms_subjects(ctx, label.group(1)) if label else []
     for i, item in enumerate(extraction.items):
+        if not grounded_item(item, sections, decoded.subject):
+            continue
         cand = from_item(item, ctx, base_choices=choices, allowed=None, occurred=occurred, source="gmail")
         cand.observed = targeting.merge(
             course.get("course"), {**item.targeting.model_dump(), "scope": "activity"}
@@ -434,10 +567,15 @@ def classroom_candidates(prepared, snap, ctx, token):
         "materials": [m.get("title") for m in (item.get("materials") or []) if isinstance(m, dict)][:10],
     }
     text = (item.get("description") or item.get("text") or "")[:12000]
-    extraction, meta = ai.extract(ai_payload(ctx, source, [{"id": "authored", "text": text}], ctx["mapped"]))
+    sections = [{"id": "authored", "text": text}]
+    extraction, meta = ai.extract(ai_payload(ctx, source, sections, ctx["mapped"]))
     prepared.meta = {"method": "ai", **meta}
-    occurred = parse_dt(snap["published"].isoformat()) if snap["published"] else None
+    occurred = parse_dt(utc(item.get("updateTime") or item.get("creationTime")))
+    if occurred is None:
+        occurred = snap["published"]
     for i, it in enumerate(extraction.items):
+        if not grounded_item(it, sections, item.get("title")):
+            continue
         cand = from_item(
             it,
             ctx,
@@ -646,6 +784,97 @@ def task_by_identity(db, uid, key):
     )
 
 
+def work_signature(title, subject):
+    """Conservative assessment name within one course; IA1 and IA2 remain distinct."""
+    text = (title or "").casefold()
+    names = [subject["name"], subject.get("code"), *(subject.get("aliases") or [])]
+    for key, aliases in subject_link.COURSE_NAMES.items():
+        if {norm(n) for n in names if n} & {norm(key), *(norm(n) for n in aliases)}:
+            names.extend([key, *aliases])
+    for name in sorted(filter(None, names), key=len, reverse=True):
+        text = re.sub(r"(?<!\w)" + re.escape(name.casefold()) + r"(?!\w)", " ", text)
+    text = re.sub(r"\bia\s*[- ]?\s*(\d+)\b", r"ia\1", text)
+    words = set(re.findall(r"[a-z]+\d*|\d+", text))
+    if any(re.fullmatch(r"ia\d+", w) for w in words):
+        words -= {"quiz", "test", "exam", "examination", "mcq", "internal", "assessment"}
+    return words
+
+
+def same_work(cand, task, ctx):
+    """A model-suggested task ID alone is never identity or completion evidence."""
+    if cand.task_type and cand.task_type != task.type:
+        return False
+    if not cand.subject_id or str(task.subject_id) != cand.subject_id:
+        return False
+    subject = next((s for s in ctx["subjects"] if s["id"] == cand.subject_id), None)
+    if not subject:
+        return False
+    mine, theirs = work_signature(cand.title, subject), work_signature(task.title, subject)
+    if not mine or not theirs:
+        return False
+    if {w for w in mine if re.search(r"\d", w)} != {w for w in theirs if re.search(r"\d", w)}:
+        return False
+    return mine == theirs or len(mine & theirs) / len(mine | theirs) >= 0.6
+
+
+def receipt_tasks(db, uid, cand, ctx, primary=None):
+    """Verified LMS receipts can cover duplicate notices of the same course assessment.
+
+    Different concrete LMS activities are never joined by their display names. A generic
+    name without a course and assessment identity is insufficient for fallback matching.
+    """
+    tasks = [primary] if primary else []
+    if not cand.identity_key or not cand.identity_key.startswith("lms:") or not cand.subject_id:
+        return tasks
+    for task in db.scalars(
+        select(Task)
+        .where(
+            Task.user_id == uid,
+            Task.subject_id == uuid.UUID(cand.subject_id),
+            Task.type == cand.task_type,
+            Task.data["mergedInto"].astext.is_(None),
+        )
+        .order_by(Task.created_at)
+        .with_for_update()
+    ):
+        if task in tasks or not same_work(cand, task, ctx):
+            continue
+        keys = set(
+            db.scalars(
+                select(SourceEvent.identity_key)
+                .join(TaskEvidence, TaskEvidence.event_id == SourceEvent.id)
+                .where(
+                    TaskEvidence.task_id == task.id,
+                    TaskEvidence.state == "active",
+                    SourceEvent.identity_key.like("lms:%"),
+                )
+            )
+        )
+        if keys and cand.identity_key not in keys:
+            continue
+        subject = next(s for s in ctx["subjects"] if s["id"] == cand.subject_id)
+        signature = work_signature(cand.title, subject)
+        if signature <= {"quiz", "test", "exam", "assignment", "experiment", "submission", "assessment"}:
+            continue
+        # Fallback is exact after removing course words and IA assessment synonyms.
+        if signature != work_signature(task.title, subject):
+            continue
+        tasks.append(task)
+    return tasks
+
+
+def verified_lms_receipt(cand):
+    validation = cand.validation or {}
+    return (
+        validation.get("template") in ("assignment_receipt", "quiz_receipt")
+        and all(
+            validation.get(k) is True
+            for k in ("sender", "authenticated", "addressedToAccount", "notForwarded", "activityLink")
+        )
+        and cand.method == "lms_" + validation["template"]
+    )
+
+
 def similar_task(db, uid, cand, subject_id):
     """Similarity never merges; it only asks the student (different kinds/labels stay separate)."""
     if not cand.title:
@@ -722,6 +951,39 @@ def proposal(cand, subject_id):
     return {k: v for k, v in out.items() if v not in (None, "")}
 
 
+def candidate_from_event(event, record, fields=None):
+    data = event.data
+    values = {**data.get("proposal", {}), **(fields or {})}
+    return Cand(
+        intent=event.event_type,
+        task_type=values.get("type", data.get("taskType")),
+        title=values.get("title", data.get("title")),
+        subject_id=values.get("subjectId"),
+        assessment_label=values.get("assessmentLabel", data.get("assessmentLabel")),
+        deliverable_label=values.get("deliverableLabel", data.get("deliverableLabel")),
+        location=values.get("location"),
+        instructions=values.get("instructions"),
+        duration=values.get("durationMinutes"),
+        mode=values.get("timingMode"),
+        date_only=values.get("dueDate"),
+        window=(values["dateWindowStart"], values["dateWindowEnd"])
+        if values.get("dateWindowStart") and values.get("dateWindowEnd")
+        else None,
+        observed=data.get("observedTargeting") or {},
+        timing={**(data.get("timing") or {}), **{k: v for k, v in values.items() if k in TIMING_FIELDS}},
+        provenance=data.get("provenance") or {},
+        validation=data.get("validation"),
+        links=data.get("links") or [],
+        excerpt=data.get("excerpt"),
+        occurred_at=event.occurred_at,
+        identity_key=event.identity_key,
+        method=data.get("method", "review"),
+        section=data.get("section", "authored"),
+        source="classroom" if record.kind.startswith("classroom") else "gmail",
+        course_label=data.get("courseLabel"),
+    )
+
+
 def task_input(fields):
     """Validate a source proposal through the same contract as manual tasks."""
     allowed = {f.alias for f in TaskInput.model_fields.values()}
@@ -758,12 +1020,59 @@ def unresolved(cand):
     return None
 
 
+def undated_fields(fields):
+    """Keep the obligation without accepting any uncertain date or time."""
+    return {**{k: v for k, v in fields.items() if k not in SCHEDULE_FIELDS}, "timingMode": "undated"}
+
+
+def timing_error(exc):
+    if isinstance(exc, ApiError):
+        return exc.code == "INVALID_TIME"
+    return isinstance(exc, ValidationError) and all(
+        error["loc"] and error["loc"][0] in SCHEDULE_FIELDS for error in exc.errors()
+    )
+
+
 def create_task(db, uid, ctx, record, event, cand, subject_id, method, fields=None):
-    d = task_input(fields or proposal(cand, subject_id))
+    values = fields or proposal(cand, subject_id)
+    timing_omitted = method != "student_review" and bool(unresolved(cand))
+    if timing_omitted:
+        values = undated_fields(values)
+    try:
+        d = task_input(values)
+    except (ApiError, ValidationError) as exc:
+        if method == "student_review" or not timing_error(exc):
+            raise
+        timing_omitted = True
+        d = task_input(undated_fields(values))
     provenance = {**d.get("timingProvenance", {})}
     for name, prov in cand.provenance.items():
         if name in provenance or d.get(name):
             provenance[name] = {**prov, "evidenceRef": str(event.id)}
+    for name, value in d.items():
+        if name == "timingProvenance":
+            continue
+        if value is not None:
+            provenance[name] = {
+                **provenance.get(name, {"basis": "source-exact"}),
+                "sourceTime": source_order(db, event)[0].isoformat(),
+                "evidenceRef": str(event.id),
+            }
+    if d.get("dueAt"):
+        provenance["dueAt"] = {
+            **provenance.get("dueAt", {"basis": "source-exact"}),
+            "sourceTime": source_order(db, event)[0].isoformat(),
+            "evidenceRef": str(event.id),
+        }
+    if timing_omitted:
+        # Clearing uncertain timing is also a source decision: an older notice must not
+        # fill it back in merely because the accepted values are now null.
+        for name in SCHEDULE_FIELDS:
+            provenance[name] = {
+                "basis": "source-timing-omitted",
+                "sourceTime": source_order(db, event)[0].isoformat(),
+                "evidenceRef": str(event.id),
+            }
     d["timingProvenance"] = provenance
     p = ctx["profile"]
     d["academicContext"] = academic.context(p)
@@ -772,6 +1081,8 @@ def create_task(db, uid, ctx, record, event, cand, subject_id, method, fields=No
     d["sourceLinks"] = cand.links
     d["observedTargeting"] = cand.observed
     d["groupWork"] = cand.group_work
+    if cand.subject_link:
+        d["subjectLink"] = cand.subject_link
     task = Task(
         user_id=record.user_id,
         title=d["title"],
@@ -784,6 +1095,17 @@ def create_task(db, uid, ctx, record, event, cand, subject_id, method, fields=No
     db.flush()
     task.status = effective_status(task, now())
     link(db, task, event, method)
+    if cand.identity_key:
+        # Subject questions from before automatic linking are settled by this task.
+        for item in db.scalars(
+            select(ReviewItem).where(
+                ReviewItem.user_id == record.user_id,
+                ReviewItem.status == "open",
+                ReviewItem.issue_type == "choose_subject",
+                ReviewItem.data["identityKey"].astext == cand.identity_key,
+            )
+        ):
+            item.status, item.resolved_at, item.task_id = "resolved", now(), task.id
     history(
         db,
         task,
@@ -791,37 +1113,216 @@ def create_task(db, uid, ctx, record, event, cand, subject_id, method, fields=No
         {k: d.get(k) for k in ("title", "type", "subjectId", "dueAt", "timingMode") if d.get(k)},
         event,
     )
+    requeue_receipts(db, uid, cand.identity_key)
+    reconcile_lms_receipts(db, uid, ctx, task)
+    if record.kind == "gmail_message":
+        faculty.approve(
+            db, uid, record.sender_email, "student" if method == "student_review" else "automatic"
+        )
     return task
+
+
+def requeue_receipts(db, uid, identity):
+    """A receipt may arrive before its task; retry it as soon as an exact activity exists."""
+    if not identity:
+        return
+    records = db.scalars(
+        select(SourceRecord)
+        .where(
+            SourceRecord.user_id == uid,
+            SourceRecord.processing_state == "ignored",
+            SourceRecord.reason == "unmatched_receipt",
+            in_gmail_window(),
+            SourceRecord.id.in_(
+                select(SourceEvent.source_record_id).where(
+                    SourceEvent.user_id == uid,
+                    SourceEvent.identity_key == identity,
+                    SourceEvent.outcome == "unmatched_receipt",
+                )
+            ),
+        )
+        .with_for_update()
+    ).all()
+    for record in records:
+        record.processing_state, record.reason, record.expires_at = "awaiting_interpretation", None, None
+        record.data = {**record.data, "receiptRetry": record.data.get("receiptRetry", 0) + 1}
+
+
+def reconcile_lms_receipts(db, uid, ctx, only_task=None):
+    """Replay saved authenticated receipts when a matching notice appears later, without AI."""
+    from .privacy import suppressed
+    from .sync import sender_decision
+
+    count = 0
+    rows = db.execute(
+        select(SourceEvent, SourceRecord)
+        .join(SourceRecord, SourceRecord.id == SourceEvent.source_record_id)
+        .where(
+            SourceEvent.user_id == uid,
+            SourceEvent.event_type == "submission",
+            SourceRecord.kind == "gmail_message",
+            in_gmail_window(),
+        )
+        .order_by(SourceEvent.occurred_at, SourceEvent.created_at)
+    ).all()
+    for event, record in rows:
+        if (
+            record.processing_state in ("blocked", "duplicate")
+            or (record.processing_state == "ignored" and record.reason != "unmatched_receipt")
+            or (record.expires_at and record.expires_at <= now())
+        ):
+            continue
+        conn = db.get(Connection, record.connection_id)
+        if (
+            not conn
+            or conn.status != "active"
+            or sender_decision(db, uid, record.sender_email)[0] == "blocked"
+        ):
+            continue
+        cand = candidate_from_event(event, record)
+        if not verified_lms_receipt(cand) or cand.method not in completion_paths():
+            continue
+        if suppressed(db, conn, cand.identity_key) or suppressed(db, conn, record.provider_id):
+            continue
+        primary = task_by_identity(db, uid, cand.identity_key)
+        matches = receipt_tasks(db, uid, cand, ctx, primary)
+        applied = []
+        for task in matches:
+            if (only_task and only_task.id != task.id) or task.completed_at:
+                continue
+            outcome, _, _ = targeting.evaluate(
+                cand.observed,
+                ctx["profile"],
+                subject_kind=subject_kind(ctx, str(task.subject_id)),
+                trusted=True,
+            )
+            if outcome != "applicable":
+                continue
+            link(db, task, event, cand.method)
+            result = complete_task(db, task, event, cand.method)
+            count += int(result == "completed")
+            if result == "completed":
+                applied.append(task)
+        if applied:
+            event.task_id = primary.id if primary else applied[0].id
+            event.outcome = "completed"
+            if record.reason == "unmatched_receipt":
+                record.processing_state, record.reason, record.expires_at = "interpreted", None, None
+    return count
+
+
+def source_order(db, event):
+    """Order by publication/edit time, never by sync arrival or interpretation completion."""
+    record = db.get(SourceRecord, event.source_record_id)
+    stamp = event.occurred_at
+    if record:
+        if event.processing_version != VERSION and record.kind in (
+            "classroom_coursework",
+            "classroom_announcement",
+        ):
+            stamp = record.source_updated_at or stamp
+        stamp = stamp or record.sent_at or record.published_at or record.received_at
+    stamp = stamp or datetime.min.replace(tzinfo=UTC)
+    key = record.provider_id if record else str(event.source_record_id)
+    parts = event.event_key.split(":")
+    revision = int(parts[0]) if parts[0].isdigit() else 0
+    return stamp.astimezone(UTC), f"{key}:{parts[-1]}:{revision:020d}"
+
+
+def field_order(db, task, name, provenance):
+    previous = provenance.get(name, {})
+    if previous.get("evidenceRef"):
+        old = db.get(SourceEvent, uuid.UUID(previous["evidenceRef"]))
+        if old and old.user_id == task.user_id:
+            return source_order(db, old)
+    stamp = parse_dt(utc(previous.get("sourceTime")))
+    if stamp:
+        return stamp, ""
+    # Legacy tasks may have no field clock. Recover it from the evidence that supplied
+    # the currently accepted value, rather than treating the next imported item as newest.
+    events = db.scalars(
+        select(SourceEvent)
+        .join(TaskEvidence, TaskEvidence.event_id == SourceEvent.id)
+        .where(
+            TaskEvidence.task_id == task.id,
+            TaskEvidence.state == "active",
+            SourceEvent.event_type.in_(("new_work", "revision", "due_notice")),
+            SourceEvent.outcome.in_(("created", "updated", "accepted", "linked", "evidence_recorded")),
+        )
+    ).all()
+    matching = [
+        e
+        for e in events
+        if {**e.data, **e.data.get("timing", {}), **e.data.get("proposal", {})}.get(name)
+        == task.data.get(name)
+    ]
+    return max((source_order(db, e) for e in matching), default=(datetime.min.replace(tzinfo=UTC), ""))
+
+
+def settle_reviews(db, task, issues, reason):
+    count = 0
+    for item in db.scalars(
+        select(ReviewItem).where(
+            ReviewItem.user_id == task.user_id,
+            ReviewItem.task_id == task.id,
+            ReviewItem.status == "open",
+            ReviewItem.issue_type.in_(issues),
+        )
+    ):
+        item.status, item.resolved_at = "resolved", now()
+        item.revision += 1
+        item.data = {**item.data, "resolution": {"action": reason, "at": now().isoformat()}}
+        count += 1
+    return count
 
 
 def update_task(db, task, cand, event, explicit, method):
     """Reconcile role-specific fields. Never touches completion."""
     changes, conflicts = {}, {}
-    incoming = {**cand.timing}
-    for name, value in (("location", cand.location), ("assessmentLabel", cand.assessment_label),
-                        ("deliverableLabel", cand.deliverable_label), ("durationMinutes", cand.duration)):  # fmt: skip
-        if value not in (None, ""):
-            incoming[name] = value
+    incoming = proposal(cand, cand.subject_id)
+    if method != "student_review" and unresolved(cand):
+        incoming = {**undated_fields(incoming), **{k: None for k in SCHEDULE_FIELDS if k != "timingMode"}}
+    if not cand.title:
+        incoming.pop("title", None)
     mode = task.data.get("timingMode")
-    if mode == "fixed_session" and "availabilityClosesAt" in incoming:
+    keep_session = (
+        mode == "fixed_session"
+        and "availabilityClosesAt" in incoming
+        and cand.intent == "due_notice"
+        and "startsAt" not in incoming
+    )
+    if keep_session:
         # A quiz closing notice does not overwrite an established classroom session.
         incoming.pop("dueAt", None)
+        incoming.pop("timingMode", None)
     overrides = task.data.get("manualFieldOverrides", {})
     provenance = task.data.get("timingProvenance", {})
+    prov = {**provenance}
+    incoming_order = source_order(db, event)
     for name, value in incoming.items():
         current = task.data.get(name)
-        if current == value:
-            continue
         if name in overrides or (name in ("startsAt", "availabilityClosesAt") and "dueAt" in overrides):
-            conflicts[name] = {"current": current, "proposed": value, "reason": "student correction"}
             continue
-        previous = provenance.get(name, {}).get("sourceTime")
-        if previous and cand.occurred_at and cand.occurred_at.isoformat() < previous:
-            continue  # An older notice imported later cannot roll back a newer value.
-        if current not in (None, "") and not explicit:
-            conflicts[name] = {"current": current, "proposed": value, "reason": "sources disagree"}
+        if method != "student_review" and incoming_order < field_order(db, task, name, provenance):
             continue
-        changes[name] = value
+        prov[name] = {
+            **cand.provenance.get(name, {"basis": "source-exact"}),
+            "sourceTime": incoming_order[0].isoformat(),
+            "evidenceRef": str(event.id),
+        }
+        if current != value:
+            changes[name] = value
+    if "dueAt" not in overrides and any(
+        name in incoming and prov.get(name, {}).get("evidenceRef") == str(event.id)
+        for name in (
+            ("dueDate", "startsAt") if keep_session else ("dueDate", "startsAt", "availabilityClosesAt")
+        )
+    ):
+        prov["dueAt"] = {
+            **prov.get("dueAt", {"basis": "source-exact"}),
+            "sourceTime": incoming_order[0].isoformat(),
+            "evidenceRef": str(event.id),
+        }
     if changes:
         allowed = {f.alias for f in TaskInput.model_fields.values()}
         merged = {k: v for k, v in task.data.items() if k in allowed}
@@ -831,19 +1332,61 @@ def update_task(db, task, cand, event, explicit, method):
         merged.pop("dueDate", None) if "dueAt" in changes else None
         try:
             d = task_input(merged)
-        except ApiError:
-            conflicts.update(
+        except (ApiError, ValidationError) as exc:
+            if not timing_error(exc):
+                raise
+            # A new schedule can be incompatible with leftover old times. Replace the old
+            # schedule as a unit with the newer source's own valid schedule, preserving edits.
+            schedule = {*TIMING_FIELDS, "timingMode", "dueDate", "dateWindowStart", "dateWindowEnd"}
+            reset = {
+                k: v
+                for k, v in merged.items()
+                if k not in schedule
+                or k in overrides
+                or incoming_order < field_order(db, task, k, provenance)
+            }
+            reset.update(
                 {
-                    k: {"current": task.data.get(k), "proposed": v, "reason": "inconsistent timing"}
-                    for k, v in changes.items()
+                    k: v
+                    for k, v in incoming.items()
+                    if k in schedule and k in prov and prov[k].get("evidenceRef") == str(event.id)
                 }
             )
-            changes = {}
-        else:
-            prov = {**provenance}
+            try:
+                d = task_input(reset)
+            except (ApiError, ValidationError) as exc:
+                if not timing_error(exc):
+                    raise
+                # An older inconsistent schedule cannot clear a newer accepted one.
+                reset = undated_fields(merged)
+                preserve_schedule = any(
+                    k in overrides
+                    or (
+                        task.data.get(k) is not None and incoming_order < field_order(db, task, k, provenance)
+                    )
+                    for k in schedule
+                )
+                if preserve_schedule:
+                    reset.update({k: task.data.get(k) for k in schedule})
+                else:
+                    for name in schedule:
+                        prov[name] = {
+                            "basis": "source-timing-omitted",
+                            "sourceTime": incoming_order[0].isoformat(),
+                            "evidenceRef": str(event.id),
+                        }
+                d = task_input(reset)
+                changes = {k: d.get(k) for k in schedule | changes.keys() if task.data.get(k) != d.get(k)}
+            else:
+                changes = {k: d.get(k) for k in schedule | changes.keys() if task.data.get(k) != d.get(k)}
+        if changes:
+            # Track derived cutoffs too: a date-only deadline or test start can also
+            # change dueAt, and an older explicit cutoff must not undo that newer value.
+            changes = {k: d.get(k) for k in allowed if task.data.get(k) != d.get(k)}
             for name in changes:
                 prov[name] = {
                     **cand.provenance.get(name, {"basis": "source-exact"}),
+                    "sourceTime": incoming_order[0].isoformat(),
                     "evidenceRef": str(event.id),
                 }
             keep = {k: task.data[k] for k in task.data if k not in allowed}
@@ -854,9 +1397,16 @@ def update_task(db, task, cand, event, explicit, method):
                 "sources": sorted({*task.data.get("sources", []), cand.source}),
             }
             task.due_at = parse_dt(d["dueAt"]) if d.get("dueAt") else None
+            task.title, task.type = d["title"], d["type"]
+            task.subject_id = uuid.UUID(d["subjectId"]) if d.get("subjectId") else None
             task.status = effective_status(task, now())
             task.revision += 1
             history(db, task, "source_update", changes, event)
+    if not conflicts:
+        if not changes and prov != provenance:
+            task.data = {**task.data, "timingProvenance": prov}
+            task.revision += 1
+        settle_reviews(db, task, ("conflict", "timing_unresolved"), "source_details_applied")
     link(db, task, event, method)
     return changes, conflicts
 
@@ -864,6 +1414,7 @@ def update_task(db, task, cand, event, explicit, method):
 def complete_task(db, task, event, origin):
     """Atomic completion under the task row lock; survives every later reminder."""
     if task.completed_at:
+        settle_reviews(db, task, ("confirm_completion", "receipt_unverified"), "submission_confirmed")
         history(
             db, task, "evidence_added", {"reason": "additional submission evidence", "origin": origin}, event
         )
@@ -890,6 +1441,15 @@ def complete_task(db, task, event, origin):
     task.status = "completed"
     task.revision += 1
     history(db, task, "completed", {"status": "completed", "origin": origin}, event)
+    for review in db.scalars(
+        select(ReviewItem).where(
+            ReviewItem.user_id == task.user_id,
+            ReviewItem.task_id == task.id,
+            ReviewItem.status == "open",
+            ReviewItem.issue_type.in_(("confirm_completion", "receipt_unverified")),
+        )
+    ):
+        review.status, review.resolved_at = "resolved", now()
     return "completed"
 
 
@@ -918,6 +1478,10 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
     conn = db.get(Connection, record.connection_id)
     if suppressed(db, conn, cand.identity_key) or suppressed(db, conn, record.provider_id):
         return "ignored_deleted"
+    if cand.source == "gmail" and mail.academic_exclusion(
+        cand.title, record.sender_email, text=cand.instructions or cand.excerpt
+    ):
+        return "ignored_non_academic"
     key = f"{record.revision}:{run}:{index}"
     if db.scalar(
         select(SourceEvent.id).where(SourceEvent.source_record_id == record.id, SourceEvent.event_key == key)
@@ -961,12 +1525,14 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
             "assessmentLabel": cand.assessment_label,
             "deliverableLabel": cand.deliverable_label,
             "section": cand.section,
+            "courseLabel": cand.course_label,
             "observedTargeting": cand.observed,
             "timing": cand.timing,
             "provenance": cand.provenance,
             "validation": cand.validation,
             "excerpt": cand.excerpt,
             "links": cand.links,
+            "proposal": proposal(cand, cand.subject_id),
         },
     )
     db.add(event)
@@ -985,6 +1551,11 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
             .where(Task.id == uuid.UUID(cand.match_task_id), Task.user_id == uid)
             .with_for_update()
         )
+        if task and cand.method == "ai" and not same_work(cand, task, ctx):
+            task = None
+    if not task and cand.intent == "submission" and verified_lms_receipt(cand):
+        matches = receipt_tasks(db, uid, cand, ctx)
+        task = matches[0] if matches else None
     if cand.kt_only and ctx["profile"].get("ignoreKtNotices") and not task:
         # The student chose to ignore KT notices. Work already tracked keeps receiving updates.
         return done("ignored_kt")
@@ -996,7 +1567,10 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
         subject_id = choices[0] if len(choices) == 1 else None
     kind = subject_kind(ctx, subject_id)
     outcome, reason, question = targeting.evaluate(
-        cand.observed, ctx["profile"], subject_kind=kind, trusted=cand.trusted or bool(task)
+        cand.observed,
+        ctx["profile"],
+        subject_kind=kind,
+        trusted=cand.trusted or bool(task) or faculty.approved(db, uid, record.sender_email),
     )
     event.data = {**event.data, "targeting": {"outcome": outcome, "reason": reason}}
     if outcome == "mismatch":
@@ -1014,7 +1588,9 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
 
     if cand.intent in ("submission", "unsubmission", "returned_ambiguous"):
         if not task:
-            return done("unmatched_receipt")  # Reconsidered only during explicit reprocessing.
+            return done("unmatched_receipt")  # Re-queued automatically when its exact task is created.
+        if cand.task_type and task.type != cand.task_type:
+            return done("ignored_type_mismatch")
         if outcome != "applicable":
             open_review(
                 db,
@@ -1041,14 +1617,15 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
                 task,
             )
             return done("review")
-        path = "classroom_turned_in" if cand.method == "classroom_submission" else "lms_assignment_receipt"
-        valid = (
-            bool(cand.validation)
-            and all(v for k, v in cand.validation.items() if k not in ("state", "stateTime", "template"))
-            and (
-                cand.method == "classroom_submission"
-                or cand.validation.get("template") == "assignment_receipt"
-            )
+        path = (
+            "classroom_turned_in"
+            if cand.method == "classroom_submission"
+            else "lms_quiz_receipt"
+            if cand.validation and cand.validation.get("template") == "quiz_receipt"
+            else "lms_assignment_receipt"
+        )
+        valid = verified_lms_receipt(cand) or (
+            cand.method == "classroom_submission" and (cand.validation or {}).get("ownSubmission") is True
         )
         if cand.intent == "unsubmission":
             if valid and path in completion_paths():
@@ -1076,10 +1653,18 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
                 "This submission evidence could not be verified. Mark the task completed?",
                 {**context, "validation": cand.validation},
                 task,
+                cand.identity_key,
             )
             return done("review")
         if path in completion_paths():
-            return done(complete_task(db, task, event, path))
+            completed = complete_task(db, task, event, path)
+            if verified_lms_receipt(cand):
+                for sibling in receipt_tasks(db, uid, cand, ctx, task):
+                    if sibling.id != task.id:
+                        link(db, sibling, event, path)
+                        complete_task(db, sibling, event, path)
+                event.task_id = task.id
+            return done(completed)
         if task.completed_at:
             history(db, task, "evidence_added", {"reason": "submission evidence for completed work"}, event)
             return done("evidence_recorded")
@@ -1134,26 +1719,12 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
     if not cand.task_type and not task:
         return done("ignored_unclassified")
     if task:
-        if task.type != (cand.task_type or task.type):
-            open_review(
-                db,
-                uid,
-                record,
-                event,
-                "conflict",
-                "The source describes this work as a different type. Which is right?",
-                context,
-                task,
-            )
-            return done("review")
+        requeue_receipts(db, uid, cand.identity_key)
         explicit = cand.intent == "revision" or task_by_identity(db, uid, cand.identity_key) is not None
         changes, conflicts = update_task(db, task, cand, event, explicit, cand.method)
-        if conflicts:
-            open_review(
-                db, uid, record, event, "conflict", "Two sources give different details for this task. Which should be kept?",
-                {**context, "conflicts": conflicts}, task,
-            )  # fmt: skip
-            return done("review")
+        reconcile_lms_receipts(db, uid, ctx, task)
+        if record.kind == "gmail_message" and outcome == "applicable":
+            faculty.approve(db, uid, record.sender_email)
         if task.completed_at and cand.intent == "due_notice":
             history(db, task, "evidence_added", {"reason": "reminder did not change completion"}, event)
         return done("updated" if changes else "evidence_recorded")
@@ -1195,25 +1766,8 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
             identity=cand.identity_key,
         )
         return done("review")
-    if not subject_id:
-        open_review(
-            db,
-            uid,
-            record,
-            event,
-            "choose_subject",
-            "Which of your subjects is this for?",
-            review_data,
-            identity=cand.identity_key,
-        )
-        return done("review")
-    issue = unresolved(cand)
-    if issue:
-        open_review(
-            db, uid, record, event, "timing_unresolved", issue,
-            {**review_data, "window": cand.window, "alternatives": cand.alternatives}, identity=cand.identity_key,
-        )  # fmt: skip
-        return done("review")
+    # Subjects are linked automatically (see resolve_subjects); work matching none of the student's
+    # subjects is kept without one rather than asking.
     similar = similar_task(db, uid, cand, subject_id)
     if similar:
         open_review(
@@ -1228,20 +1782,7 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
             cand.identity_key,
         )
         return done("review")
-    try:
-        created = create_task(db, uid, ctx, record, event, cand, subject_id, cand.method)
-    except ApiError:
-        open_review(
-            db,
-            uid,
-            record,
-            event,
-            "timing_unresolved",
-            "The source gives inconsistent times. Which are right?",
-            review_data,
-            identity=cand.identity_key,
-        )
-        return done("review")
+    created = create_task(db, uid, ctx, record, event, cand, subject_id, cand.method)
     if fields_extra:
         created.data = {**created.data, **fields_extra}
     return done("created")
@@ -1265,11 +1806,16 @@ def commit(db, uid, record, prepared, ctx, progress, run):
             minimize(db, record, "blocked", "sender_blocked")
             bump("blocked")
             return progress
+    if record.kind == "gmail_message" and mail.academic_exclusion(
+        record.title, record.sender_email, record.data.get("senderName"), record.excerpt
+    ):
+        prepared.ignore, prepared.paused = "non_academic_mail", None
     if prepared.paused:
         record.data = {
             **record.data,
-            "aiPausedUntil": (now() + AI_PAUSE).isoformat(),
+            "aiPausedUntil": (now() + timedelta(seconds=prepared.paused_retry_after)).isoformat(),
             "aiPausedReason": prepared.paused,
+            "aiPausedCode": prepared.paused_code,
         }
         bump("aiPaused")
         return progress
@@ -1282,6 +1828,7 @@ def commit(db, uid, record, prepared, ctx, progress, run):
             minimize(db, record, "ignored", prepared.ignore)
         bump("notAcademic")
         return progress
+    was_approved = faculty.approved(db, uid, record.sender_email)
     outcomes = [apply_candidate(db, uid, ctx, record, i, c, run) for i, c in enumerate(prepared.candidates)]
     for o in outcomes:
         bump(
@@ -1292,7 +1839,9 @@ def commit(db, uid, record, prepared, ctx, progress, run):
                 "completed": "completed",
             }.get(o, "evidence")
         )
-    data = {k: v for k, v in record.data.items() if k not in ("aiPausedUntil", "aiPausedReason")}
+    data = {
+        k: v for k, v in record.data.items() if k not in ("aiPausedUntil", "aiPausedReason", "aiPausedCode")
+    }
     record.data = {
         **data,
         "interpretation": {
@@ -1322,16 +1871,22 @@ def commit(db, uid, record, prepared, ctx, progress, run):
         record.processing_state = "needs_review" if "review" in outcomes else "interpreted"
         excerpt = next((c.excerpt for c in prepared.candidates if c.excerpt), None)
         record.excerpt = excerpt[:500] if excerpt else None
+    if record.kind == "gmail_message" and not was_approved and faculty.approved(db, uid, record.sender_email):
+        from .reconcile import refresh_faculty_reviews
+
+        refresh_faculty_reviews(db, uid)
     return progress
 
 
-def unit(snap, token):
+def unit(snap, token, record_id=None):
     """One interpretation unit for the sync engine; returns apply(db, job, conn) -> done."""
-    record_id = next_record(snap.uid, snap.connection_id)
+    record_id = record_id or next_record(snap.uid, snap.connection_id)
     if record_id is None:
         return None
     prepared, ctx = prepare(snap.uid, record_id, token, snap.account_email)
     run = snap.checkpoint.get("run", 0)
+    if prepared.receipt_retry:
+        run = f"{run}r{prepared.receipt_retry}"
 
     def apply(db, job, conn):
         record = db.scalar(select(SourceRecord).where(SourceRecord.id == record_id).with_for_update())

@@ -16,7 +16,7 @@ def engine():
         pool_size=3,
         max_overflow=2,
         pool_pre_ping=True,
-        connect_args={"prepare_threshold": None},
+        connect_args={"prepare_threshold": None, "connect_timeout": 10},
     )
 
 

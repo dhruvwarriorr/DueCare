@@ -316,7 +316,7 @@ time {
 }
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 0 0 30px;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -2088,4 +2088,17 @@ time {
 .family-list small {
   margin-left: 6px;
   color: var(--secondary);
+}
+
+.faculty-actions {
+  display: grid;
+  gap: 8px;
+  padding: 0 24px 14px;
+}
+.review-card .faculty-actions, .dialog-body .faculty-actions {
+  padding: 8px 0 16px;
+}
+
+@media (max-width: 760px) {
+  .stats .stat:last-child { grid-column: 1 / -1; border-right: 0; }
 }

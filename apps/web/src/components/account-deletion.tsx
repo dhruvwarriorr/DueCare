@@ -1,42 +1,33 @@
 "use client";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+} from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Button } from "./ui/button";
 import { ErrorNotice } from "./ui/field";
 type Result = { status: string; stage: string; errorCode: string | null };
 export function AccountDeletion() {
-  const [job, setJob] = useState<Result | null>(null);
-  const [error, setError] = useState<Error | null>(null);
-  const [busy, setBusy] = useState(false);
-  const running = useRef(false);
-  const resume = useCallback(async () => {
-    if (running.current) return;
-    running.current = true;
-    setBusy(true);
-    setError(null);
-    try {
-      let result = await api<Result>("/privacy/account-deletion");
-      setJob(result);
-      while (
-        result.status !== "completed" &&
-        document.visibilityState === "visible"
-      ) {
-        result = await api<Result>("/privacy/account-deletion", "POST");
-        setJob(result);
-        if (result.status === "waiting_retry") break;
-      }
-    } catch (e) {
-      setError(e as Error);
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
-  }, []);
-  useEffect(() => {
-    const timer = setTimeout(() => void resume(), 0);
-    return () => clearTimeout(timer);
-  }, [resume]);
+  const [client] = useState(() => new QueryClient());
+  return (
+    <QueryClientProvider client={client}>
+      <DeletionProgress />
+    </QueryClientProvider>
+  );
+}
+
+function DeletionProgress() {
+  const query = useQuery({
+    queryKey: ["account-deletion"],
+    queryFn: () => api<Result>("/privacy/account-deletion"),
+    refetchInterval: (q) =>
+      q.state.data?.status === "completed" ? false : 2000,
+    refetchIntervalInBackground: true,
+  });
+  const job = query.data;
   return (
     <main id="main" className="deletion-page">
       <Link href="/sign-in" className="brand">
@@ -50,22 +41,19 @@ export function AccountDeletion() {
       <p>
         {job?.status === "completed"
           ? "Your workspace, source credentials, and DueCare login were removed. Your Google mail and Classroom work remain in Google."
-          : "Your workspace is frozen. Keep this page open to complete deletion. You can return to this page in this browser to resume saved progress."}
+          : "Your workspace is frozen while deletion runs in the background. You can switch tabs, use another app, or close this page. Return here to see progress."}
       </p>
-      <ErrorNotice error={error} />
+      <ErrorNotice error={query.error} retry={() => query.refetch()} />
       {job?.status !== "completed" && (
         <>
           <p role="status">
-            {busy
-              ? "Working on: " + (job?.stage || "saved progress")
-              : job?.errorCode
-                ? "Google could not be reached. Retry to finish revoking access."
-                : "Ready to resume"}
+            {job?.errorCode
+              ? "Google is temporarily unavailable. Deletion will retry automatically."
+              : "Working on: " + (job?.stage || "saved progress")}
           </p>
-          <Button disabled={busy} onClick={() => resume()}>
-            {busy ? "Deleting…" : "Resume deletion"}
+          <Button disabled={query.isFetching} onClick={() => query.refetch()}>
+            {query.isFetching ? "Refreshing…" : "Refresh progress"}
           </Button>
-          <Link href="/?view=settings">Return to account settings</Link>
         </>
       )}
       {job?.status === "completed" && (

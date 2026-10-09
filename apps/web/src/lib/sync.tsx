@@ -8,10 +8,9 @@ import {
   useState,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "./api";
+import { api } from "./api";
 import type { Connection, SyncJob } from "./types";
 
-const ACTIVE = ["queued", "running", "waiting_retry"];
 type Trigger = "open" | "focus" | "manual";
 type SyncState = {
   connections: Connection[];
@@ -24,11 +23,7 @@ type SyncState = {
   reprocess: (id: string) => Promise<void>;
 };
 const Context = createContext<SyncState | null>(null);
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const visible = () => document.visibilityState === "visible";
-
-// The active browser drives bounded sync requests. Work stops being started while the page is
-// hidden or closed; an already running request may finish and the server keeps its checkpoint.
+// The API worker advances saved jobs; the browser only enqueues and observes them.
 export function SyncProvider({
   enabled,
   children,
@@ -41,32 +36,53 @@ export function SyncProvider({
     queryKey: ["connections"],
     queryFn: () => api<{ items: Connection[] }>("/connections"),
     enabled,
+    refetchIntervalInBackground: true,
     refetchInterval: (q) =>
-      q.state.data?.items.some((c) => c.activeJob) ? 10000 : false,
+      q.state.data?.items.some((c) => c.activeJob) ? 5000 : false,
   });
   const running = useRef(new Set<string>());
   const [driving, setDriving] = useState(new Set<string>());
   const [failures, setFailures] = useState<Record<string, Error>>({});
   const refresh = useCallback(async () => {
-    await client.invalidateQueries({ queryKey: ["connections"] });
-    await client.invalidateQueries({ queryKey: ["overview"] });
-    // Discovery can add Classroom courses or change a linked course's availability.
-    await client.invalidateQueries({ queryKey: ["classroom-courses"] });
-    await client.invalidateQueries({ queryKey: ["subjects"] });
-    await client.invalidateQueries({ queryKey: ["activity"] });
-    for (const key of [
-      "review-items",
-      "review-item",
-      "tasks",
-      "task",
-      "history",
-      "evidence",
-    ])
-      await client.invalidateQueries({ queryKey: [key] });
+    await Promise.all(
+      [
+        "connections",
+        "overview",
+        "classroom-courses",
+        "subjects",
+        "activity",
+        "review-items",
+        "review-item",
+        "tasks",
+        "task",
+        "history",
+        "evidence",
+        "approved-faculty",
+        "me",
+      ].map((key) => client.invalidateQueries({ queryKey: [key] })),
+    );
   }, [client]);
+  const hasActiveJob =
+    query.data?.items.some((c) => c.activeJob) || driving.size > 0;
+  useEffect(() => {
+    if (!enabled || !hasActiveJob) return;
+    let refreshing = false;
+    // An advance can be busy downloading/using AI for up to its work budget. Fetch
+    // committed tasks during that request so the dashboard and calendar update live.
+    const timer = setInterval(async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        await refresh();
+      } finally {
+        refreshing = false;
+      }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [enabled, hasActiveJob, refresh]);
   const drive = useCallback(
     async (id: string, trigger: Trigger, existing?: SyncJob) => {
-      if (running.current.has(id) || !visible()) return;
+      if (running.current.has(id)) return;
       running.current.add(id);
       setDriving(new Set(running.current));
       setFailures((f) => {
@@ -75,37 +91,8 @@ export function SyncProvider({
         return rest;
       });
       try {
-        let job =
-          existing ||
-          (
-            await api<{ job: SyncJob | null }>(
-              "/connections/" + id + "/sync",
-              "POST",
-              { trigger },
-            )
-          ).job;
-        while (job && ACTIVE.includes(job.status) && visible()) {
-          if (job.status === "waiting_retry" && job.nextRetryAt) {
-            const wait = new Date(job.nextRetryAt).getTime() - Date.now();
-            if (wait > 0) {
-              await refresh();
-              await sleep(Math.min(wait + 250, 30000));
-              continue;
-            }
-          }
-          try {
-            job = await api<SyncJob>(
-              "/sync-jobs/" + job.id + "/advance",
-              "POST",
-            );
-          } catch (e) {
-            // Another tab holds this connection's lease: watch it rather than duplicating work.
-            if (!(e instanceof ApiError) || e.status !== 409) throw e;
-            await sleep(5000);
-            job = await api<SyncJob>("/sync-jobs/" + job.id);
-          }
-          await refresh(); // Show partial results as each bounded request completes.
-        }
+        if (!existing)
+          await api("/connections/" + id + "/sync", "POST", { trigger });
       } catch (e) {
         setFailures((f) => ({ ...f, [id]: e as Error }));
       } finally {
@@ -127,12 +114,12 @@ export function SyncProvider({
   }, [items, drive]);
   useEffect(() => {
     const onVisible = async () => {
-      if (!visible() || !enabled) return;
+      if (document.visibilityState !== "visible" || !enabled) return;
       const latest = await client.fetchQuery({
         queryKey: ["connections"],
         queryFn: () => api<{ items: Connection[] }>("/connections"),
       });
-      // Resume unfinished work on return; otherwise the server applies the 15-minute rule.
+      // Refresh progress on return; the worker continues while the browser is hidden.
       for (const c of latest.items)
         if (c.status === "active" && !c.privacyJobId)
           void drive(c.id, "focus", c.activeJob || undefined);
@@ -142,27 +129,10 @@ export function SyncProvider({
   }, [client, drive, enabled]);
   const reprocess = useCallback(
     async (id: string) => {
-      // Reprocessing starts after this connection's current sync finishes, rather than failing.
-      for (let i = 0; i < 600; i++) {
-        if (!running.current.has(id)) {
-          const latest = await client.fetchQuery({
-            queryKey: ["connections"],
-            queryFn: () => api<{ items: Connection[] }>("/connections"),
-          });
-          const active = latest.items.find((c) => c.id === id)?.activeJob;
-          if (!active || active.mode === "reprocess") break;
-          await drive(id, "manual", active);
-          if (!running.current.has(id)) continue;
-        }
-        await sleep(500);
-      }
-      const { job } = await api<{ job: SyncJob }>(
-        "/connections/" + id + "/reprocess",
-        "POST",
-      );
-      await drive(id, "manual", job);
+      await api("/connections/" + id + "/reprocess", "POST");
+      await refresh();
     },
-    [client, drive],
+    [refresh],
   );
   return (
     <Context.Provider

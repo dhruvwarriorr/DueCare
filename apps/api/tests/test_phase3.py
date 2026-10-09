@@ -4,14 +4,17 @@ Fixtures are synthetic, redacted messages modelled on the catalogued LMS templat
 notices (specification section 6). The AI provider is faked; no external calls are made.
 """
 
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 from urllib.parse import quote
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
-from duecare import ai, google, interpret, targeting
+from duecare import ai, google, interpret, sync, targeting
 from duecare.config import settings
 from duecare.db import transaction
 from duecare.domain import effective_status
@@ -122,7 +125,11 @@ def overdue(title, course, due, aid):
 def send(fake, gid, sender, subject_body, sent, headers=(), to="student@somaiya.edu"):
     subject, body = subject_body
     fake.add_message(
-        gid, eml(sender, subject, body, f"<{gid}@test>", sent=sent, headers=headers, to=to), ts=sent
+        # Historical template dates remain source evidence; the fixture delivers old
+        # examples within the current Gmail window rather than testing retention here.
+        gid,
+        eml(sender, subject, body, f"<{gid}@test>", sent=sent, headers=headers, to=to),
+        ts=max(sent, now() - timedelta(days=29)),
     )
 
 
@@ -188,36 +195,15 @@ def test_exp6_lms_flow_review_alias_receipts_and_completion_precedence(client, h
     send(fake, "e13", LMS, reminder("EXP6-BST", when, 91022), ist(2026, 9, 21, 0, 1))
     conn = connect(client, headers, fake)
     job = run(client, headers, conn)
-    assert job["status"] == "completed" and job["progress"].get("reviews") == 1, (
-        job["progress"],
-        [
-            (r.processing_state, r.reason, (r.data.get("interpretation") or {}).get("outcomes"))
-            for r in records(student.uid)
-        ],
-    )
-    # "Data Structures" matches both the theory and the lab subject: ask, never guess.
-    (item,) = reviews(client, headers)
-    assert item["issueType"] == "choose_subject" and len(item["subjectChoices"]) == 2
-    assert tasks(student.uid) == []
-    out = resolve(
-        client,
-        headers,
-        item,
-        action="accept",
-        subjectId=subjects["Data Structures Laboratory"]["id"],
-        rememberAlias=True,
-    )
+    assert job["status"] == "completed" and not job["progress"].get("reviews"), job["progress"]
+    # "Data Structures" names both the theory and the lab subject; "EXP6" is lab work, so the lab is
+    # linked automatically without asking.
+    assert reviews(client, headers) == []
     (task,) = tasks(student.uid)
-    assert (
-        task.type == "assignment"
-        and task.due_at == ist(2026, 9, 21, 23, 59)
-        and out["taskId"] == str(task.id)
-    )
+    assert str(task.subject_id) == subjects["Data Structures Laboratory"]["id"]
+    assert task.data["subjectLink"] == {"method": "name"}
+    assert task.type == "assignment" and task.due_at == ist(2026, 9, 21, 23, 59)
     assert effective_status(task, now()) == "overdue"
-    lab = client.get(
-        "/api/v1/subjects/" + subjects["Data Structures Laboratory"]["id"], headers=headers
-    ).json()
-    assert lab["lmsCourseLabels"] == ["Data Structures_B_ODD_26-27"]
 
     # The overdue notice and a later receipt for the same activity link to the same task.
     send(
@@ -268,9 +254,7 @@ def test_exp6_lms_flow_review_alias_receipts_and_completion_precedence(client, h
     assert api_task["status"] == "completed" and api_task["source"] == "gmail"
 
 
-def test_receipt_without_enabled_path_asks_once_and_invalid_receipts_never_complete(
-    client, headers, student, fake
-):
+def test_unverified_receipts_ask_once_and_invalid_receipts_never_complete(client, headers, student, fake):
     subjects = setup_student(client, headers)
     send(
         fake,
@@ -281,20 +265,15 @@ def test_receipt_without_enabled_path_asks_once_and_invalid_receipts_never_compl
     )
     conn = connect(client, headers, fake)
     run(client, headers, conn)
-    resolve(
-        client,
-        headers,
-        reviews(client, headers)[0],
-        action="accept",
-        subjectId=subjects["Data Structures Laboratory"]["id"],
-    )
+    (task,) = tasks(student.uid)  # Linked to the DS lab automatically.
+    assert str(task.subject_id) == subjects["Data Structures Laboratory"]["id"]
     send(
         fake,
         "r1",
         LMS,
         receipt("EXP7-Graph", "DS_B_ODD_26-27", 92000, "a.docx"),
         now() - timedelta(days=1),
-        [AUTH],
+        [],
     )
     send(
         fake,
@@ -302,7 +281,7 @@ def test_receipt_without_enabled_path_asks_once_and_invalid_receipts_never_compl
         LMS,
         receipt("EXP7-Graph", "DS_B_ODD_26-27", 92000, "b.docx"),
         now() - timedelta(hours=5),
-        [AUTH],
+        [],
     )
     # Forwarded copy and a spoofed sender: never automatic completion.
     send(
@@ -327,7 +306,7 @@ def test_receipt_without_enabled_path_asks_once_and_invalid_receipts_never_compl
     (task,) = tasks(student.uid)
     assert task.completed_at is None
     open_items = reviews(client, headers)
-    confirm = [r for r in open_items if r["issueType"] == "confirm_completion"]
+    confirm = [r for r in open_items if r["issueType"] == "receipt_unverified"]
     assert len(confirm) == 1 and confirm[0]["evidenceCount"] == 2
     assert "gmail_raw:spoof" not in google.provider.calls  # Not an academic sender: body never fetched.
     resolve(client, headers, confirm[0], action="complete")
@@ -354,19 +333,9 @@ def test_reopen_survives_replay_of_older_receipt(client, headers, student, fake,
     )
     conn = connect(client, headers, fake)
     run(client, headers, conn)
-    resolve(
-        client,
-        headers,
-        reviews(client, headers)[0],
-        action="accept",
-        subjectId=subjects["Data Structures Laboratory"]["id"],
-    )
-    r = client.post(f"/api/v1/connections/{conn}/reprocess", headers=fresh(headers))
-    job = r.json()["job"]
-    while job["status"] not in ("completed", "failed"):
-        job = client.post(f"/api/v1/sync-jobs/{job['id']}/advance", headers=headers).json()
     (task,) = tasks(student.uid)
-    assert task.completed_at  # Reprocessing matched the receipt that was unmatched before the task existed.
+    assert str(task.subject_id) == subjects["Data Structures Laboratory"]["id"]
+    assert task.completed_at  # The reminder's task, linked automatically, is completed by the receipt.
     t = client.get(f"/api/v1/tasks/{task.id}", headers=headers).json()
     t = client.patch(
         f"/api/v1/tasks/{task.id}", headers=fresh(headers), json={"revision": t["revision"], "status": "due"}
@@ -497,7 +466,11 @@ def test_ai_notices_targeting_windows_rules_and_similarity(client, headers, stud
     assert run(client, headers, conn)["status"] == "completed"
     assert "Garba night" not in model.calls  # No academic signal: never sent to AI.
     titles = {t.title: t for t in tasks(student.uid)}
-    assert set(titles) == {"DS Lab OST", "COA IA1 quiz"}
+    assert set(titles) == {"DS Lab OST", "COA IA1 quiz", "Spoofed ids"}
+    # Invented subject and task IDs are never used; work no subject fits is kept without one.
+    assert titles["Spoofed ids"].subject_id is None and titles["Spoofed ids"].data["subjectLink"] == {
+        "method": "none"
+    }
     ost = titles["DS Lab OST"]
     assert ost.data["startsAt"] == "2026-10-13T03:30:00+00:00" and ost.due_at == ist(
         2026, 10, 13, 9, 0
@@ -507,7 +480,7 @@ def test_ai_notices_targeting_windows_rules_and_similarity(client, headers, stud
     assert coa_task.data["rulePriority"]["value"] == "high"
     assert client.get(f"/api/v1/tasks/{coa_task.id}", headers=headers).json()["priority"] == "high"
     open_items = {r["issueType"]: r for r in reviews(client, headers)}
-    assert set(open_items) == {"timing_unresolved", "choose_subject"}  # ESE window; invalid AI subject id.
+    assert set(open_items) == {"timing_unresolved"}  # ESE window; subjects are never asked.
     ese = open_items["timing_unresolved"]
     assert ese["proposal"]["dateWindowStart"] == "2026-11-30" and "dueAt" not in ese["proposal"]
     resolve(client, headers, ese, action="accept")
@@ -561,9 +534,13 @@ def test_blocked_queued_mail_and_ai_outage_pause_then_resume(client, headers, st
     model.down = True
     conn = connect(client, headers, fake)
     job = run(client, headers, conn)
-    assert job["status"] == "completed" and job["progress"]["aiPaused"] == 2
-    # Template work continued without AI; AI items paused without losing successful results.
-    assert [r["issueType"] for r in reviews(client, headers)] == ["choose_subject"]
+    assert job["status"] == "waiting_retry" and job["progress"]["aiPaused"] == 2
+    assert job["error"]["code"] == "AI_UNAVAILABLE" and job["nextRetryAt"]
+    # Template work continued without AI and linked its subject by name; AI items paused.
+    assert reviews(client, headers) == []
+    assert [(t.title, str(t.subject_id)) for t in tasks(student.uid)] == [
+        ("EXP9", subjects["Data Structures Laboratory"]["id"])
+    ]
     # Block one paused sender: its content is never sent to AI or applied.
     client.put(
         "/api/v1/sender-preferences/" + quote("noisy.faculty@somaiya.edu"),
@@ -574,10 +551,13 @@ def test_blocked_queued_mail_and_ai_outage_pause_then_resume(client, headers, st
     with transaction(student.uid) as db:
         for r in db.scalars(select(interpret.SourceRecord)):
             r.data = {k: v for k, v in r.data.items() if k != "aiPausedUntil"}
+        pending_job = db.scalar(select(sync.SyncJob).where(sync.SyncJob.id == job["id"]))
+        pending_job.next_retry_at = now() - timedelta(seconds=1)
         db.commit()
-    run(client, headers, conn)
+    resumed = client.post(f"/api/v1/sync-jobs/{job['id']}/advance", headers=headers)
+    assert resumed.status_code == 200 and resumed.json()["status"] == "completed"
     assert "Quiz announcement" not in model.calls and "COA assignment 2" in model.calls
-    assert [t.title for t in tasks(student.uid)] == ["COA assignment 2"]
+    assert sorted(t.title for t in tasks(student.uid)) == ["COA assignment 2", "EXP9"]
 
 
 def test_classroom_turned_in_reclaimed_returned_and_materials(client, headers, student, fake, model, auto):
@@ -638,19 +618,8 @@ def test_merge_undo_kind_guard_and_evidence_reassignment(client, headers, studen
     send(fake, "r", LMS, receipt("EXP10", "DS_B_ODD_26-27", 95000, "x"), now() - timedelta(days=1), [AUTH])
     conn = connect(client, headers, fake)
     run(client, headers, conn)
-    resolve(
-        client,
-        headers,
-        reviews(client, headers)[0],
-        action="accept",
-        subjectId=subjects["Data Structures Laboratory"]["id"],
-    )
-    r = client.post(f"/api/v1/connections/{conn}/reprocess", headers=fresh(headers))
-    job = r.json()["job"]
-    while job["status"] not in ("completed", "failed"):
-        job = client.post(f"/api/v1/sync-jobs/{job['id']}/advance", headers=headers).json()
     (imported,) = tasks(student.uid)
-    assert imported.completed_at
+    assert imported.completed_at and str(imported.subject_id) == subjects["Data Structures Laboratory"]["id"]
     manual = client.post(
         "/api/v1/tasks",
         headers=headers,
@@ -770,12 +739,16 @@ def test_rules_validation_order_and_natural_language_preview(client, headers, mo
 def test_review_cross_user_isolation_and_suppression(client, headers, student, fake, model):
     from tests.conftest import account
 
-    setup_student(client, headers)
+    subjects = setup_student(client, headers)
+    model.items = {"WDL practical ESE window": [{
+        "intent": "new_work", "taskType": "test", "title": "WDL practical ESE",
+        "subjectId": subjects["Web Development Laboratory"]["id"], "targeting": {"classYears": ["SY"], "allBatches": True},
+        "timing": {"dateWindowStart": "2026-11-30", "dateWindowEnd": "2026-12-04"}}]}  # fmt: skip
     send(
         fake,
         "d",
         LMS,
-        reminder("EXP11", "Monday, 26 October 2026 11:59 PM IST", 96000),
+        ("WDL practical ESE window", "Practical exam between 30 Nov and 4 Dec"),
         now() - timedelta(days=1),
     )
     conn = connect(client, headers, fake)
@@ -932,3 +905,451 @@ def test_kt_notices_follow_the_student_setting(client, headers, student, fake, m
         "KT exam DS",
         "Submit exam form",
     ]
+
+
+def test_subjects_are_linked_automatically_without_asking(client, headers, student, fake, model, monkeypatch):
+    from duecare import subject_link
+
+    subjects = setup_student(client, headers)
+    ds, dsl = subjects["Data Structures"]["id"], subjects["Data Structures Laboratory"]["id"]
+    itvc = subjects["Integral Transforms and Vector Calculus"]["id"]
+    seen = []
+
+    def linker(system, user, schema, deadline=None):
+        import json as _json
+
+        payload = _json.loads(user)
+        seen.append(payload)
+        if system == subject_link.COURSE_SYSTEM:
+            return schema.model_validate(
+                {
+                    "links": [
+                        {"key": c["key"], "subjectIds": [itvc] if "Maths" in c["name"] else []}
+                        for c in payload["courses"]
+                    ]
+                }  # fmt: skip
+            ), {"provider": "fake", "model": "link-1"}
+        picks = {"Laplace worksheet": itvc, "Club quiz": "not-a-subject"}
+        return schema.model_validate(
+            {"links": [{"key": i["key"], "subjectId": picks.get(i["title"])} for i in payload["items"]]}
+        ), {"provider": "fake", "model": "link-1"}
+
+    monkeypatch.setattr(ai, "providers", lambda: [("fake", "link-1", None)])
+    monkeypatch.setattr(ai, "structured", linker)
+    item = {"intent": "new_work", "taskType": "assignment", "targeting": {"divisions": ["B"]},
+            "timing": {"dueAt": "2026-11-02T23:59:00+05:30"}}  # fmt: skip
+    model.items = {
+        "DS assignment 3": [{**item, "title": "DS assignment 3"}],  # Short form settles it: theory.
+        "DS journal": [
+            {**item, "title": "DS journal write-up", "targeting": {"batches": ["B2"]}}
+        ],  # The DS lab.
+        "Laplace worksheet": [{**item, "title": "Laplace worksheet"}],  # Only AI can tell.
+        "Club quiz": [{**item, "title": "Club quiz"}],  # Invented ID: kept without a subject.
+    }
+    t0 = now() - timedelta(days=1)
+    for gid, subject in [("s1", "DS assignment 3"), ("s2", "DS journal"), ("s3", "Laplace worksheet"),
+                         ("s4", "Club quiz")]:  # fmt: skip
+        send(fake, gid, "faculty.x@somaiya.edu", (subject, subject + " assignment due 2 Nov"), t0)
+    conn = connect(client, headers, fake)
+    run(client, headers, conn)
+    assert reviews(client, headers) == []  # Never "Which of your subjects is this for?".
+    linked = {t.title: (str(t.subject_id) if t.subject_id else None, t.data["subjectLink"]["method"])
+              for t in tasks(student.uid)}  # fmt: skip
+    assert linked == {
+        "DS assignment 3": (ds, "name"),
+        "DS journal write-up": (dsl, "name"),
+        "Laplace worksheet": (itvc, "ai"),
+        "Club quiz": (None, "none"),
+    }
+    # The AI only ever sees work the names could not settle.
+    assert {i["title"] for p in seen if "items" in p for i in p["items"]} == {
+        "Laplace worksheet",
+        "Club quiz",
+    }
+
+    # When only linking needs the AI and it is unavailable, the work is kept without a subject.
+    def down(*args, **kwargs):
+        raise ai.AIUnavailable("AI providers are temporarily unavailable")
+
+    monkeypatch.setattr(ai, "structured", down)
+    model.items["Fourier worksheet"] = [{**item, "title": "Fourier worksheet"}]
+    send(fake, "s5", "faculty.x@somaiya.edu", ("Fourier worksheet", "Worksheet assignment due 2 Nov"), now())
+    job = run(client, headers, conn)
+    assert not job["progress"].get("aiPaused") and reviews(client, headers) == []
+    fourier = next(t for t in tasks(student.uid) if t.title == "Fourier worksheet")
+    assert fourier.subject_id is None and fourier.data["subjectLink"]["reason"] == "ai_unavailable"
+
+    # Classroom courses link themselves by name or, failing that, by AI.
+    monkeypatch.setattr(ai, "structured", linker)
+    fake.courses = [
+        {"id": "k1", "name": "DS Div B 2026", "courseState": "ACTIVE"},
+        {"id": "k2", "name": "Maths III (Prof. R)", "courseState": "ACTIVE"},
+        {"id": "k3", "name": "Coding club", "courseState": "ACTIVE"},
+    ]
+    room = connect(client, headers, fake, "classroom", code="c2")
+    run(client, headers, room)
+    courses = client.get(f"/api/v1/connections/{room}/classroom-courses", headers=headers).json()["items"]
+    links = {c["externalCourseId"]: sorted(m["subjectId"] for m in c["mappings"]) for c in courses}
+    assert links == {"k1": sorted([ds, dsl]), "k2": [itvc], "k3": []}
+
+
+def test_earlier_subject_questions_are_settled_on_the_next_sync(client, headers, student, fake):
+    from duecare.models import TaskEvidence
+
+    subjects = setup_student(client, headers)
+    send(
+        fake,
+        "q1",
+        LMS,
+        reminder("EXP12", "Monday, 26 October 2026 11:59 PM IST", 97000),
+        now() - timedelta(days=1),
+    )
+    conn = connect(client, headers, fake)
+    run(client, headers, conn)
+    # Recreate the state left by the old flow: no task, an open "Which subject?" question.
+    with transaction(student.uid) as db:
+        (event,) = db.scalars(select(SourceEvent).where(SourceEvent.user_id == student.uid))
+        identity, record_id = event.identity_key, event.source_record_id
+        db.execute(delete(TaskEvidence).where(TaskEvidence.user_id == student.uid))
+        db.execute(delete(SourceEvent).where(SourceEvent.user_id == student.uid))
+        db.execute(delete(Task).where(Task.user_id == student.uid))
+        db.get(interpret.SourceRecord, record_id).processing_state = "needs_review"
+        db.add(ReviewItem(user_id=student.uid, issue_type="choose_subject", status="open", source_record_id=record_id,
+                          question="Which of your subjects is this for?", data={"identityKey": identity}))  # fmt: skip
+        db.commit()
+    assert [r["issueType"] for r in reviews(client, headers)] == ["choose_subject"]
+    run(client, headers, conn)
+    (task,) = tasks(student.uid)
+    assert str(task.subject_id) == subjects["Data Structures Laboratory"]["id"]
+    assert reviews(client, headers) == []
+
+
+def test_full_course_names_link_to_subjects_named_by_short_forms():
+    from duecare import subject_link
+
+    subjects = [{"id": f"{n}|{k}", "name": n, "kind": k} for n, k in [
+        ("DS", "theory"), ("DS", "lab"), ("ITVC", "theory"), ("ITVC", "tutorial"), ("COA", "theory"),
+        ("DBMS", "theory"), ("DBMS", "lab"), ("DSM", "theory"), ("WDL", "lab")]]  # fmt: skip
+    cases = {
+        ("Data Structures_B_ODD_26-27", "EXP6-BST"): "DS|lab",
+        ("Data Structures_B_ODD_26-27", "DS IA1 (MCQ Quiz)"): "DS|theory",
+        ("Integral Transforms and Vector Calculus_A-B-C-D_SY_ODD_26-27", "Tutorial 3:Laplace transform(QUIZ)"): "ITVC|tutorial",
+        ("Integral Transforms and Vector Calculus_A-B-C-D_SY_ODD_26-27", "IA -1_5th September 2026 8 pm"): "ITVC|theory",
+        ("Computer Organization & Architecture_B_ODD_26-27", "COA Quiz - IA-1 ODD 2026-27"): "COA|theory",
+        ("Relational Database Management Systems_B_ODD_26-27", "DBMS_IA1_Quiz"): "DBMS|theory",
+        ("Applied Mathematics – II_2025-26", "IA (module 1,2,3) for KT"): None,
+    }  # fmt: skip
+    for texts, expected in cases.items():
+        component = subject_link.component_of(" ".join(texts))
+        assert subject_link.deterministic(list(texts), subjects, component) == expected, texts
+
+
+def test_streaming_ai_creates_task_before_gmail_import_finishes(
+    client, headers, student, fake, model, monkeypatch
+):
+    subjects = setup_student(client, headers)
+    title = "COA streaming assignment"
+    model.items[title] = [
+        {
+            "intent": "new_work",
+            "taskType": "assignment",
+            "title": title,
+            "subjectId": subjects["Computer Organization & Architecture"]["id"],
+            "targeting": {"divisions": ["B"]},
+            "timing": {"dueAt": "2026-11-02T23:59:00+05:30"},
+        }
+    ]
+    send(fake, "first", "faculty@somaiya.edu", (title, "Assignment due 2 Nov"), now())
+    send(
+        fake, "second", "faculty@somaiya.edu", ("Other notice", "Announcement"), now() - timedelta(minutes=1)
+    )
+    conn = connect(client, headers, fake)
+    blocked, release = Event(), Event()
+    metadata = fake.gmail_metadata
+
+    def hold_second(token, gid):
+        if gid == "second":
+            blocked.set()
+            assert release.wait(15), "test did not release importer"
+        return metadata(token, gid)
+
+    monkeypatch.setattr(fake, "gmail_metadata", hold_second)
+    monkeypatch.setattr(settings(), "sync_work_budget_seconds", 30)
+    job = client.post(f"/api/v1/connections/{conn}/sync", headers=fresh(headers), json={}).json()["job"]
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(client.post, f"/api/v1/sync-jobs/{job['id']}/advance", headers=headers)
+        try:
+            assert blocked.wait(10)
+            timeout = time.monotonic() + 10
+            found = []
+            while time.monotonic() < timeout:
+                found = tasks(student.uid)
+                if found:
+                    break
+                time.sleep(0.05)
+            assert [t.title for t in found] == [title]
+            assert found[0].due_at == ist(2026, 11, 2, 23, 59)
+            assert title in model.calls and not future.done()
+            partial = client.get(f"/api/v1/sync-jobs/{job['id']}", headers=headers).json()
+            assert partial["status"] == "running" and partial["progress"]["tasksCreated"] == 1
+        finally:
+            release.set()
+        response = future.result(timeout=15)
+    assert response.status_code == 200 and response.json()["status"] == "completed"
+    assert len(tasks(student.uid)) == 1
+
+
+def test_streaming_cancellation_discards_in_flight_interpretation(
+    client, headers, student, fake, model, monkeypatch
+):
+    setup_student(client, headers)
+    send(fake, "one", "faculty@somaiya.edu", ("COA assignment", "Assignment due tomorrow"), now())
+    conn = connect(client, headers, fake)
+    started, release = Event(), Event()
+    original = interpret.prepare
+
+    def held(*args, **kwargs):
+        result = original(*args, **kwargs)
+        started.set()
+        assert release.wait(15)
+        return result
+
+    monkeypatch.setattr(interpret, "prepare", held)
+    monkeypatch.setattr(settings(), "sync_work_budget_seconds", 30)
+    job = client.post(f"/api/v1/connections/{conn}/sync", headers=fresh(headers), json={}).json()["job"]
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(client.post, f"/api/v1/sync-jobs/{job['id']}/advance", headers=headers)
+        try:
+            assert started.wait(10)
+            with transaction(student.uid) as db:
+                sync.cancel_jobs(db, conn, "test_cancel")
+                assert "messageFingerprints" not in db.get(sync.SyncJob, job["id"]).checkpoint
+                db.commit()
+        finally:
+            release.set()
+        response = future.result(timeout=15)
+    assert response.json()["status"] == "cancelled"
+    assert records(student.uid)[0].processing_state == "awaiting_interpretation"
+    assert tasks(student.uid) == []
+
+
+def test_ai_rate_limit_cools_down_without_repeated_provider_calls(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(settings(), "groq_api_key", "test-only")
+    monkeypatch.setattr(settings(), "groq_model", "rate-limit-fixture")
+    monkeypatch.setattr(settings(), "groq_fallback_model", "")
+    calls = []
+
+    def limited(url, **kwargs):
+        calls.append(url)
+        return httpx.Response(429, headers={"retry-after": "120"})
+
+    monkeypatch.setattr(ai.httpx, "post", limited)
+    with pytest.raises(ai.AIUnavailable):
+        ai.structured("synthetic", "synthetic", ai.Extraction)
+    with pytest.raises(ai.AIUnavailable):
+        ai.structured("synthetic", "synthetic", ai.Extraction)
+    assert len(calls) == 1
+    monkeypatch.setitem(ai._cooldowns, ("groq", "rate-limit-fixture"), time.monotonic() - 1)
+    with pytest.raises(ai.AIUnavailable):
+        ai.structured("synthetic", "synthetic", ai.Extraction)
+    assert len(calls) == 2
+
+
+def test_streaming_receipt_waits_for_older_assignment(client, headers, student, fake, auto):
+    setup_student(client, headers)
+    send(
+        fake,
+        "receipt-first",
+        LMS,
+        receipt("EXP6-BST", "DS_B_ODD_26-27", 91919, "exp6.docx"),
+        now() - timedelta(hours=1),
+        [AUTH],
+    )
+    send(
+        fake,
+        "notice-later",
+        LMS,
+        reminder("EXP6-BST", "Monday, 21 September 2026 11:59 PM IST", 91919),
+        now() - timedelta(hours=2),
+    )
+    conn = connect(client, headers, fake)
+    job = run(client, headers, conn)
+    assert job["status"] == "completed"
+    (task,) = tasks(student.uid)
+    assert task.title == "EXP6-BST" and task.completed_at
+    assert task.due_at == ist(2026, 9, 21, 23, 59)
+
+
+def test_streaming_budget_expiry_stays_queued_without_ai_pause(
+    client, headers, student, fake, model, monkeypatch
+):
+    setup_student(client, headers)
+    send(fake, "one", "faculty@somaiya.edu", ("COA assignment", "Assignment due tomorrow"), now())
+    conn = connect(client, headers, fake)
+
+    def exhausted(payload):
+        raise ai.BudgetExpired("AI interpretation ran out of time")
+
+    monkeypatch.setattr(ai, "extract", exhausted)
+    job = client.post(f"/api/v1/connections/{conn}/sync", headers=fresh(headers), json={}).json()["job"]
+    result = client.post(f"/api/v1/sync-jobs/{job['id']}/advance", headers=headers).json()
+    assert result["status"] == "queued"
+    (record,) = records(student.uid)
+    assert record.processing_state == "awaiting_interpretation" and "aiPausedUntil" not in record.data
+    monkeypatch.setattr(ai, "extract", model)
+    assert run(client, headers, conn)["status"] == "completed"
+
+
+def test_assignment_receipt_completes_by_default_and_reminders_cannot_reopen(client, headers, student, fake):
+    setup_student(client, headers)
+    title = "EXP5 Queue exercise"
+    send(
+        fake,
+        "notice",
+        LMS,
+        reminder(title, "Monday, 28 September 2026 11:59 PM IST", 90242),
+        now() - timedelta(days=3),
+    )
+    conn = connect(client, headers, fake)
+    run(client, headers, conn)
+    body = (
+        f"DS_B_ODD_26-27 -> Assignment -> {title}\n"
+        f"Your assignment submission for '{title}' has been submitted.\n"
+        f"You can view your submission and check its status on the assignment page.\n"
+        f"{HOST}/mod/assign/view.php?id=90242\n"
+    )
+    send(
+        fake,
+        "receipt",
+        LMS,
+        (f"Assignment submission confirmation - {title}", body),
+        now() - timedelta(days=2),
+        [AUTH],
+    )
+    run(client, headers, conn)
+    (task,) = tasks(student.uid)
+    assert task.completed_at and task.data["completion"]["origin"] == "lms_assignment_receipt"
+    send(
+        fake,
+        "overdue",
+        LMS,
+        overdue(title, "DS_B_ODD_26-27", "MONDAY, 28 SEPTEMBER 2026, 11:59 PM", 90242),
+        now(),
+    )
+    run(client, headers, conn)
+    assert tasks(student.uid)[0].completed_at
+    assert client.get(f"/api/v1/tasks/{task.id}", headers=headers).json()["status"] == "completed"
+    assert reviews(client, headers) == []
+
+
+@pytest.mark.parametrize("automatic", [False, True])
+def test_quiz_submission_receipt_completes_test_and_stays_completed(
+    client, headers, student, fake, automatic
+):
+    setup_student(client, headers)
+    title = "DS IA1 quiz"
+    notice = (
+        f"Opens on Thursday, 1 October 2026, 8:00 PM: {title}",
+        f"The quiz {title} in course DataStructures_B_SY_ODD_26-27 is opening soon. "
+        f"OPENS: THURSDAY, 1 OCTOBER 2026, 8:00 PM\n"
+        f"CLOSES: THURSDAY, 1 OCTOBER 2026, 9:00 PM\nGo to quiz {HOST}/mod/quiz/view.php?id=99123",
+    )
+    send(fake, "quiz", LMS, notice, now() - timedelta(days=3))
+    conn = connect(client, headers, fake)
+    run(client, headers, conn)
+    (task,) = tasks(student.uid)
+    assert task.type == "test" and effective_status(task, now()) == "missed"
+    statement = (
+        f"The time for the quiz '{title}' in the course 'DataStructures_B_SY_ODD_26-27' expired. "
+        "Your answers were submitted automatically at 9 PM."
+        if automatic
+        else f"Thank you for submitting your answers to '{title}' in course 'DataStructures_B_SY_ODD_26-27' at 8:45 PM."
+    )
+    confirmation = (
+        f"Hi STUDENT,\n{statement}\nThis message confirms that your answers have been saved.\n"
+        f"You can access this quiz at {HOST}/mod/quiz/view.php?id=99123."
+    )
+    send(
+        fake,
+        "quiz-receipt",
+        LMS,
+        (f"Submission confirmation: {title}", confirmation),
+        now() - timedelta(days=1),
+        [AUTH],
+    )
+    run(client, headers, conn)
+    (task,) = tasks(student.uid)
+    assert task.completed_at and task.data["completion"]["origin"] == "lms_quiz_receipt"
+    send(
+        fake,
+        "quiz-closing",
+        LMS,
+        reminder(
+            title,
+            "Thursday, 1 October 2026 9:00 PM IST",
+            99123,
+            kind="Quiz",
+            course="DataStructures_B_SY_ODD_26-27",
+        ),
+        now(),
+    )
+    run(client, headers, conn)
+    assert client.get(f"/api/v1/tasks/{task.id}", headers=headers).json()["status"] == "completed"
+
+
+def test_receipt_is_retried_when_its_task_arrives_on_a_later_sync(client, headers, student, fake):
+    setup_student(client, headers)
+    send(
+        fake,
+        "early-receipt",
+        LMS,
+        receipt("EXP5 Queue", "DS_B_ODD_26-27", 90242, "report.docx"),
+        now() - timedelta(days=1),
+        [AUTH],
+    )
+    conn = connect(client, headers, fake)
+    run(client, headers, conn)
+    assert tasks(student.uid) == []
+    assert records(student.uid)[0].reason == "unmatched_receipt"
+    send(
+        fake,
+        "late-notice",
+        LMS,
+        reminder("EXP5 Queue", "Monday, 28 September 2026 11:59 PM IST", 90242),
+        now() - timedelta(days=2),
+    )
+    job = run(client, headers, conn)
+    assert job["status"] == "completed"
+    (task,) = tasks(student.uid)
+    assert task.completed_at
+    assert reviews(client, headers) == []
+    source = next(r for r in records(student.uid) if r.provider_id.endswith(":early-receipt"))
+    assert source.processing_state == "interpreted" and source.data["receiptRetry"] == 1
+
+
+def test_gmail_queue_is_newest_first_and_excludes_mail_older_than_30_days(client, headers, student, fake):
+    from duecare.models import SourceRecord
+
+    conn = connect(client, headers, fake)
+    ids = {}
+    with transaction(student.uid) as db:
+        for name, age in [("old", 31), ("recent", 5), ("newest", 1)]:
+            r = SourceRecord(
+                user_id=student.uid,
+                connection_id=conn,
+                provider_id=f"gmail:fixture:{name}",
+                kind="gmail_message",
+                processing_state="awaiting_interpretation",
+                processing_version="fixture",
+                received_at=now() - timedelta(days=age),
+                data={"aiPausedReason": "fixture"} if age == 31 else {},
+            )
+            db.add(r)
+            db.flush()
+            ids[name] = r.id
+        db.commit()
+    assert interpret.next_record(student.uid, conn) == ids["newest"]
+    counts = client.get("/api/v1/connections", headers=headers).json()["items"][0]["records"]
+    assert counts["awaitingInterpretation"] == 2 and counts["aiPaused"] == 0

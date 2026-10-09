@@ -17,6 +17,7 @@ const routes = [
   "connections",
   "sync-jobs",
   "sender-preferences",
+  "approved-faculty",
   "review-items",
   "rules",
   "task-merges",
@@ -58,9 +59,7 @@ async function proxy(
         },
         { status: 413 },
       );
-    if (
-      !request.headers.get("content-type")?.startsWith("multipart/form-data")
-    )
+    if (!request.headers.get("content-type")?.startsWith("multipart/form-data"))
       return NextResponse.json(
         { code: "UNSUPPORTED_FILE", message: "Upload the timetable as a file" },
         { status: 415 },

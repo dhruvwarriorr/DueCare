@@ -35,6 +35,7 @@ import { ProfileForm } from "./profile-form";
 import { KtPreference } from "./kt-preference";
 import { TaskEditor } from "./task-editor";
 import { TaskDetail } from "./task-detail";
+import { FacultyApproval } from "./faculty-approval";
 import { Subjects } from "./subjects";
 import { Calendar } from "./calendar";
 import { Connections, SyncOverview } from "./connections";
@@ -78,27 +79,34 @@ function TaskRows({
   return (
     <div className="task-list">
       {items.map((t) => (
-        <button className="task-row" key={t.id} onClick={() => onOpen(t.id)}>
-          <span className={"task-icon " + t.type}>
-            {t.type === "test" ? <Clock3 size={17} /> : <ListTodo size={17} />}
-          </span>
-          <span className="task-main">
-            <strong>{t.title}</strong>
-            <span>
-              {t.subjectName || "No subject"}
-              {t.subjectKind ? " · " + t.subjectKind : ""}
+        <div key={t.id}>
+          <button className="task-row" onClick={() => onOpen(t.id)}>
+            <span className={"task-icon " + t.type}>
+              {t.type === "test" ? (
+                <Clock3 size={17} />
+              ) : (
+                <ListTodo size={17} />
+              )}
             </span>
-          </span>
-          <span className="task-deadline">
-            {formatTime(t.dueAt)}
-            {t.dueDate && t.type === "assignment" && (
-              <small>Date only · 23:59 IST</small>
-            )}
-          </span>
-          <span className={"priority " + t.priority}>{t.priority}</span>
-          <span className={"status " + t.status}>{t.status}</span>
-          <ArrowUpRight size={16} className="text-secondary" />
-        </button>
+            <span className="task-main">
+              <strong>{t.title}</strong>
+              <span>
+                {t.subjectName || "No subject"}
+                {t.subjectKind ? " · " + t.subjectKind : ""}
+              </span>
+            </span>
+            <span className="task-deadline">
+              {formatTime(t.dueAt)}
+              {t.dueDate && t.type === "assignment" && (
+                <small>Date only · 23:59 IST</small>
+              )}
+            </span>
+            <span className={"priority " + t.priority}>{t.priority}</span>
+            <span className={"status " + t.status}>{t.status}</span>
+            <ArrowUpRight size={16} className="text-secondary" />
+          </button>
+          <FacultyApproval emails={t.senderEmails} />
+        </div>
       ))}
     </div>
   );
@@ -154,11 +162,9 @@ function Dashboard({
       </div>
       <ErrorNotice error={query.error} retry={() => query.refetch()} />
       <div className="stats">
-        {(["due", "overdue", "missed", "completed"] as const).map((s, i) => (
+        {(["due", "overdue", "missed"] as const).map((s, i) => (
           <button key={s} onClick={() => onTasks(s)} className="stat">
-            <span>
-              {["Due", "Overdue assignments", "Missed tests", "Completed"][i]}
-            </span>
+            <span>{["Due", "Overdue assignments", "Missed tests"][i]}</span>
             <strong>
               {query.isPending ? "—" : query.data?.counts[s] || 0}
             </strong>
