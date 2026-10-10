@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 from urllib.parse import quote
 
 import pytest
@@ -32,6 +33,7 @@ AUTH = (
     "dmarc=pass (p=NONE) header.from=somaiya.edu",
 )
 REFERENCE = Path(__file__).resolve().parents[3] / "docs/reference-files/emails"
+REAL_EXTRACT = ai.extract  # The autouse fake replaces ai.extract; some tests exercise the real one.
 
 
 class FakeAI:
@@ -61,6 +63,14 @@ class FakeAI:
             raise ai.AIUnavailable("AI providers are temporarily unavailable")
         items = self.items.get(key, [])
         items = items(payload) if callable(items) else items
+        # Fixtures written before extraction had to quote its source: an authored item without
+        # evidence quotes the subject line, as a model would.
+        items = [
+            {**i, "evidence": key}
+            if not i.get("evidence") and i.get("section", "authored") == "authored"
+            else i
+            for i in items
+        ]
         return ai.Extraction.model_validate({"items": items}), {"provider": "fake", "model": "fake-1"}
 
 
@@ -411,7 +421,7 @@ def test_ai_notices_targeting_windows_rules_and_similarity(client, headers, stud
             "intent": "new_work", "taskType": "test", "title": "DS Lab OST", "assessmentLabel": "OST", "subjectId": lab,
             "targeting": {"batches": ["B2"], "evidence": "B2 Batch"},
             "timing": {"mode": "fixed_session", "startsAt": "2026-10-13T09:00:00+05:30", "endsAt": "2026-10-13T11:00:00+05:30"},
-            "evidence": "B2 Batch DS Lab OST is scheduled on 13th Oct 2026 ... 9-11am"}],
+            "evidence": "B2 Batch DS Lab OST is on 13th Oct 2026"}],
         "DS OST for B1": [{
             "intent": "new_work", "taskType": "test", "title": "DS Lab OST B1", "subjectId": lab,
             "targeting": {"batches": ["B1"]}, "timing": {"startsAt": "2026-10-14T09:00:00+05:30"}}],
@@ -484,7 +494,7 @@ def test_ai_notices_targeting_windows_rules_and_similarity(client, headers, stud
     assert run(client, headers, conn)["status"] == "completed"
     assert "Garba night" not in model.calls  # No academic signal: never sent to AI.
     titles = {t.title: t for t in tasks(student.uid)}
-    assert set(titles) == {"DS Lab OST", "COA IA1 quiz", "Spoofed ids"}
+    assert set(titles) == {"DS Lab OST", "COA IA1 quiz", "Spoofed ids", "WDL practical ESE"}
     # Invented subject and task IDs are never used; work no subject fits is kept without one.
     assert titles["Spoofed ids"].subject_id is None and titles["Spoofed ids"].data["subjectLink"] == {
         "method": "none"
@@ -497,17 +507,10 @@ def test_ai_notices_targeting_windows_rules_and_similarity(client, headers, stud
     assert coa_task.data["loginByAt"] != coa_task.data["startsAt"] and coa_task.data["location"] == "B115A"
     assert coa_task.data["rulePriority"]["value"] == "high"
     assert client.get(f"/api/v1/tasks/{coa_task.id}", headers=headers).json()["priority"] == "high"
-    open_items = {r["issueType"]: r for r in reviews(client, headers)}
-    assert set(open_items) == {"timing_unresolved"}  # ESE window; subjects are never asked.
-    ese = open_items["timing_unresolved"]
-    assert ese["proposal"]["dateWindowStart"] == "2026-11-30" and "dueAt" not in ese["proposal"]
-    resolve(client, headers, ese, action="accept")
-    ese_task = next(t for t in tasks(student.uid) if t.title == "WDL practical ESE")
-    assert (
-        ese_task.due_at is None
-        and ese_task.data["timingMode"] == "unresolved"
-        and ese_task.data["dateWindowEnd"] == "2026-12-04"
-    )
+    assert reviews(client, headers) == []  # Subjects and date windows are never asked.
+    # The ESE window chooses no exam day: it is due by the window's last day, shown as the range.
+    ese_task = titles["WDL practical ESE"]
+    assert ese_task.due_at == ist(2026, 12, 4, 23, 59) and ese_task.data["dateWindowStart"] == "2026-11-30"
     # Mismatched B1 notice: no task, no review, minimal ignored record.
     b1 = next(r for r in records(student.uid) if r.provider_id.endswith(":b1"))
     assert b1.processing_state == "ignored" and b1.reason == "targeting_mismatch" and b1.title is None
@@ -760,7 +763,9 @@ def test_review_cross_user_isolation_and_suppression(client, headers, student, f
     subjects = setup_student(client, headers)
     model.items = {"WDL practical ESE window": [{
         "intent": "new_work", "taskType": "test", "title": "WDL practical ESE",
-        "subjectId": subjects["Web Development Laboratory"]["id"], "targeting": {"classYears": ["SY"], "allBatches": True},
+        "subjectId": subjects["Web Development Laboratory"]["id"],
+        # Eligibility that depends on facts DueCare does not know asks the student.
+        "targeting": {"classYears": ["SY"], "allBatches": True, "conditional": True},
         "timing": {"dateWindowStart": "2026-11-30", "dateWindowEnd": "2026-12-04"}}]}  # fmt: skip
     send(
         fake,
@@ -2058,3 +2063,211 @@ def test_posts_imported_before_teacher_names_were_allowed_get_their_teacher(
     old = by_title["Experiment 7"]
     (source,) = client.get(f"/api/v1/tasks/{old['id']}/evidence", headers=headers).json()["items"]
     assert source["postedBy"] == "Sheetal Pereira"
+
+
+def test_long_threads_send_the_new_message_and_only_the_latest_quoted_one():
+    def section(kind, text):
+        return SimpleNamespace(kind=kind, text=text, attribution=kind == "quoted")
+
+    decoded = [
+        section("authored", "Reply: IA2 is on Friday."),
+        section("quoted", "Earlier: IA2 date to be announced." * 200),
+        section("authored", "Also bring calculators."),
+        section("quoted", "Oldest message in the thread."),
+        section("footer", "Confidentiality notice"),
+    ]
+    sections = interpret.thread_sections(decoded)
+    assert [s["id"] for s in sections] == ["authored", "quoted-1", "authored"]
+    assert len(sections[1]["text"]) == 3000  # The latest quoted message, bounded.
+
+
+def test_a_source_too_large_for_the_provider_is_read_again_on_its_own(monkeypatch):
+    sent = []
+
+    def provider(system, user, schema, deadline=None):
+        payload = json.loads(user)
+        sent.append(payload)
+        if payload["candidateTasks"]:
+            raise ai.AIUnavailable("too large", 60, "AI_TOO_LARGE")
+        return schema.model_validate({"items": []}), {"provider": "fake"}
+
+    monkeypatch.setattr(ai, "structured", provider)
+    payload = {
+        "weeklySlots": [{"id": "s"}],
+        "candidateTasks": [{"id": "t"}],
+        "sections": [{"id": "authored", "kind": "authored", "text": "x" * 9000},
+                     {"id": "quoted-1", "kind": "quoted", "text": "old"}],
+    }  # fmt: skip
+    _, meta = REAL_EXTRACT(payload)
+    assert meta["reduced"] and len(sent) == 2
+    retry = sent[1]
+    assert retry["weeklySlots"] == [] and [s["id"] for s in retry["sections"]] == ["authored"]
+    assert len(retry["sections"][0]["text"]) == 6000
+
+
+def test_the_same_work_announced_twice_is_one_task(client, headers, student, fake, model, monkeypatch):
+    subjects = setup_student(client, headers)
+    coa = subjects["Computer Organization & Architecture"]["id"]
+    div = {"divisions": ["B"]}
+
+    def quiz(title, at):
+        return [{"intent": "new_work", "taskType": "test", "title": title, "subjectId": coa, "targeting": div,
+                 "timing": {"startsAt": at}}]  # fmt: skip
+
+    model.items = {
+        "COA IA 1 scheduled on 28/09/2026 at 1:30 pm": quiz("COA IA 1 scheduled on 28/09/2026 at 1:30 pm", "2026-09-28T13:30:00+05:30"),
+        "Re: COA IA 1": quiz("COA IA 1", "2026-09-28T13:30:00+05:30"),
+        "COA IA 2": quiz("COA IA 2", "2026-10-20T13:30:00+05:30"),  # Another assessment: separate.
+        "Fwd: COA IA 1": quiz("COA IA 1", "2026-09-28T15:00:00+05:30"),  # Same quiz, another time.
+    }  # fmt: skip
+    t0 = now() - timedelta(days=3)
+    for n, subject in enumerate(model.items):
+        send(
+            fake,
+            f"d{n}",
+            "faculty.coa@somaiya.edu",
+            (subject, f"{subject} at {'3:00 pm' if subject.startswith('Fwd') else '1:30 pm'}. Division B."),
+            t0 + timedelta(hours=n),
+        )
+    conn = connect(client, headers, fake, "gmail")
+    run(client, headers, conn)
+    times = sorted((t.due_at, "IA 2" in t.title) for t in tasks(student.uid))
+    # Both IA 1 notices giving 1:30 pm are one task; the notice giving 3 pm for the same quiz is
+    # not joined silently; IA 2 is separate work.
+    assert times == [
+        (ist(2026, 9, 28, 13, 30), False),
+        (ist(2026, 9, 28, 15, 0), False),
+        (ist(2026, 10, 20, 13, 30), True),
+    ]
+
+
+def test_tasks_already_listed_twice_are_merged_once_and_can_be_undone(
+    client, headers, student, fake, model, monkeypatch
+):
+    subjects = setup_student(client, headers)
+    coa = subjects["Computer Organization & Architecture"]["id"]
+    div = {"divisions": ["B"]}
+    model.items = {
+        subject: [{"intent": "new_work", "taskType": "test", "title": subject, "subjectId": coa, "targeting": div,
+                   "timing": {"startsAt": "2026-09-28T13:30:00+05:30"}}]
+        for subject in ("COA IA 1 scheduled on 28/09/2026 at 1:30 pm", "Re: COA IA 1 scheduled on 28/09/2026 at 1 :30 pm")
+    }  # fmt: skip
+    t0 = now() - timedelta(days=3)
+    for n, subject in enumerate(model.items):
+        send(
+            fake,
+            f"m{n}",
+            "faculty.coa@somaiya.edu",
+            (subject, subject + " at 1:30 pm. Division B."),
+            t0 + timedelta(hours=n),
+        )
+    # As imported before same-work joining existed: two tasks for one quiz.
+    originals = {n: getattr(interpret, n) for n in ("duplicate_of", "similar_task", "merge_duplicates")}
+    monkeypatch.setattr(interpret, "duplicate_of", lambda *a: None)
+    monkeypatch.setattr(interpret, "similar_task", lambda *a: None)
+    monkeypatch.setattr(interpret, "merge_duplicates", lambda *a: 0)
+    conn = connect(client, headers, fake, "gmail")
+    run(client, headers, conn)
+    assert len(tasks(student.uid)) == 2
+    for name, original in originals.items():
+        monkeypatch.setattr(interpret, name, original)
+    run(client, headers, conn)
+    visible = client.get("/api/v1/tasks", headers=headers).json()["items"]
+    assert len(visible) == 1 and datetime.fromisoformat(visible[0]["dueAt"]) == ist(2026, 9, 28, 13, 30)
+    with transaction(student.uid) as db:
+        merge_id = db.scalar(select(History.changes["mergeId"].astext).where(History.action == "merged"))
+    r = client.post(f"/api/v1/task-merges/{merge_id}/undo", headers=fresh(headers))
+    assert r.status_code == 200 and len(client.get("/api/v1/tasks", headers=headers).json()["items"]) == 2
+
+
+def test_a_classroom_post_naming_another_subject_links_to_that_subject(client, headers, student, fake, model):
+    subjects = setup_student(client, headers)
+    coa = subjects["Computer Organization & Architecture"]["id"]
+    dbms = client.post("/api/v1/subjects", headers=headers, json={"name": "DBMS", "kind": "lab"}).json()["id"]
+    stamp = (now() - timedelta(days=2)).isoformat().replace("+00:00", "Z")
+    fake.courses = [{"id": "c1", "name": "DBMS B2 116A"}]
+    text = "COA IA 1 scheduled on 28/09/2026 at 1:30 pm"
+    fake.announcements["c1"] = [{"id": "a1", "text": text, "creationTime": stamp, "updateTime": stamp}]
+    model.items = {
+        text: [{"intent": "new_work", "taskType": "test", "title": text, "subjectId": dbms, "evidence": text,
+                "timing": {"startsAt": "2026-09-28T13:30:00+05:30"}}]
+    }  # fmt: skip
+    conn = connect(client, headers, fake, "classroom")
+    run(client, headers, conn)
+    client.put(f"/api/v1/subjects/{dbms}/classroom-mappings/{conn}/c1", headers=fresh(headers))
+    run(client, headers, conn)
+    (task,) = tasks(student.uid)
+    assert str(task.subject_id) == coa  # Posted in the DBMS course, but about COA.
+
+
+def test_answered_questions_leave_needs_attention_on_the_next_sync(client, headers, student, fake, model):
+    subjects = setup_student(client, headers)
+    ds = subjects["Data Structures"]["id"]
+    div = {"divisions": ["B"]}
+
+    def receipt(payload):
+        task = next(t["id"] for t in payload["candidateTasks"] if t["title"] == "DS assignment 3")
+        return [{"intent": "submission", "taskType": "assignment", "title": "DS assignment 3", "subjectId": ds,
+                 "targeting": div, "matchTaskId": task}]  # fmt: skip
+
+    model.items = {
+        "DS assignment 3": [{"intent": "new_work", "taskType": "assignment", "title": "DS assignment 3",
+                             "subjectId": ds, "targeting": div, "timing": {"dateOnly": "2026-10-25"}}],
+        "Submitted: DS assignment 3": receipt,
+    }  # fmt: skip
+    send(
+        fake,
+        "a",
+        "faculty.ds@somaiya.edu",
+        ("DS assignment 3", "DS assignment 3 due 25 Oct. Division B."),
+        now() - timedelta(days=2),
+    )
+    conn = connect(client, headers, fake, "gmail")
+    run(client, headers, conn)
+    send(
+        fake,
+        "b",
+        "faculty.ds@somaiya.edu",
+        ("Submitted: DS assignment 3", "Received DS assignment 3. Division B."),
+        now() - timedelta(days=1),
+    )
+    run(client, headers, conn)
+    (question,) = reviews(client, headers)
+    assert question["issueType"] == "receipt_unverified"
+    (task,) = client.get("/api/v1/tasks", headers=headers).json()["items"]
+    client.patch(
+        f"/api/v1/tasks/{task['id']}",
+        headers=fresh(headers),
+        json={"revision": task["revision"], "status": "completed"},
+    )
+    run(client, headers, conn)
+    assert reviews(client, headers) == []  # Already completed: the question answered itself.
+
+
+def test_classroom_shows_a_returned_grade_and_a_late_turn_in(client, headers, student, fake, model, auto):
+    dbms = client.post("/api/v1/subjects", headers=headers, json={"name": "DBMS", "kind": "lab"}).json()["id"]
+
+    def at(days):
+        return (now() - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+
+    fake.courses = [{"id": "c1", "name": "DBMS B2 116A"}]
+    fake.coursework["c1"] = [
+        {"id": "w5", "title": "Experiment 5", "workType": "ASSIGNMENT", "maxPoints": 20,
+         "creationTime": at(9), "updateTime": at(9), "dueDate": {"year": 2026, "month": 9, "day": 27},
+         "dueTime": {"hours": 18, "minutes": 29}},
+    ]  # fmt: skip
+    turned = {"stateHistory": {"state": "TURNED_IN", "stateTimestamp": at(8)}}
+    fake.submissions["c1"] = [
+        {"id": "s5", "courseWorkId": "w5", "state": "RETURNED", "late": True, "assignedGrade": 18,
+         "updateTime": at(2), "submissionHistory": [turned]}
+    ]  # fmt: skip
+    model.items = {"Experiment 5": []}
+    conn = connect(client, headers, fake, "classroom")
+    run(client, headers, conn)
+    client.put(f"/api/v1/subjects/{dbms}/classroom-mappings/{conn}/c1", headers=fresh(headers))
+    run(client, headers, conn)
+    (task,) = client.get("/api/v1/tasks", headers=headers).json()["items"]
+    assert task["status"] == "completed"
+    assert {k: task["classroom"][k] for k in ("state", "late", "grade", "maxPoints")} == {
+        "state": "RETURNED", "late": True, "grade": 18, "maxPoints": 20
+    }  # fmt: skip

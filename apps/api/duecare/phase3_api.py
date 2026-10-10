@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, Request
 from pydantic import Field
 from sqlalchemy import func, select
 
-from . import ai, faculty, interpret, mail, rules, targeting
+from . import ai, faculty, interpret, mail, merging, rules, targeting
 from .common import User, finish, owned, page, replay, revision, work
 from .domain import effective_status
 from .errors import ApiError
@@ -478,53 +478,9 @@ def merge_tasks(body: MergeInput, request: Request, user=User):
         if keep.subject_id and gone.subject_id and keep.subject_id != gone.subject_id:
             # Different theory/lab/tutorial subjects never merge, even with similar titles or codes.
             raise ApiError(422, "INVALID_MERGE", "Tasks for different subjects cannot be merged")
-        moved = []
-        for ev in db.scalars(
-            select(TaskEvidence).where(TaskEvidence.task_id == gone.id, TaskEvidence.state == "active")
-        ):
-            ev.state = "reassigned"
-            if not db.scalar(
-                select(TaskEvidence).where(
-                    TaskEvidence.task_id == keep.id, TaskEvidence.event_id == ev.event_id
-                )
-            ):
-                db.add(
-                    TaskEvidence(
-                        user_id=keep.user_id,
-                        task_id=keep.id,
-                        event_id=ev.event_id,
-                        method="merge",
-                        state="active",
-                    )
-                )
-            moved.append(str(ev.event_id))
-        before = {
-            "completedAt": keep.completed_at.isoformat() if keep.completed_at else None,
-            "completion": keep.data.get("completion"),
-        }
-        if gone.completed_at and not keep.completed_at:
-            keep.completed_at = gone.completed_at
-            keep.data = {**keep.data, "completion": gone.data.get("completion") or {"origin": "manual"}}
-        keep.data = {
-            **keep.data,
-            "sources": sorted({*keep.data.get("sources", []), *gone.data.get("sources", [])}) or None,
-        }
-        if not keep.data["sources"]:
-            keep.data = {k: v for k, v in keep.data.items() if k != "sources"}
-        keep.status = effective_status(keep, now())
-        gone.data = {**gone.data, "mergedInto": str(keep.id)}
-        keep.revision += 1
-        gone.revision += 1
-        merge = MergeOperation(
-            user_id=keep.user_id,
-            surviving_task_id=keep.id,
-            absorbed_task_id=gone.id,
-            data={"movedEvents": moved, "survivorBefore": before},
+        merge = merging.merge(
+            db, keep, gone, lambda task, action, changes: manual_history(db, task, action, changes)
         )
-        db.add(merge)
-        db.flush()
-        manual_history(db, keep, "merged", {"absorbedTaskId": str(gone.id), "mergeId": str(merge.id)})
-        manual_history(db, gone, "merged_into", {"survivingTaskId": str(keep.id), "mergeId": str(merge.id)})
         return finish(
             db,
             op,
@@ -532,7 +488,7 @@ def merge_tasks(body: MergeInput, request: Request, user=User):
                 "id": str(merge.id),
                 "survivingTaskId": str(keep.id),
                 "absorbedTaskId": str(gone.id),
-                "movedEvidence": len(moved),
+                "movedEvidence": len(merge.data["movedEvents"]),
             },
         )
 

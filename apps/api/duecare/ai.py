@@ -392,6 +392,8 @@ def _structured(system, user, schema, deadline=None):
             for (name, model, _), delay in zip(configured, delays, strict=True)
         )
     retry_after = max(1, math.ceil(min(delays))) if all(delays) else 60
+    if failures and all(status == 413 for status in failures):
+        raise AIUnavailable("The source is too large for the AI provider", 60, "AI_TOO_LARGE")
     raise AIUnavailable(
         "AI is rate limited; saved items will be retried automatically"
         if limited
@@ -402,7 +404,23 @@ def _structured(system, user, schema, deadline=None):
 
 
 def extract(payload):
-    return structured(EXTRACT_SYSTEM, json.dumps(payload, ensure_ascii=False, default=str), Extraction)
+    try:
+        return structured(EXTRACT_SYSTEM, json.dumps(payload, ensure_ascii=False, default=str), Extraction)
+    except AIUnavailable as exc:
+        if exc.code != "AI_TOO_LARGE":
+            raise
+    # Too large even when compact: read the source alone, its own words first, once.
+    sections = [s for s in payload["sections"] if s.get("kind") in (None, "authored", "forwarded")]
+    minimal = {
+        **payload,
+        "weeklySlots": [],
+        "candidateTasks": [],
+        "sections": [{**s, "text": s["text"][:6000]} for s in sections[:2]],
+    }
+    result, meta = structured(
+        EXTRACT_SYSTEM, json.dumps(minimal, ensure_ascii=False, default=str), Extraction
+    )
+    return result, {**meta, "reduced": True}
 
 
 class ResolvedTiming(Model):

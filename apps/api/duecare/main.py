@@ -21,7 +21,7 @@ from .domain import effective_status, task_data, window_derived
 from .errors import ApiError
 from .models import History, ReviewItem, Slot, Subject, Task, now
 from .safe_logs import configure
-from .schemas import ProfilePatch, SubjectInput, TaskInput, TaskPatch, TimetableInput
+from .schemas import BulkTaskInput, ProfilePatch, SubjectInput, TaskInput, TaskPatch, TimetableInput
 from .views import profile, task_out
 
 
@@ -358,6 +358,7 @@ def tasks(
     undated: bool = False,
     date_from: datetime | None = Query(None, alias="dateFrom"),
     date_to: datetime | None = Query(None, alias="dateTo"),
+    created_after: datetime | None = Query(None, alias="createdAfter"),
     source: str | None = None,
     batch: str | None = None,
     sort: Literal["date", "priority"] = "date",
@@ -365,7 +366,7 @@ def tasks(
 ):
     with work(user) as db:
         stmt = select(Task).where(Task.user_id == user["id"], Task.data["mergedInto"].astext.is_(None))
-        for value in (date_from, date_to):
+        for value in (date_from, date_to, created_after):
             if value and value.tzinfo is None:
                 raise ApiError(422, "INVALID_TIME", "Date filters must include a timezone")
         if date_from and date_to and date_from >= date_to:
@@ -400,6 +401,8 @@ def tasks(
             stmt = stmt.where(Task.due_at >= date_from)
         if date_to:
             stmt = stmt.where(Task.due_at < date_to)
+        if created_after:
+            stmt = stmt.where(Task.created_at > created_after)
         if source == "manual":
             stmt = stmt.where(Task.data["sources"].is_(None))
         elif source in ("gmail", "classroom"):
@@ -583,6 +586,75 @@ def delete_task(id: uuid.UUID, request: Request, revision_value: int = Query(ali
         task_suppression(db, t)
         db.delete(t)
         return finish(db, op, {"ok": True})
+
+
+@app.post("/api/v1/tasks/bulk")
+def bulk_tasks(body: BulkTaskInput, request: Request, user=User):
+    """One action on several of the student's tasks, in one transaction. Each task records it in
+    its history exactly as the single-task action would."""
+    with work(user) as db:
+        cached, op = replay(db, request, user, body.model_dump(mode="json"))
+        if cached is not None:
+            return cached
+        if body.action == "subject":
+            if not body.subject_id:
+                raise ApiError(422, "SUBJECT_REQUIRED", "Choose a subject", {"subjectId": "Required"})
+            owned(db, Subject, body.subject_id, user["id"])
+        rows = db.scalars(
+            select(Task)
+            .where(
+                Task.user_id == user["id"],
+                Task.id.in_(body.task_ids),
+                Task.data["mergedInto"].astext.is_(None),
+            )
+            .with_for_update()
+        ).all()
+        if len(rows) != len(set(body.task_ids)):
+            raise ApiError(404, "NOT_FOUND", "Some of these tasks are no longer available")
+        stamp = now().isoformat()
+        for t in rows:
+            if body.action == "delete":
+                from .privacy import task_suppression
+
+                task_suppression(db, t)
+                db.delete(t)
+                continue
+            if body.action == "subject":
+                if t.subject_id == body.subject_id:
+                    continue
+                t.subject_id = body.subject_id
+                t.data = {
+                    **t.data,
+                    "subjectId": str(body.subject_id),
+                    "manualFieldOverrides": {
+                        **t.data.get("manualFieldOverrides", {}),
+                        "subjectId": {"recordedAt": stamp},
+                    },
+                }
+                changes = {"subjectId": str(body.subject_id)}
+                action = "edited"
+            else:
+                done = body.action == "complete"
+                if bool(t.completed_at) == done:
+                    continue
+                t.completed_at = now() if done else None
+                action = "completed" if done else "reopened"
+                t.data = {
+                    **t.data,
+                    "latestManualDecision": {"action": action, "recordedAt": stamp},
+                    "completion": {"origin": "manual", "recordedAt": stamp, "basis": "student decision"}
+                    if done
+                    else None,
+                }
+            t.status = effective_status(t, now())
+            t.revision += 1
+            if body.action != "subject":
+                changes = {
+                    "status": t.status,
+                    "completedAt": t.completed_at.isoformat() if t.completed_at else None,
+                }
+            history(db, t, action, changes)
+        return finish(db, op, {"ok": True, "count": len(rows)})
 
 
 @app.get("/api/v1/tasks/{id}/history")

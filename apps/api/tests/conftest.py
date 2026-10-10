@@ -11,11 +11,18 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 
-from duecare import auth, naming
+from duecare import ai, auth, naming
+from duecare.config import Settings, settings
 from duecare.models import now
 
 config = json.loads((Path(__file__).resolve().parents[3] / ".local/test-config.json").read_text())
 os.environ.update(config)
+# Every setting the test config leaves out takes its default, never a value from the developer's
+# apps/api/.env: tests must not reach real AI providers with real keys.
+for _name, _field in Settings.model_fields.items():
+    if _name.upper() not in config:
+        os.environ[_name.upper()] = "" if _field.default is None else str(_field.default)
+settings.cache_clear()
 from duecare.db import transaction  # noqa: E402 - configure isolated test environment before loading app
 from duecare.main import app  # noqa: E402
 
@@ -103,6 +110,20 @@ def fixture_provider(monkeypatch):
 
 
 AI_NAME_TITLES = naming.name_titles
+
+
+@pytest.fixture(autouse=True)
+def offline_ai(monkeypatch):
+    """No test reaches an AI provider. Extraction finds nothing unless a test supplies answers
+    (test_phase3's model fixture replaces these)."""
+    monkeypatch.setattr(
+        ai, "extract", lambda payload: (ai.Extraction(), {"provider": "offline", "model": "none"})
+    )
+    monkeypatch.setattr(
+        ai,
+        "resolve_timing",
+        lambda payload: (ai.TimingResolution(), {"provider": "offline", "model": "none"}),
+    )
 
 
 @pytest.fixture(autouse=True)

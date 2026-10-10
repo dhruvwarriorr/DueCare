@@ -72,21 +72,28 @@ afterEach(() => {
   setVisibility("visible");
 });
 
-describe("active-browser sync", () => {
-  it("refreshes tasks while an advance request is still running", async () => {
+// The API worker advances saved jobs; the browser only starts syncs and watches their progress.
+describe("browser sync", () => {
+  it("starts a sync on open and leaves advancing it to the worker", async () => {
+    setVisibility("visible");
+    const s = server();
+    mount();
+    await waitFor(() => expect(s.calls).toContain("trigger open"));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(s.advances()).toBe(0);
+  });
+
+  it("refreshes tasks every few seconds while a job runs", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     setVisibility("visible");
-    server();
+    const s = server();
     const fetch = global.fetch;
-    let release!: () => void;
-    let advancing = false;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
     global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).endsWith("/advance")) {
-        advancing = true;
-        await gate;
-        return new Response(JSON.stringify(job("completed")), { status: 200 });
-      }
+      if (String(input) === "/api/v1/connections")
+        return new Response(
+          JSON.stringify({ items: [{ ...connection, activeJob: job("running") }] }),
+          { status: 200 },
+        );
       return fetch(input, init);
     }) as typeof fetch;
     let reads = 0;
@@ -99,41 +106,23 @@ describe("active-browser sync", () => {
         <SyncProvider enabled><Tasks /></SyncProvider>
       </QueryClientProvider>,
     );
-    await waitFor(() => expect(advancing && reads > 0).toBe(true));
-    try {
-      const before = reads;
-      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-      expect(reads).toBeGreaterThan(before);
-      setVisibility("hidden");
-      const hidden = reads;
-      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-      expect(reads).toBe(hidden);
-    } finally {
-      await act(async () => { release(); });
-    }
+    await waitFor(() => expect(reads > 0).toBe(true));
+    const before = reads;
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(reads).toBeGreaterThan(before);
+    expect(s.advances()).toBe(0);
   });
 
-  it("starts on open and keeps advancing bounded requests until the job finishes", async () => {
-    setVisibility("visible");
-    const s = server();
-    mount();
-    await waitFor(() => expect(s.advances()).toBe(3));
-    expect(s.calls).toContain("trigger open");
-  });
-
-  it("starts no work while hidden and resumes with the focus rule on return", async () => {
+  it("starts a sync with the focus rule when the page becomes visible again", async () => {
     setVisibility("hidden");
     const s = server();
     mount();
     await waitFor(() => expect(s.calls).toContain("GET /api/v1/connections"));
-    await new Promise((r) => setTimeout(r, 50));
-    expect(s.calls.some((c) => c.endsWith("/sync"))).toBe(false);
-    expect(s.advances()).toBe(0);
     setVisibility("visible");
     await act(async () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
-    await waitFor(() => expect(s.advances()).toBe(3));
-    expect(s.calls).toContain("trigger focus");
+    await waitFor(() => expect(s.calls).toContain("trigger focus"));
+    expect(s.advances()).toBe(0);
   });
 });

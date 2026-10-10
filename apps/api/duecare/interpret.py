@@ -18,6 +18,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta, timezone
+from types import SimpleNamespace
 
 from pydantic import ValidationError
 from sqlalchemy import case, func, or_, select
@@ -389,6 +390,14 @@ def resolve_subjects(prepared, ctx, snap):
         # An extracted subject ID is a suggestion. Explicit course words take precedence.
         texts = [c.course_label, c.title, c.assessment_label, c.deliverable_label]
         component = c.component_hint or subject_link.component_of(" ".join(t for t in texts if t))
+        if c.source == "classroom" and c.method == "ai" and c.title:
+            # A post in one course can announce another course's work ("COA IA 1" posted in the DBMS
+            # course): a title naming one of the student's other subjects, and not this course's,
+            # links there.
+            named = subject_link.deterministic([c.title], subjects, component)
+            if named and named not in pool_ids and not subject_link.deterministic([c.title], pool, component):
+                c.subject_id, c.subject_link = named, {"method": "name", "outsideCourse": True}
+                continue
         chosen = pool[0]["id"] if len(pool) == 1 else subject_link.deterministic(texts, pool, component)
         if chosen:
             c.subject_id, c.subject_link = chosen, {"method": "name"}
@@ -445,18 +454,51 @@ def name_candidates(prepared, ctx):
         c.display_title, c.naming = names.get(f"i{n}"), naming.naming(used_ai)
 
 
+def compact(d):
+    return {k: v for k, v in d.items() if v not in (None, "", [], {})}
+
+
 def ai_payload(ctx, source, sections, allowed_subjects=None):
+    """Extraction context. It is sent with every source, so only fields extraction uses are kept:
+    a full timetable and task list once made even a short reply exceed provider request limits."""
     subjects = [s for s in ctx["subjects"] if not allowed_subjects or s["id"] in allowed_subjects]
     p = ctx["profile"]
+    slots = [
+        compact(
+            {
+                "id": s["id"],
+                "subjectId": s["subjectId"],
+                "weekday": s.get("weekday"),
+                "start": (s.get("startTime") or "")[:5],
+                "end": (s.get("endTime") or "")[:5],
+                "location": s.get("location"),
+            }
+        )  # fmt: skip
+        for s in ctx["slots"]
+        if not allowed_subjects or s["subjectId"] in allowed_subjects
+    ]
+    tasks = [
+        compact(
+            {
+                "id": t["id"],
+                "title": t["title"],
+                "type": t["type"],
+                "subjectId": t["subjectId"],
+                "assessmentLabel": t["assessmentLabel"],
+                "deliverableLabel": t["deliverableLabel"],
+                "due": (t["dueAt"] or "")[:10],
+                "completed": t["completed"] or None,
+            }
+        )  # fmt: skip
+        for t in ctx["tasks"][:40]
+    ]
     return {
         "now": now().isoformat(),
         "student": academic.context(p),
         "note": "The student's single general batch applies to every subject.",
-        "subjects": subjects,
-        "weeklySlots": [
-            s for s in ctx["slots"] if not allowed_subjects or s["subjectId"] in allowed_subjects
-        ],
-        "candidateTasks": ctx["tasks"][:40],
+        "subjects": [compact(s) for s in subjects],
+        "weeklySlots": slots,
+        "candidateTasks": tasks,
         "source": source,
         "sections": sections,
     }
@@ -470,6 +512,32 @@ def grounded_item(item, sections, title=None):
         return False
     source = lms.flat(section.get("text", "")).casefold()
     return evidence in source or (item.section == "authored" and evidence in lms.flat(title).casefold())
+
+
+def thread_sections(decoded_sections, budget=12000):
+    """What extraction reads of a message: the sender's own words and forwarded notices first,
+    then only the most recent quoted message. Older quoted history is earlier mail DueCare has
+    already read on its own, and long threads otherwise exceed provider request limits."""
+    out, used, quoted = [], 0, False
+    for i, s in enumerate(decoded_sections):
+        if s.kind in ("authored", "forwarded"):
+            text = s.text[: max(0, budget - used)]
+        elif s.kind == "quoted" and not quoted:
+            text, quoted = s.text[:3000], True
+        else:
+            continue
+        if not text.strip():
+            continue
+        used += len(text) if s.kind != "quoted" else 0
+        out.append(
+            {
+                "id": "authored" if s.kind == "authored" else f"quoted-{i}",
+                "kind": s.kind,
+                "attribution": s.attribution,
+                "text": text,
+            }
+        )
+    return out
 
 
 def gmail_candidates(prepared, snap, ctx, token, account_email):
@@ -537,16 +605,7 @@ def gmail_candidates(prepared, snap, ctx, token, account_email):
         prepared.ignore = "no_academic_signal"
         return
     label = re.match(r"^(\S+_(?:ODD|EVEN)_\d{2}-\d{2})\s*:", decoded.subject)
-    sections = [
-        {
-            "id": "authored" if s.kind == "authored" else f"quoted-{i}",
-            "kind": s.kind,
-            "attribution": s.attribution,
-            "text": s.text[: 12000 if s.kind == "authored" else 4000],
-        }
-        for i, s in enumerate(decoded.sections)
-        if s.kind in ("authored", "quoted", "forwarded")
-    ][:5]
+    sections = thread_sections(decoded.sections)
     source = {
         "kind": "email",
         "sender": decoded.sender_email,
@@ -966,6 +1025,26 @@ def fill_timing(prepared):
             resolved_timing(c, answers[f"i{n}"], prepared.text, ref)
 
 
+def classroom_status(db, task, record, cand):
+    """What Classroom shows for the student's own turn-in: state, late, and a returned grade."""
+    v = cand.validation or {}
+    work = db.scalar(
+        select(SourceRecord).where(
+            SourceRecord.connection_id == record.connection_id,
+            SourceRecord.provider_id == cand.identity_key,
+        )
+    )
+    status = {
+        "state": v.get("state"),
+        "late": v.get("late", False),
+        "grade": v.get("grade"),
+        "maxPoints": (work.data.get("maxPoints") if work else None),
+        "at": v.get("stateTime"),
+    }
+    if task.data.get("classroom") != status:
+        task.data = {**task.data, "classroom": status}
+
+
 def iso_or_none(value):
     return value.isoformat() if value else None
 
@@ -1000,7 +1079,13 @@ def submission_candidates(prepared, snap):
             trusted=True,
             method="classroom_submission",
             source="classroom",
-            validation={"ownSubmission": True, "state": state, "stateTime": at.isoformat() if at else None},
+            validation={
+                "ownSubmission": True,
+                "state": state,
+                "stateTime": at.isoformat() if at else None,
+                "late": bool(data.get("late")),
+                "grade": data.get("assignedGrade"),
+            },
             links=[data.get("alternateLink")] if data.get("alternateLink") else [],
         )
     )
@@ -1153,8 +1238,11 @@ def task_by_identity(db, uid, key):
 
 
 def work_signature(title, subject):
-    """Conservative assessment name within one course; IA1 and IA2 remain distinct."""
-    text = (title or "").casefold()
+    """Conservative assessment name within one course; IA1 and IA2 remain distinct.
+
+    Dates, times and scheduling words in a title ("scheduled on 28/09/2026 at 1:30 pm") say when the
+    work happens, not which work it is, so they are not part of its name."""
+    text = naming.undated(naming.PREFIX.sub("", title or "")).casefold()
     names = [subject["name"], subject.get("code"), *(subject.get("aliases") or [])]
     for key, aliases in subject_link.COURSE_NAMES.items():
         if {norm(n) for n in names if n} & {norm(key), *(norm(n) for n in aliases)}:
@@ -1162,7 +1250,7 @@ def work_signature(title, subject):
     for name in sorted(filter(None, names), key=len, reverse=True):
         text = re.sub(r"(?<!\w)" + re.escape(name.casefold()) + r"(?!\w)", " ", text)
     text = re.sub(r"\bia\s*[- ]?\s*(\d+)\b", r"ia\1", text)
-    words = set(re.findall(r"[a-z]+\d*|\d+", text))
+    words = set(re.findall(r"[a-z]+\d*|\d+", text)) - naming.FILLER - {"regarding", "re", "fwd", "fw"}
     if any(re.fullmatch(r"ia\d+", w) for w in words):
         words -= {"quiz", "test", "exam", "examination", "mcq", "internal", "assessment"}
     return words
@@ -1241,6 +1329,239 @@ def verified_lms_receipt(cand):
         )
         and cand.method == "lms_" + validation["template"]
     )
+
+
+CUTOFF_FIELDS = ("dueAt", "startsAt", "availabilityClosesAt")
+
+
+def cand_day(cand):
+    """The calendar day (IST) a candidate's work is due or held, if it states one."""
+    for name in CUTOFF_FIELDS:
+        if cand.timing.get(name):
+            return parse_dt(cand.timing[name]).astimezone(IST).date()
+    if cand.date_only:
+        return as_date(cand.date_only)
+    return as_date(cand.window[1]) if cand.window else None
+
+
+def task_day(task):
+    return task.due_at.astimezone(IST).date() if task.due_at else None
+
+
+def exact_time(task):
+    """The task's stated time, when it has one (not a date-only or window cutoff)."""
+    return (
+        task.due_at
+        if task.due_at and not task.data.get("dueDate") and not window_derived(task.data)
+        else None
+    )
+
+
+def curated(task):
+    """A task whose name or timing the student set is theirs; it is never joined automatically."""
+    return bool({"title", "dueAt", "dueDate", "startsAt"} & set(task.data.get("manualFieldOverrides") or {}))
+
+
+def safe_duplicate(probe, task, day, ctx, at=None):
+    """Same subject, same type, the same work by name (identifiers equal), no conflicting day, and
+    no conflicting stated time: sources that disagree on when are left for the student to judge."""
+    if not probe.subject_id or str(task.subject_id) != probe.subject_id or probe.task_type != task.type:
+        return False
+    if curated(task) or not same_work(probe, task, ctx):
+        return False
+    other = task_day(task)
+    if day is not None and other is not None and day != other:
+        return False
+    theirs = exact_time(task)
+    return at is None or theirs is None or at == theirs
+
+
+def duplicate_of(db, uid, cand, subject_id, ctx):
+    if not subject_id or not cand.task_type or not cand.title:
+        return None
+    probe = SimpleNamespace(task_type=cand.task_type, subject_id=subject_id, title=cand.title)
+    day = cand_day(cand)
+    stated = next((cand.timing[n] for n in CUTOFF_FIELDS if cand.timing.get(n)), None)
+    at = parse_dt(stated) if stated else None
+    for task in db.scalars(
+        select(Task)
+        .where(
+            Task.user_id == uid,
+            Task.type == cand.task_type,
+            Task.subject_id == uuid.UUID(subject_id),
+            Task.data["mergedInto"].astext.is_(None),
+        )
+        .order_by(Task.created_at)
+        .with_for_update()
+    ):
+        if safe_duplicate(probe, task, day, ctx, at):
+            return task
+    return None
+
+
+def coursework_identity(db, task):
+    """The Classroom coursework a task is, if any: two different coursework items are never merged."""
+    return {
+        key
+        for key in db.scalars(
+            select(SourceEvent.identity_key)
+            .join(TaskEvidence, TaskEvidence.event_id == SourceEvent.id)
+            .where(TaskEvidence.task_id == task.id, TaskEvidence.state == "active")
+        )
+        if key and ":coursework:" in key and not re.search(r":\d+$", key)
+    }
+
+
+def relink_named_subjects(db, uid):
+    """Classroom work linked to its course's subject although its title names another of the
+    student's subjects (see resolve_subjects) moves to the named subject. A subject the student
+    chose stays."""
+    subjects = [
+        {"id": str(s.id), "name": s.name, "kind": s.kind, "code": s.data.get("code"),
+         "aliases": s.data.get("aliases", [])}
+        for s in db.scalars(select(Subject).where(Subject.user_id == uid))
+    ]  # fmt: skip
+    moved = 0
+    for task in db.scalars(
+        select(Task)
+        .where(Task.user_id == uid, Task.subject_id.is_not(None), Task.data["mergedInto"].astext.is_(None))
+        .with_for_update()
+    ):
+        if "classroom" not in (task.data.get("sources") or []) or "subjectId" in (
+            task.data.get("manualFieldOverrides") or {}
+        ):
+            continue
+        current = [s for s in subjects if s["id"] == str(task.subject_id)]
+        named = subject_link.deterministic([task.title], subjects)
+        if not named or named == str(task.subject_id) or subject_link.deterministic([task.title], current):
+            continue
+        before = str(task.subject_id)
+        task.subject_id = uuid.UUID(named)
+        task.data = {
+            **task.data,
+            "subjectId": named,
+            "subjectLink": {"method": "name", "outsideCourse": True},
+            "timingProvenance": {
+                **(task.data.get("timingProvenance") or {}),
+                "subjectId": {"basis": "title-named", "sourceTime": now().isoformat()},
+            },
+        }
+        task.revision += 1
+        history(db, task, "source_update", {"subjectId": named, "previousSubjectId": before})
+        moved += 1
+    return moved
+
+
+def merge_duplicates(db, uid):
+    """Join tasks already listed twice for the same work (one notice by mail, one on Classroom).
+    Each merge can be undone."""
+    from . import merging
+
+    ctx = None
+    tasks = db.scalars(
+        select(Task)
+        .where(Task.user_id == uid, Task.subject_id.is_not(None), Task.data["mergedInto"].astext.is_(None))
+        .order_by(Task.created_at)
+        .with_for_update()
+    ).all()
+    groups = {}
+    for task in tasks:
+        if task.data.get("sources") and not curated(task):
+            groups.setdefault((task.subject_id, task.type), []).append(task)
+    merged = 0
+    for group in groups.values():
+        # The most precise task survives: a Classroom assignment, then a stated time, then the oldest.
+        group.sort(key=lambda t: (not coursework_identity(db, t), exact_time(t) is None, t.created_at))
+        gone = set()
+        for i, keep in enumerate(group):
+            if keep.id in gone:
+                continue
+            for other in group[i + 1 :]:
+                if other.id in gone:
+                    continue
+                if ctx is None:
+                    ctx = {"subjects": [{"id": str(s.id), "name": s.name, "code": s.data.get("code"),
+                                         "aliases": s.data.get("aliases", [])}
+                                        for s in db.scalars(select(Subject).where(Subject.user_id == uid))]}  # fmt: skip
+                probe = SimpleNamespace(
+                    task_type=keep.type, subject_id=str(keep.subject_id), title=keep.title
+                )
+                if not safe_duplicate(probe, other, task_day(keep), ctx, exact_time(keep)):
+                    continue
+                mine, theirs = coursework_identity(db, keep), coursework_identity(db, other)
+                if mine and theirs and mine != theirs:
+                    continue  # Two Classroom assignments that happen to share a name.
+                merging.merge(
+                    db,
+                    keep,
+                    other,
+                    lambda task, action, changes: history(
+                        db, task, action, {**changes, "reason": "same work"}
+                    ),
+                )
+                settle_reviews(db, keep, ("possible_duplicate",), "same_work_merged")
+                settle_reviews(db, other, ("possible_duplicate",), "same_work_merged")
+                gone.add(other.id)
+                merged += 1
+    return merged
+
+
+ANSWERED_BY_TRACKING = ("possible_duplicate", "confirm_applicability", "association")
+ANSWERED_BY_COMPLETION = ("confirm_completion", "receipt_unverified", "returned_ambiguous")
+
+
+def tidy_reviews(db, uid):
+    """Close questions that are already answered, so Needs attention holds only real decisions:
+    the work is now tracked, the suggested duplicate now safely matches, the task is already
+    completed (or already open, for an unsubmission). A question about a merged task follows it."""
+    closed, ctx = 0, None
+    for item in db.scalars(
+        select(ReviewItem).where(ReviewItem.user_id == uid, ReviewItem.status == "open").with_for_update()
+    ):
+        task = db.get(Task, item.task_id) if item.task_id else None
+        while task is not None and task.data.get("mergedInto"):
+            task = db.get(Task, uuid.UUID(task.data["mergedInto"]))
+            item.task_id = task.id if task else None
+        reason = None
+        identity = item.data.get("identityKey")
+        if item.issue_type in ANSWERED_BY_TRACKING and identity:
+            tracked = task_by_identity(db, uid, identity)
+            if tracked is not None and not tracked.data.get("mergedInto"):
+                reason = "already_tracked"
+        if (
+            not reason
+            and item.issue_type in ANSWERED_BY_COMPLETION
+            and task is not None
+            and task.completed_at
+        ):
+            reason = "already_completed"
+        if not reason and item.issue_type == "unsubmission" and task is not None and not task.completed_at:
+            reason = "already_open"
+        if not reason and item.issue_type == "possible_duplicate" and task is not None and item.event_id:
+            event = db.get(SourceEvent, item.event_id)
+            record = db.get(SourceRecord, item.source_record_id) if item.source_record_id else None
+            if event is not None and record is not None:
+                cand = candidate_from_event(event, record, item.data.get("proposal"))
+                subject_id = cand.subject_id or (str(task.subject_id) if task.subject_id else None)
+                if ctx is None:
+                    ctx = load_context(db, uid, record)
+                stated = next((cand.timing[n] for n in CUTOFF_FIELDS if cand.timing.get(n)), None)
+                probe = SimpleNamespace(task_type=cand.task_type, subject_id=subject_id, title=cand.title)
+                if subject_id and safe_duplicate(
+                    probe, task, cand_day(cand), ctx, parse_dt(stated) if stated else None
+                ):
+                    changes, _ = update_task(db, task, cand, event, False, cand.method)
+                    event.outcome = "updated" if changes else "evidence_recorded"
+                    reason = "same_work_linked"
+        if reason:
+            item.status, item.resolved_at = "resolved", now()
+            item.revision += 1
+            item.data = {
+                **item.data,
+                "resolution": {"action": reason, "at": now().isoformat(), "automatic": True},
+            }
+            closed += 1
+    return closed
 
 
 def similar_task(db, uid, cand, subject_id):
@@ -2134,6 +2455,8 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
             )
             return done("review")
         link(db, task, event, cand.method)
+        if cand.method == "classroom_submission":
+            classroom_status(db, task, record, cand)
         if cand.intent == "returned_ambiguous":
             open_review(
                 db,
@@ -2297,6 +2620,13 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
         return done("review")
     # Subjects are linked automatically (see resolve_subjects); work matching none of the student's
     # subjects is kept without one rather than asking.
+    same = duplicate_of(db, uid, cand, subject_id, ctx)
+    if same:
+        # The same work announced again (another source, or a reworded notice): one task, not a
+        # question. It is updated like any later notice; completion is never touched.
+        changes, _ = update_task(db, same, cand, event, False, cand.method)
+        settle_reviews(db, same, ("possible_duplicate",), "same_work_linked")
+        return done("updated" if changes else "evidence_recorded")
     similar = similar_task(db, uid, cand, subject_id)
     if similar:
         open_review(

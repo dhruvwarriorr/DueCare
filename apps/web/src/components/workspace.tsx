@@ -6,11 +6,12 @@ import {
   QueryClient,
   QueryClientProvider,
   useInfiniteQuery,
+  useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import { Plus, LogOut, Bell, Search, ListTodo } from "lucide-react";
-import { api, deadline } from "@/lib/api";
+import { api, classroomNote, deadline } from "@/lib/api";
 import { useCutoffRefresh } from "@/lib/use-cutoff-refresh";
 import type { Profile, Page, Task, Subject } from "@/lib/types";
 import { Button } from "./ui/button";
@@ -87,9 +88,14 @@ const sourceName: Record<string, string> = {
 function TaskRows({
   items,
   onOpen,
+  selected,
+  onToggle,
 }: {
   items: Task[];
   onOpen: (id: string) => void;
+  /** When set, rows are chosen for a bulk action instead of opened. */
+  selected?: Set<string>;
+  onToggle?: (id: string) => void;
 }) {
   const { state } = useQuickComplete();
   return (
@@ -97,11 +103,28 @@ function TaskRows({
       {items
         .filter((t) => state(t.id) !== "gone")
         .map((t) => (
-          <div key={t.id} className={"task-item " + state(t.id)}>
-            <DoneButton task={t} />
+          <div
+            key={t.id}
+            className={
+              "task-item " +
+              state(t.id) +
+              (selected?.has(t.id) ? " selected" : "")
+            }
+          >
+            {selected ? (
+              <input
+                type="checkbox"
+                className="task-select"
+                aria-label={"Select " + t.title}
+                checked={selected.has(t.id)}
+                onChange={() => onToggle?.(t.id)}
+              />
+            ) : (
+              <DoneButton task={t} />
+            )}
             <button
               className={"task-row " + t.status}
-              onClick={() => onOpen(t.id)}
+              onClick={() => (selected ? onToggle?.(t.id) : onOpen(t.id))}
             >
               <span className="task-main">
                 <strong>
@@ -117,6 +140,11 @@ function TaskRows({
                   {sourceName[t.source]
                     ? " · from " + sourceName[t.source]
                     : ""}
+                  {classroomNote(t) && (
+                    <span className="classroom-note">
+                      {" · " + classroomNote(t)}
+                    </span>
+                  )}
                 </span>
               </span>
               <span
@@ -141,6 +169,105 @@ const statusOptions = [
   ["missed", "Missed"],
   ["completed", "Completed"],
 ] as const;
+/** Actions on every selected task at once, applied together by the server. */
+function BulkBar({
+  selected,
+  visible,
+  subjects,
+  onSelect,
+  onDone,
+}: {
+  selected: Set<string>;
+  visible: Task[];
+  subjects: Subject[];
+  onSelect: (s: Set<string>) => void;
+  onDone: () => void;
+}) {
+  const client = useQueryClient();
+  const [subject, setSubject] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const bulk = useMutation({
+    mutationFn: (body: { action: string; subjectId?: string }) =>
+      api("/tasks/bulk", "POST", { taskIds: [...selected], ...body }),
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: ["tasks"] });
+      await client.invalidateQueries({ queryKey: ["overview"] });
+      setConfirmDelete(false);
+      onDone();
+    },
+  });
+  const count = selected.size;
+  const none = count === 0 || bulk.isPending;
+  return (
+    <div className="bulk-bar" role="toolbar" aria-label="Selected tasks">
+      <strong>{count} selected</strong>
+      <button
+        type="button"
+        className="link-button"
+        onClick={() =>
+          onSelect(
+            count === visible.length
+              ? new Set()
+              : new Set(visible.map((t) => t.id)),
+          )
+        }
+      >
+        {count === visible.length && count > 0 ? "Clear" : "Select all shown"}
+      </button>
+      <div className="bulk-actions">
+        <Button
+          disabled={none}
+          onClick={() => bulk.mutate({ action: "complete" })}
+        >
+          Mark done
+        </Button>
+        <Button
+          variant="outline"
+          disabled={none}
+          onClick={() => bulk.mutate({ action: "reopen" })}
+        >
+          Reopen
+        </Button>
+        <label className="bulk-subject">
+          <span className="sr-only">Move to subject</span>
+          <select value={subject} onChange={(e) => setSubject(e.target.value)}>
+            <option value="">Move to subject…</option>
+            {subjects.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} · {s.kind}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Button
+          variant="outline"
+          disabled={none || !subject}
+          onClick={() => bulk.mutate({ action: "subject", subjectId: subject })}
+        >
+          Move
+        </Button>
+        {confirmDelete ? (
+          <Button
+            variant="destructive"
+            disabled={none}
+            onClick={() => bulk.mutate({ action: "delete" })}
+          >
+            Delete {count} {count === 1 ? "task" : "tasks"}?
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            disabled={none}
+            onClick={() => setConfirmDelete(true)}
+          >
+            Delete
+          </Button>
+        )}
+      </div>
+      <ErrorNotice error={bulk.error} />
+    </div>
+  );
+}
 function TaskList({
   subjects,
   onOpen,
@@ -222,6 +349,14 @@ function TaskList({
     refetchInterval: 60000,
   });
   const items = query.data?.pages.flatMap((p) => p.items) || [];
+  const [selected, setSelected] = useState<Set<string> | null>(null);
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   useCutoffRefresh(items);
   function reset() {
     setSearch("");
@@ -246,6 +381,12 @@ function TaskList({
               : "Upcoming work by priority, then missed and completed."}
           </p>
         </div>
+        <Button
+          variant="outline"
+          onClick={() => setSelected(selected ? null : new Set())}
+        >
+          {selected ? "Done selecting" : "Select"}
+        </Button>
         <label className="sort-select">
           <span>Sort by</span>
           <select
@@ -392,7 +533,23 @@ function TaskList({
             Loading tasks…
           </p>
         ) : items.length ? (
-          <TaskRows items={items} onOpen={onOpen} />
+          <>
+            {selected && (
+              <BulkBar
+                selected={selected}
+                visible={items}
+                subjects={subjects}
+                onSelect={setSelected}
+                onDone={() => setSelected(new Set())}
+              />
+            )}
+            <TaskRows
+              items={items}
+              onOpen={onOpen}
+              selected={selected ?? undefined}
+              onToggle={toggle}
+            />
+          </>
         ) : (
           <div className="empty">
             <ListTodo size={28} />

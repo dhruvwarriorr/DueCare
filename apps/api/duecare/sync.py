@@ -782,6 +782,9 @@ def gmail_unit(snap, token):
         interpret.repair_claimed_identity(db, conn)
         interpret.repair_misattributed(db, conn)
         interpret.repair_undated(db, conn)
+        interpret.relink_named_subjects(db, conn.user_id)
+        interpret.merge_duplicates(db, conn.user_id)
+        interpret.tidy_reviews(db, conn.user_id)
         return to_interpretation(job)
 
     return finished
@@ -1064,6 +1067,9 @@ def classroom_unit(snap, token):
         interpret.repair_claimed_identity(db, conn)
         interpret.repair_misattributed(db, conn)
         interpret.repair_undated(db, conn)
+        interpret.relink_named_subjects(db, conn.user_id)
+        interpret.merge_duplicates(db, conn.user_id)
+        interpret.tidy_reviews(db, conn.user_id)
         return to_interpretation(job)
 
     return finished
@@ -1416,6 +1422,8 @@ def store_classroom(db, conn, sub, cid, resource, item):
             "courseWorkType": item.get("courseWorkType"),
             "stateHistory": history,
             "alternateLink": item.get("alternateLink"),
+            # The grade the teacher returned, when there is one (draft grades are not visible).
+            "assignedGrade": item.get("assignedGrade"),
         }
         hashed = data
         title = None
@@ -1446,10 +1454,12 @@ def store_classroom(db, conn, sub, cid, resource, item):
         .where(SourceRecord.connection_id == conn.id, SourceRecord.provider_id == pid)
         .with_for_update()
     )
-    creator = item.get("creatorUserId") if resource != "submissions" else None
+    # Who posted it and what it is out of: details, not a new revision of the work.
+    details = {"creatorUserId": item.get("creatorUserId"), "maxPoints": item.get("maxPoints")}
+    details = {k: v for k, v in details.items() if v is not None and resource != "submissions"}
     if record and record.content_hash == digest:
-        if creator and record.data.get("creatorUserId") != creator:
-            record.data = {**record.data, "creatorUserId": creator}  # Who posted it; not a new revision.
+        if any(record.data.get(k) != v for k, v in details.items()):
+            record.data = {**record.data, **details}
         return "unchanged"
     result = "updated" if record else "stored"
     if record is None:
@@ -1465,7 +1475,7 @@ def store_classroom(db, conn, sub, cid, resource, item):
     record.processing_state = "awaiting_interpretation"
     record.processing_version = VERSION
     record.reason = None
-    record.data = {**data, "creatorUserId": creator} if creator else data
+    record.data = {**data, **details}
     db.flush()
     replace_attachments(db, record, attachments)
     return result

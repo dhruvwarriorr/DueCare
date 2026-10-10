@@ -594,3 +594,48 @@ def test_task_list_sorts_by_date_or_priority_across_pages(client, headers):
         "Tomorrow", "Far but critical", "In two days", "Next week", "Pinned low but soon", "Undated",
         "Missed yesterday", "Missed last week",
     ]  # fmt: skip
+
+
+def test_bulk_actions_apply_to_several_tasks_at_once(client, headers):
+    subject = client.post("/api/v1/subjects", headers=headers, json={"name": "DBMS", "kind": "theory"}).json()
+    ids = [
+        client.post(
+            "/api/v1/tasks", headers=headers.fresh(), json={"title": f"Work {n}", "type": "assignment"}
+        ).json()["id"]
+        for n in range(3)
+    ]
+
+    def bulk(**body):
+        return client.post("/api/v1/tasks/bulk", headers=headers.fresh(), json=body)
+
+    assert bulk(taskIds=ids[:2], action="complete").json() == {"ok": True, "count": 2}
+    statuses = {t["id"]: t["status"] for t in client.get("/api/v1/tasks", headers=headers).json()["items"]}
+    assert [statuses[i] for i in ids] == ["completed", "completed", "due"]
+    assert bulk(taskIds=ids[:1], action="reopen").status_code == 200
+    assert bulk(taskIds=ids, action="subject").status_code == 422  # A subject is required.
+    assert bulk(taskIds=ids, action="subject", subjectId=subject["id"]).status_code == 200
+    names = {t["subjectName"] for t in client.get("/api/v1/tasks", headers=headers).json()["items"]}
+    assert names == {"DBMS"}
+    history = client.get(f"/api/v1/tasks/{ids[0]}/history", headers=headers).json()["items"]
+    assert {"completed", "reopened", "edited"} <= {h["action"] for h in history}
+    assert bulk(taskIds=ids[1:], action="delete").status_code == 200
+    assert [t["id"] for t in client.get("/api/v1/tasks", headers=headers).json()["items"]] == ids[:1]
+    assert bulk(taskIds=ids[1:2], action="complete").status_code == 404  # Gone: nothing applied.
+
+
+def test_tasks_added_since_a_time_can_be_listed(client, headers):
+    before = now()
+    client.post("/api/v1/tasks", headers=headers.fresh(), json={"title": "Earlier", "type": "assignment"})
+    since = now()
+    client.post("/api/v1/tasks", headers=headers.fresh(), json={"title": "New", "type": "assignment"})
+    since_q = since.isoformat().replace("+00:00", "Z")
+    items = client.get(f"/api/v1/tasks?createdAfter={since_q}", headers=headers).json()["items"]
+    assert [t["title"] for t in items] == ["New"]
+    assert (
+        len(
+            client.get(
+                f"/api/v1/tasks?createdAfter={before.isoformat().replace('+00:00', 'Z')}", headers=headers
+            ).json()["items"]
+        )
+        == 2
+    )

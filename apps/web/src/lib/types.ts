@@ -86,6 +86,14 @@ export type Task = {
   mergedInto: string | null;
   timingProvenance?: Record<string, { basis?: string; phrase?: string }>;
   timingTentative?: { question?: string } | null;
+  /** The student's own Classroom turn-in, when this is Classroom coursework. */
+  classroom?: {
+    state: string | null;
+    late: boolean;
+    grade: number | null;
+    maxPoints: number | null;
+    at: string | null;
+  } | null;
   /** The title as the source wrote it; `title` is the clean name shown to the student. */
   sourceTitle?: string;
 };

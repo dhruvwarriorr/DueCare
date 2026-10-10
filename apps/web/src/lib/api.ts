@@ -147,6 +147,18 @@ export function formatRange(start: string, end: string) {
   const sameYear = start.slice(0, 4) === end.slice(0, 4);
   return day(start, !sameYear) + " – " + day(end, true);
 }
+/** What Classroom shows for the student's turn-in: a returned grade, or that it was late. */
+export function classroomNote(t: Pick<Task, "classroom">) {
+  const c = t.classroom;
+  if (!c) return null;
+  const parts: string[] = [];
+  if (c.grade !== null && c.grade !== undefined)
+    parts.push("graded " + c.grade + (c.maxPoints ? "/" + c.maxPoints : ""));
+  else if (c.state === "RETURNED") parts.push("returned");
+  if (c.late && (c.state === "TURNED_IN" || c.state === "RETURNED"))
+    parts.push("turned in late");
+  return parts.length ? parts.join(" · ") : null;
+}
 /** One description of when work is due, shared by every view. */
 export function deadline(t: Dated): { main: string; note: string | null } {
   if (!t.dueAt) return { main: "No due date yet", note: null };

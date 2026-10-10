@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
+  classroomNote,
   datetimeFields,
   dueWindow,
   formatRange,
@@ -146,6 +147,11 @@ export function TaskDetail({
                         " · " +
                         formatTime(t.completedAt)
                       : "Not completed"}
+                    {classroomNote(t) && (
+                      <small className="block text-xs text-secondary">
+                        Classroom: {classroomNote(t)}
+                      </small>
+                    )}
                   </dd>
                 </div>
                 {datetimeFields

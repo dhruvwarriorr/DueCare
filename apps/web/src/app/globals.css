@@ -1045,6 +1045,28 @@ button.avatar[aria-expanded="true"] {
   color: var(--on-graphite);
   font-weight: 650;
 }
+.week-digest {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--ink);
+  background: var(--ink-wash);
+}
+.digest-new {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 8px;
+  font-size: 14px;
+}
+.digest-new button {
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
 .summary {
   display: flex;
   flex-wrap: wrap;
@@ -2239,6 +2261,48 @@ button.avatar[aria-expanded="true"] {
 }
 .detail-section > p {
   margin-top: 10px;
+}
+.classroom-note {
+  color: var(--ink);
+  font-weight: 600;
+}
+.bulk-bar {
+  position: sticky;
+  top: 72px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: var(--sheet);
+  border: 1px solid var(--ink-line);
+}
+.bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+.bulk-subject select {
+  min-height: 36px;
+}
+.link-button {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.task-select {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  align-self: center;
+  justify-self: center;
+  accent-color: var(--ink);
+}
+.task-item.selected {
+  background: var(--ink-wash);
 }
 .sort-select {
   display: inline-flex;

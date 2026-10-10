@@ -138,6 +138,12 @@ class AuthorizeInput(Input):
     account_id: UUID | None = None
 
 
+class BulkTaskInput(Input):
+    task_ids: list[UUID] = Field(min_length=1, max_length=100)
+    action: Literal["complete", "reopen", "subject", "delete"]
+    subject_id: UUID | None = None
+
+
 class SyncInput(Input):
     trigger: Literal["open", "focus", "manual"] = "manual"
 

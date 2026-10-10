@@ -113,6 +113,78 @@ function dueTime(d: Due) {
         : clock(d.min);
   return t.timingTentative ? when + " · tentative" : when;
 }
+const LAST_VISIT = "duecare.lastVisit";
+/** When the student last left the app; read once per visit, updated when they leave. */
+function useLastVisit() {
+  const [previous] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(LAST_VISIT);
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    const save = () => {
+      try {
+        localStorage.setItem(LAST_VISIT, new Date().toISOString());
+      } catch {}
+    };
+    const onHide = () => {
+      if (document.visibilityState === "hidden") save();
+    };
+    if (!previous) save();
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", save);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", save);
+    };
+  }, [previous]);
+  return previous;
+}
+/** This week at a glance, and what arrived since the last visit. */
+function WeekDigest({
+  tasks,
+  onOpen,
+}: {
+  tasks?: Task[];
+  onOpen: (id: string) => void;
+}) {
+  const since = useLastVisit();
+  const fresh = useQuery({
+    queryKey: ["tasks", "new-since", since],
+    queryFn: () =>
+      api<Page<Task>>(
+        "/tasks?limit=5&createdAfter=" + encodeURIComponent(since || ""),
+      ),
+    enabled: Boolean(since),
+  });
+  if (!tasks) return null;
+  const count = (status: string) =>
+    tasks.filter((t) => t.status === status).length;
+  const added = fresh.data?.items || [];
+  return (
+    <section className="week-digest" aria-label="This week">
+      <p>
+        <strong>This week:</strong> {count("due")} due · {count("missed")}{" "}
+        missed · {count("completed")} done
+      </p>
+      {added.length > 0 && (
+        <div className="digest-new">
+          <span>
+            New since your last visit
+            {fresh.data?.nextCursor ? " (latest 5)" : ""}:
+          </span>
+          {added.map((t) => (
+            <button key={t.id} type="button" onClick={() => onOpen(t.id)}>
+              {t.title}
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
 function DueItem({
   due,
   onOpen,
@@ -374,6 +446,9 @@ export function WeekSheet({
   const summaryLine = (
     <>
       <ErrorNotice error={overview.error} retry={() => overview.refetch()} />
+      {mode === "week" && monday === mondayOf(today) && (
+        <WeekDigest tasks={week.data} onOpen={onOpen} />
+      )}
       <div className="summary" role="group" aria-label="Your work at a glance">
         {overview.isPending ? (
           <span className="text-secondary">Counting your work…</span>

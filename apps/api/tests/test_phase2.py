@@ -269,7 +269,19 @@ def gmail_fixture(fake):
     )
 
 
-def test_gmail_initial_import_pagination_sender_rules_and_no_tasks(client, headers, student, fake):
+@pytest.fixture
+def import_only(monkeypatch):
+    """Phase 2 covers importing: saved records are left for interpretation (covered in Phase 3)."""
+    from duecare import interpret, sync
+
+    monkeypatch.setattr(interpret, "pending_records", lambda *a, **k: [])
+    monkeypatch.setattr(interpret, "pending_record", lambda *a, **k: None)
+    monkeypatch.setattr(sync, "wait_for_interpretation", lambda *a: False)
+
+
+def test_gmail_initial_import_pagination_sender_rules_and_no_tasks(
+    client, headers, student, fake, import_only
+):
     gmail_fixture(fake)
     # Make the duplicate a byte-identical copy so the Message-ID and decoded content match.
     fake.messages["m5"]["raw"] = fake.messages["m1"]["raw"]
@@ -424,7 +436,7 @@ def test_block_applied_while_fetch_in_flight_cannot_commit_content(client, heade
 
 
 def test_block_suppresses_unprocessed_records_preserves_tasks_and_reprocess_restores(
-    client, headers, student, fake
+    client, headers, student, fake, import_only
 ):
     fake.add_message(
         "m1",
@@ -570,7 +582,9 @@ def classroom_fixture(fake):
     ]
 
 
-def test_classroom_discovery_explicit_mapping_and_initial_import_rules(client, headers, student, fake):
+def test_classroom_discovery_explicit_mapping_and_initial_import_rules(
+    client, headers, student, fake, import_only
+):
     theory = client.post("/api/v1/subjects", headers=headers, json={"name": "DBMS", "kind": "theory"}).json()
     lab = client.post("/api/v1/subjects", headers=headers, json={"name": "DBMS Lab", "kind": "lab"}).json()
     classroom_fixture(fake)
