@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 
-from duecare import auth
+from duecare import auth, naming
 from duecare.models import now
 
 config = json.loads((Path(__file__).resolve().parents[3] / ".local/test-config.json").read_text())
@@ -100,6 +100,17 @@ def account(email="student@somaiya.edu", verified=True):
 @pytest.fixture(autouse=True)
 def fixture_provider(monkeypatch):
     monkeypatch.setattr(auth, "provider", FixtureAuth())
+
+
+AI_NAME_TITLES = naming.name_titles
+
+
+@pytest.fixture(autouse=True)
+def offline_naming(monkeypatch):
+    """Task naming never reaches a provider in tests; tests of the AI path restore AI_NAME_TITLES."""
+    monkeypatch.setattr(
+        naming, "name_titles", lambda items: ({i["key"]: naming.tidy(i["title"]) for i in items}, False)
+    )
 
 
 @pytest.fixture

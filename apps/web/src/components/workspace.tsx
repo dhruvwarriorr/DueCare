@@ -10,7 +10,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Plus, LogOut, Bell, Search, ListTodo } from "lucide-react";
-import { api, formatTime } from "@/lib/api";
+import { api, deadline } from "@/lib/api";
 import { useCutoffRefresh } from "@/lib/use-cutoff-refresh";
 import type { Profile, Page, Task, Subject } from "@/lib/types";
 import { Button } from "./ui/button";
@@ -119,11 +119,12 @@ function TaskRows({
                     : ""}
                 </span>
               </span>
-              <span className="task-deadline">
-                {formatTime(t.dueAt)}
-                {t.dueDate && t.type === "assignment" && (
-                  <small>Date only · due by 23:59</small>
-                )}
+              <span
+                className="task-deadline"
+                title={t.timingTentative?.question || undefined}
+              >
+                {deadline(t).main}
+                {deadline(t).note && <small>{deadline(t).note}</small>}
               </span>
               <span className={"status " + t.status}>
                 {t.status === "completed" ? "done" : t.status}
@@ -137,7 +138,6 @@ function TaskRows({
 const statusOptions = [
   ["", "All"],
   ["due", "Due"],
-  ["overdue", "Overdue"],
   ["missed", "Missed"],
   ["completed", "Completed"],
 ] as const;
@@ -165,11 +165,26 @@ function TaskList({
   const [kind, setKind] = useState("");
   const [priority, setPriority] = useState("");
   const [date, setDate] = useState("");
+  const [sort, setSort] = useState<"date" | "priority">(() => {
+    try {
+      return localStorage.getItem("duecare.taskSort") === "priority"
+        ? "priority"
+        : "date";
+    } catch {
+      return "date";
+    }
+  });
+  function chooseSort(value: "date" | "priority") {
+    setSort(value);
+    try {
+      localStorage.setItem("duecare.taskSort", value);
+    } catch {}
+  }
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(search), 250);
     return () => clearTimeout(timer);
   }, [search]);
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ sort });
   if (debounced) params.set("q", debounced);
   if (undated) params.set("undated", "true");
   if (status) params.set("status", status);
@@ -226,9 +241,21 @@ function TaskList({
         <div>
           <h2>All tasks</h2>
           <p className="text-secondary">
-            Every assignment and test, soonest first.
+            {sort === "date"
+              ? "Upcoming work soonest first, then missed, undated and completed."
+              : "Upcoming work by priority, then missed and completed."}
           </p>
         </div>
+        <label className="sort-select">
+          <span>Sort by</span>
+          <select
+            value={sort}
+            onChange={(e) => chooseSort(e.target.value as "date" | "priority")}
+          >
+            <option value="date">Due date</option>
+            <option value="priority">Priority</option>
+          </select>
+        </label>
       </div>
       <div className="filters">
         <div className="filter-main">

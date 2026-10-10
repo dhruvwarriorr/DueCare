@@ -750,7 +750,8 @@ def test_single_consent_connects_gmail_and_classroom_and_reports_partial_grants(
     r = client.post("/api/v1/connections/authorize", headers=headers, json={})
     q = parse_qs(urlparse(r.json()["url"]).query)
     assert set(q["scope"][0].split()) == {
-        "openid", "email", "profile", *google.SERVICE_SCOPES["gmail"], *google.SERVICE_SCOPES["classroom"]
+        "openid", "email", "profile", *google.SERVICE_SCOPES["gmail"], *google.SERVICE_SCOPES["classroom"],
+        *google.OPTIONAL_SCOPES["classroom"],  # Requested; not granting it never blocks a connection.
     }  # fmt: skip
     state = q["state"][0]
     out = client.get(f"/api/v1/connections/oauth/callback?state={state}&code=both", headers=headers).json()

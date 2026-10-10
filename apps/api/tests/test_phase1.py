@@ -213,7 +213,7 @@ def test_owned_resources_rls_foreign_keys(client, headers, student):
         db.rollback()
 
 
-@pytest.mark.parametrize("kind,expected", [("assignment", "overdue"), ("test", "missed")])
+@pytest.mark.parametrize("kind,expected", [("assignment", "missed"), ("test", "missed")])
 def test_status_completion_survives_edits_and_reopening(client, headers, kind, expected):
     t = client.post(
         "/api/v1/tasks",
@@ -276,7 +276,28 @@ def test_quiz_window_fixed_session_and_date_only(client, headers):
     t = client.post(
         "/api/v1/tasks", headers=headers, json={"title": "Date", "type": "test", "dueDate": "2026-10-20"}
     ).json()
-    assert t["dueAt"] is None and t["status"] == "due"
+    # A dated test without a start time is still dated: it is over by the end of that day.
+    assert t["dueAt"].startswith("2026-10-20T18:29") and t["status"] == "due"
+    w = client.post(
+        "/api/v1/tasks",
+        headers=headers,
+        json={
+            "title": "Viva",
+            "type": "test",
+            "dateWindowStart": "2026-11-30",
+            "dateWindowEnd": "2026-12-04",
+        },
+    ).json()
+    # A range of possible days is due by its last day, and follows the window when it changes.
+    assert (
+        w["dueAt"].startswith("2026-12-04T18:29") and w["timingProvenance"]["dueAt"]["basis"] == "window-end"
+    )
+    w = client.patch(
+        "/api/v1/tasks/" + w["id"],
+        headers=headers.fresh(),
+        json={"revision": w["revision"], "dateWindowEnd": "2026-12-02"},
+    ).json()
+    assert w["dueAt"].startswith("2026-12-02T18:29")
     invalid = [
         {"timingMode": "fixed_session"},
         {"dueAt": "2026-01-01T12:00:00"},
@@ -538,3 +559,38 @@ def test_signature_failure_and_missing_session_claim(student, monkeypatch):
     payload.pop("session_id")
     with pytest.raises(auth.ApiError):
         auth.SupabaseAuth().claims(jwt.encode(payload, KEY, algorithm="ES256"))
+
+
+def test_task_list_sorts_by_date_or_priority_across_pages(client, headers):
+    def add(title, hours=None, **extra):
+        body = {"title": title, "type": "assignment", **extra}
+        if hours is not None:
+            body["dueAt"] = (now() + timedelta(hours=hours)).isoformat()
+        assert client.post("/api/v1/tasks", headers=headers.fresh(), json=body).status_code == 201
+
+    add("Next week", 24 * 6)
+    add("Tomorrow", 20)
+    add("Undated")
+    add("Missed yesterday", -24)
+    add("Missed last week", -24 * 7)
+    add("In two days", 48)
+    add("Pinned low but soon", 2, priorityOverride="low")
+    add("Far but critical", 24 * 20, priorityOverride="critical")
+
+    def titles(sort):
+        out, cursor = [], ""
+        while True:  # Pages of three: the order must hold across pages.
+            page = client.get(f"/api/v1/tasks?sort={sort}&limit=3&cursor={cursor}", headers=headers).json()
+            out += [t["title"] for t in page["items"]]
+            if not page["nextCursor"]:
+                return out
+            cursor = page["nextCursor"]
+
+    assert titles("date") == [
+        "Pinned low but soon", "Tomorrow", "In two days", "Next week", "Far but critical",
+        "Missed yesterday", "Missed last week", "Undated",
+    ]  # fmt: skip
+    assert titles("priority") == [
+        "Tomorrow", "Far but critical", "In two days", "Next week", "Pinned low but soon", "Undated",
+        "Missed yesterday", "Missed last week",
+    ]  # fmt: skip

@@ -2,6 +2,7 @@
 
 import uuid
 from typing import Literal
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Query, Request
 from pydantic import Field
@@ -12,11 +13,14 @@ from .common import User, finish, owned, page, replay, revision, work
 from .domain import effective_status
 from .errors import ApiError
 from .models import (
+    Connection,
+    GoogleAccount,
     History,
     MergeOperation,
     Profile,
     ReviewItem,
     Rule,
+    SourceCourse,
     SourceEvent,
     SourceRecord,
     Subject,
@@ -650,10 +654,39 @@ def reassign_evidence(id: uuid.UUID, body: Reassign, request: Request, user=User
         )
 
 
+def iso(value):
+    return value.isoformat() if value else None
+
+
+def open_url(db, record, accounts):
+    """A link that opens the original item in the student's own Gmail or Classroom."""
+    if record.kind == "gmail_message":
+        gid = record.provider_id.split(":", 2)[2]
+        account = accounts.get(record.connection_id)
+        user = "?authuser=" + quote(account) if account else "0/"
+        return f"https://mail.google.com/mail/u/{user}#all/{quote(gid)}"
+    link = record.data.get("alternateLink")
+    if not isinstance(link, str) or not link.startswith("https://"):
+        return None
+    return link if urlparse(link).hostname == "classroom.google.com" else None
+
+
 @router.get("/tasks/{id}/evidence")
 def task_evidence(id: uuid.UUID, user=User):
     with work(user) as db:
         owned(db, Task, id, user["id"])
+        accounts = dict(
+            db.execute(
+                select(Connection.id, GoogleAccount.email)
+                .join(GoogleAccount, GoogleAccount.id == Connection.account_id)
+                .where(Connection.user_id == user["id"])
+            ).all()
+        )
+        course_rows = db.scalars(select(SourceCourse).where(SourceCourse.user_id == user["id"])).all()
+        courses = {(c.connection_id, c.external_course_id): c.name for c in course_rows}
+        teachers = {
+            (c.connection_id, c.external_course_id): c.data.get("teachers") or {} for c in course_rows
+        }
         out = []
         for ev, event, record in db.execute(
             select(TaskEvidence, SourceEvent, SourceRecord)
@@ -672,6 +705,13 @@ def task_evidence(id: uuid.UUID, user=User):
                     "occurredAt": event.occurred_at.isoformat() if event.occurred_at else None,
                     "sourceKind": record.kind,
                     "sender": record.sender_email,
+                    "senderName": record.data.get("senderName"),
+                    "postedAt": iso(record.sent_at or record.published_at or event.occurred_at),
+                    "courseName": courses.get((record.connection_id, record.external_course_id)),
+                    "postedBy": teachers.get((record.connection_id, record.external_course_id), {}).get(
+                        record.data.get("creatorUserId")
+                    ),
+                    "openUrl": open_url(db, record, accounts),
                     "sourceTitle": record.title,
                     "links": mail.source_links(event.data.get("links", [])),
                     "excerpt": event.data.get("excerpt"),

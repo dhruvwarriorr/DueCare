@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -9,14 +10,14 @@ from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from sqlalchemy import and_, case, func, or_, select, text
+from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from . import academic, auth, phase3_api, privacy_api, sources_api, timetable_api
 from .common import User, finish, owned, page, replay, revision, work
 from .config import settings
 from .db import transaction
-from .domain import effective_status, task_data
+from .domain import effective_status, task_data, window_derived
 from .errors import ApiError
 from .models import History, ReviewItem, Slot, Subject, Task, now
 from .safe_logs import configure
@@ -359,6 +360,7 @@ def tasks(
     date_to: datetime | None = Query(None, alias="dateTo"),
     source: str | None = None,
     batch: str | None = None,
+    sort: Literal["date", "priority"] = "date",
     user=User,
 ):
     with work(user) as db:
@@ -371,12 +373,11 @@ def tasks(
         current = now()
         effective = case(
             (Task.completed_at.is_not(None), "completed"),
-            (and_(Task.due_at <= current, Task.type == "test"), "missed"),
-            (Task.due_at <= current, "overdue"),
+            (Task.due_at <= current, "missed"),
             else_="due",
         )
         if status:
-            if status not in ("due", "completed", "overdue", "missed"):
+            if status not in ("due", "completed", "missed"):
                 raise ApiError(422, "INVALID_STATUS", "Invalid status")
             stmt = stmt.where(effective == status)
         if type:
@@ -387,7 +388,11 @@ def tasks(
             stmt = stmt.join(Subject, Task.subject_id == Subject.id).where(Subject.kind == subject_kind)
         if q:
             stmt = stmt.where(
-                or_(Task.title.ilike("%" + q + "%"), Task.data["notes"].astext.ilike("%" + q + "%"))
+                or_(
+                    Task.title.ilike("%" + q + "%"),
+                    Task.data["displayTitle"].astext.ilike("%" + q + "%"),
+                    Task.data["notes"].astext.ilike("%" + q + "%"),
+                )
             )
         if undated:
             stmt = stmt.where(Task.due_at.is_(None))
@@ -403,22 +408,48 @@ def tasks(
             raise ApiError(422, "INVALID_SOURCE", "Invalid source filter")
         if batch and profile(db, user["id"]).data.get("generalBatch") != batch:
             stmt = stmt.where(False)
+        computed = case(
+            (Task.due_at <= current, "critical"),
+            (Task.due_at <= current + timedelta(hours=24), "critical"),
+            (Task.due_at <= current + timedelta(days=3), "high"),
+            (Task.due_at <= current + timedelta(days=7), "medium"),
+            else_="low",
+        )
+        effective_priority = func.coalesce(
+            Task.data["priorityOverride"].astext, Task.data["rulePriority"]["value"].astext, computed
+        )
         if priority_filter:
-            computed = case(
-                (Task.due_at <= current, "critical"),
-                (Task.due_at <= current + timedelta(hours=24), "critical"),
-                (Task.due_at <= current + timedelta(days=3), "high"),
-                (Task.due_at <= current + timedelta(days=7), "medium"),
-                else_="low",
+            stmt = stmt.where(effective_priority == priority_filter)
+        # Upcoming work first, then missed, undated (date order) and completed work last.
+        group = case(
+            (Task.completed_at.is_not(None), 3),
+            (Task.due_at <= current, 1),
+            (Task.due_at.is_(None), 2 if sort == "date" else 0),
+            else_=0,
+        )
+        order = [group]
+        if sort == "priority":
+            rank = case(
+                (effective_priority == "critical", 0),
+                (effective_priority == "high", 1),
+                (effective_priority == "medium", 2),
+                else_=3,
             )
-            stmt = stmt.where(
-                func.coalesce(
-                    Task.data["priorityOverride"].astext, Task.data["rulePriority"]["value"].astext, computed
-                )
-                == priority_filter
-            )
-        rows, c = page(db, stmt, Task, limit, cursor)
-        return {"items": [task_out(t, db, user["id"]) for t in rows], "nextCursor": c}
+            order.append(case((group == 0, rank), else_=0))
+        # Soonest first for upcoming work; most recent first for missed and completed work.
+        order += [
+            case((group == 0, Task.due_at), else_=None).asc().nulls_last(),
+            Task.due_at.desc().nulls_last(),
+            Task.created_at.desc(),
+            Task.id,
+        ]
+        try:
+            offset = int(base64.urlsafe_b64decode(cursor.encode()).decode()) if cursor else 0
+        except (ValueError, UnicodeDecodeError):
+            raise ApiError(422, "INVALID_CURSOR", "Invalid page cursor")
+        rows = list(db.scalars(stmt.order_by(*order).offset(offset).limit(limit + 1)))
+        c = base64.urlsafe_b64encode(str(offset + limit).encode()).decode() if len(rows) > limit else None
+        return {"items": [task_out(t, db, user["id"]) for t in rows[:limit]], "nextCursor": c}
 
 
 @app.post("/api/v1/tasks", status_code=201)
@@ -476,6 +507,8 @@ def edit_task(id: uuid.UUID, body: TaskPatch, request: Request, user=User):
             merged["dueAt"] = None
         if merged.get("dueDate") and "dueAt" not in changes:
             merged["dueAt"] = None
+        if window_derived(t.data) and "dueAt" not in changes:
+            merged["dueAt"] = None  # Recomputed from the (possibly changed) window.
         d = task_data(TaskInput.model_validate({**merged, **changes}))
         if d["subjectId"]:
             owned(db, Subject, uuid.UUID(d["subjectId"]), user["id"])
@@ -486,9 +519,23 @@ def edit_task(id: uuid.UUID, body: TaskPatch, request: Request, user=User):
         }
         # Source metadata and decisions survive ordinary edits.
         for key in ("latestManualDecision", "completion", "sources", "sourceLinks", "observedTargeting",
-                    "groupWork", "rulePriority", "mergedInto"):  # fmt: skip
+                    "groupWork", "rulePriority", "mergedInto", "displayTitle", "naming"):  # fmt: skip
             if key in t.data:
                 d[key] = t.data[key]
+        # A tentative source date stays tentative until the student sets the timing themselves.
+        if "timingTentative" in t.data and not any(
+            k in changes
+            for k in (
+                "timingMode",
+                "dueAt",
+                "dueDate",
+                "startsAt",
+                "availabilityClosesAt",
+                "dateWindowStart",
+                "dateWindowEnd",
+            )  # fmt: skip
+        ):
+            d["timingTentative"] = t.data["timingTentative"]
         accepted_changes = {
             k: v
             for k, v in d.items()
@@ -575,11 +622,10 @@ def overview(user=User):
         current = now()
         effective = case(
             (Task.completed_at.is_not(None), "completed"),
-            (and_(Task.due_at <= current, Task.type == "test"), "missed"),
-            (Task.due_at <= current, "overdue"),
+            (Task.due_at <= current, "missed"),
             else_="due",
         )
-        counts = {k: 0 for k in ("due", "completed", "overdue", "missed")}
+        counts = {k: 0 for k in ("due", "completed", "missed")}
         visible = Task.data["mergedInto"].astext.is_(None)
         counts.update(
             dict(

@@ -87,6 +87,9 @@ def connection_out(db, conn):
         "revision": conn.revision,
         "account": account_out(account),
         "permissions": conn.scopes,
+        "optionalPermissionsMissing": [
+            s for s in google.OPTIONAL_SCOPES[conn.service] if s not in conn.scopes
+        ],
         "lastAttemptAt": sync.iso(conn.last_attempt_at),
         "lastSuccessAt": sync.iso(conn.last_success_at),
         "retryAt": sync.iso(conn.retry_at),
@@ -251,7 +254,8 @@ def link_account(db, uid, sub, email, profile, tokens, services):
             db.add(conn)
         elif conn.status != "active":
             conn.revision += 1
-        conn.status, conn.scopes = "active", google.SERVICE_SCOPES[svc]
+        optional = [s for s in google.OPTIONAL_SCOPES[svc] if s in granted]
+        conn.status, conn.scopes = "active", google.SERVICE_SCOPES[svc] + optional
         conn.data = {**(conn.data or {}), "lastError": None, "connectedAt": now().isoformat()}
         db.flush()
         connected.append({"connectionId": str(conn.id), "service": svc})

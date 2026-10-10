@@ -2,8 +2,14 @@
 import { useCutoffRefresh } from "@/lib/use-cutoff-refresh";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, formatTime, datetimeFields } from "@/lib/api";
-import type { Task } from "@/lib/types";
+import {
+  api,
+  datetimeFields,
+  dueWindow,
+  formatRange,
+  formatTime,
+} from "@/lib/api";
+import type { Evidence, Task } from "@/lib/types";
 import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
 import { ErrorNotice } from "./ui/field";
@@ -32,6 +38,10 @@ export function TaskDetail({
   const task = useQuery({
     queryKey: ["task", id],
     queryFn: () => api<Task>("/tasks/" + id),
+  });
+  const evidence = useQuery({
+    queryKey: ["evidence", id],
+    queryFn: () => api<{ items: Evidence[] }>("/tasks/" + id + "/evidence"),
   });
   const mutation = useMutation({
     mutationFn: ({ remove }: { remove: boolean }) =>
@@ -72,7 +82,11 @@ export function TaskDetail({
         if (!v) onClose();
       }}
       title={t?.title || "Task details"}
-      description="Your instructions, timing, and status."
+      description={
+        t?.sourceTitle && t.sourceTitle !== t.title
+          ? "Original title: " + t.sourceTitle
+          : "Your instructions, timing, and status."
+      }
     >
       <div className="dialog-body">
         <ErrorNotice error={task.error} retry={() => task.refetch()} />
@@ -167,9 +181,30 @@ export function TaskDetail({
                 )}
                 {t.dateWindowStart && (
                   <div>
-                    <dt>Unresolved date window</dt>
+                    <dt>Date window</dt>
                     <dd>
-                      {t.dateWindowStart} to {t.dateWindowEnd || "unknown"}
+                      {formatRange(
+                        t.dateWindowStart,
+                        t.dateWindowEnd || t.dateWindowStart,
+                      )}
+                      {dueWindow(t) && (
+                        <span className="block text-xs text-secondary">
+                          Exact day not announced; due by the last day
+                        </span>
+                      )}
+                    </dd>
+                  </div>
+                )}
+                {t.timingTentative && (
+                  <div>
+                    <dt>Timing</dt>
+                    <dd>
+                      Tentative
+                      {t.timingTentative.question && (
+                        <span className="block text-xs text-secondary">
+                          {t.timingTentative.question}
+                        </span>
+                      )}
                     </dd>
                   </div>
                 )}
@@ -193,6 +228,7 @@ export function TaskDetail({
                     </div>
                   ))}
               </dl>
+              <SourceList items={evidence.data?.items} />
               {t.instructions && (
                 <section className="detail-section">
                   <h3>Instructions</h3>
@@ -242,5 +278,71 @@ export function TaskDetail({
         </div>
       )}
     </Dialog>
+  );
+}
+
+const kindNames: Record<Evidence["sourceKind"], string> = {
+  gmail_message: "Email",
+  classroom_announcement: "Classroom post",
+  classroom_coursework: "Classroom assignment",
+  classroom_submission: "Classroom turn-in",
+};
+/** Where the task came from: who posted it, when, and a link back to the original. */
+function SourceList({ items }: { items?: Evidence[] }) {
+  const seen = new Set<string>();
+  const sources = (items || []).filter((e) => {
+    // One row per original item; a turn-in only matters as proof of completion.
+    const key = e.openUrl || e.id;
+    if (e.state !== "active" || e.eventType === "submission" || seen.has(key))
+      return false;
+    seen.add(key);
+    return true;
+  });
+  if (!sources.length) return null;
+  return (
+    <section className="detail-section">
+      <h3>{sources.length === 1 ? "Source" : "Sources"}</h3>
+      <ul className="source-list">
+        {sources.map((e) => (
+          <li key={e.id}>
+            <div>
+              <strong>{kindNames[e.sourceKind]}</strong>
+              {e.sourceKind === "gmail_message"
+                ? e.senderName || e.sender
+                  ? " from " + (e.senderName || e.sender)
+                  : ""
+                : (e.postedBy ? " by " + e.postedBy : "") +
+                  (e.courseName ? " in " + e.courseName : "")}
+              {e.postedAt && (
+                <span className="text-secondary">
+                  {" · posted " + formatTime(e.postedAt)}
+                </span>
+              )}
+            </div>
+            {e.senderName && e.sender && (
+              <small className="block text-xs text-secondary">{e.sender}</small>
+            )}
+            {(e.sourceTitle || e.excerpt) && (
+              <p className="text-secondary mt-1">
+                {e.sourceTitle || "“" + e.excerpt + "”"}
+              </p>
+            )}
+            {e.openUrl && (
+              <a
+                className="source-open"
+                href={e.openUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {e.sourceKind === "gmail_message"
+                  ? "Open in Gmail"
+                  : "Open in Classroom"}{" "}
+                ↗
+              </a>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

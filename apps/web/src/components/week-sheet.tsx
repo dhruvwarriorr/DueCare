@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { DoneButton, useQuickComplete } from "@/lib/quick-complete";
-import { api, formatTime } from "@/lib/api";
+import { api, deadline, dueWindow, formatTime } from "@/lib/api";
 import { useCutoffRefresh } from "@/lib/use-cutoff-refresh";
 import type { Page, Slot, Subject, Task } from "@/lib/types";
 import { Button } from "./ui/button";
@@ -98,14 +98,20 @@ type PlacedSlot = Slot & {
 type Due = { task: Task; day: string; min: number };
 
 const statusWord: Record<string, string> = {
-  overdue: "overdue",
   missed: "missed",
   completed: "done",
 };
 function dueTime(d: Due) {
-  return d.task.dueDate && d.task.type === "assignment"
-    ? "23:59"
-    : clock(d.min);
+  const t = d.task;
+  // A window or a date without an announced time has no clock to show on the day.
+  const when = dueWindow(t)
+    ? "last day of window"
+    : t.dueDate && t.type === "test"
+      ? "time TBA"
+      : t.dueDate
+        ? "23:59"
+        : clock(d.min);
+  return t.timingTentative ? when + " · tentative" : when;
 }
 function DueItem({
   due,
@@ -132,7 +138,7 @@ function DueItem({
       <button
         className="due-open"
         onClick={() => onOpen(t.id)}
-        title={t.title + " · " + formatTime(t.dueAt)}
+        title={t.title + " · " + deadline(t).main}
       >
         <span className="due-title">{t.title}</span>
         <span className="due-meta">
@@ -352,13 +358,7 @@ export function WeekSheet({
 
   const summary: [string, number, () => void, string][] = [
     ["due", o?.counts.due || 0, () => onTasks("due"), ""],
-    ["overdue", o?.counts.overdue || 0, () => onTasks("overdue"), "alert"],
-    [
-      (o?.counts.missed || 0) === 1 ? "missed test" : "missed tests",
-      o?.counts.missed || 0,
-      () => onTasks("missed"),
-      "alert",
-    ],
+    ["missed", o?.counts.missed || 0, () => onTasks("missed"), "alert"],
     ["without a date", o?.undated || 0, () => onTasks("undated"), ""],
     ["to review", o?.reviewCount || 0, onAttention, "review"],
   ];

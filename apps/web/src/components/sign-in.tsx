@@ -21,7 +21,7 @@ const sampleSlots: [number, number, number, string, string][] = [
 const sampleDue: [number, string, string, string][] = [
   [0, "DS Exp 3", "23:59 · done", "completed"],
   [1, "CN quiz", "12:15", "due"],
-  [2, "DBMS ER diagram", "17:00 · overdue", "overdue"],
+  [2, "DBMS ER diagram", "17:00 · missed", "missed"],
   [3, "OS write-up", "23:59", "due"],
 ];
 const kinds: Record<string, string> = {

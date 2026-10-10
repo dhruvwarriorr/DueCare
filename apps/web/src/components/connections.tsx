@@ -50,6 +50,8 @@ const permissionLabels: Record<string, string> = {
     "See your coursework and submissions",
   "https://www.googleapis.com/auth/classroom.announcements.readonly":
     "See course announcements",
+  "https://www.googleapis.com/auth/classroom.rosters.readonly":
+    "See your teachers' names",
 };
 const errorText: Record<string, string> = {
   AUTHORIZATION_DECLINED: "Google access was not granted.",
@@ -624,6 +626,9 @@ export function Connections({
   const allActive =
     status("gmail") === "active" && status("classroom") === "active";
   const account = visible[0]?.account.email;
+  const namesMissing = visible.some(
+    (c) => c.status === "active" && c.optionalPermissionsMissing?.length,
+  );
   return (
     <>
       <div className="section-bar">
@@ -699,6 +704,24 @@ export function Connections({
             <Button disabled={grant.isPending} onClick={onConnect}>
               Allow Gmail and Classroom access
             </Button>
+          )}
+          {allActive && namesMissing && (
+            <div className="access-optional">
+              <p className="text-sm">
+                <strong>Show which teacher posted Classroom work.</strong>{" "}
+                <span className="text-secondary">
+                  Sign in again and allow DueCare to see your teachers&apos;
+                  names. Everything else keeps working without it.
+                </span>
+              </p>
+              <Button
+                variant="outline"
+                disabled={grant.isPending}
+                onClick={onConnect}
+              >
+                Allow teacher names
+              </Button>
+            </div>
           )}
         </section>
       )}

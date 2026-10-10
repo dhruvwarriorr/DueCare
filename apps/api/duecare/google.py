@@ -33,6 +33,9 @@ SERVICE_SCOPES = {
         "https://www.googleapis.com/auth/classroom.announcements.readonly",
     ],
 }
+# Optional: granting it adds detail but its absence never blocks a connection. Rosters read-only
+# lets DueCare name the teacher who posted Classroom work.
+OPTIONAL_SCOPES = {"gmail": [], "classroom": ["https://www.googleapis.com/auth/classroom.rosters.readonly"]}
 # Google reports some Classroom scopes under equivalent legacy names in token responses.
 SCOPE_ALIASES = {
     "https://www.googleapis.com/auth/classroom.student-submissions.me.readonly": (
@@ -151,7 +154,8 @@ class GoogleSource:
             "redirect_uri": callback_url(),
             "response_type": "code",
             "scope": " ".join(
-                IDENTITY_SCOPES + [s for svc in services_for(service) for s in SERVICE_SCOPES[svc]]
+                IDENTITY_SCOPES
+                + [s for svc in services_for(service) for s in SERVICE_SCOPES[svc] + OPTIONAL_SCOPES[svc]]
             ),
             "access_type": "offline",
             "include_granted_scopes": "true",
@@ -266,6 +270,11 @@ class GoogleSource:
     # Classroom, restricted to courses, own coursework/submissions and announcements.
     def classroom_courses(self, token, page_token=None):
         return _call(_classroom().list(studentId="me", pageToken=page_token, pageSize=100), token)
+
+    def classroom_teachers(self, token, course_id, page_token=None):
+        return _call(
+            _classroom().teachers().list(courseId=course_id, pageToken=page_token, pageSize=50), token
+        )
 
     def classroom_coursework(self, token, course_id, page_token=None):
         request = (

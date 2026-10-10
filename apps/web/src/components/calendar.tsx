@@ -3,7 +3,7 @@ import { useCutoffRefresh } from "@/lib/use-cutoff-refresh";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, deadline } from "@/lib/api";
 import type { Page, Task } from "@/lib/types";
 import { Button } from "./ui/button";
 import { ErrorNotice } from "./ui/field";
@@ -179,8 +179,10 @@ export function Calendar({
             >
               <strong>{t.title}</strong>
               <span className={"status " + t.status}>{t.status}</span>
-              {t.dueDate && (
-                <span className="text-xs text-secondary">Date only</span>
+              {deadline(t).note && (
+                <span className="text-xs text-secondary">
+                  {deadline(t).note}
+                </span>
               )}
             </button>
           ))

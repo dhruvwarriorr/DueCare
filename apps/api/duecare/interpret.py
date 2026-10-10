@@ -17,16 +17,16 @@ import json
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta, timezone
 
 from pydantic import ValidationError
 from sqlalchemy import case, func, or_, select
 
-from . import academic, ai, faculty, google, lms, mail, rules, subject_link, targeting
+from . import academic, ai, dates, faculty, google, lms, mail, naming, rules, subject_link, targeting
 from .classroom_time import due_at
 from .common import work
 from .config import GMAIL_LOOKBACK, settings
-from .domain import effective_status, task_data
+from .domain import effective_status, task_data, window_derived
 from .errors import ApiError
 from .models import (
     Connection,
@@ -46,7 +46,7 @@ from .models import (
 )
 from .schemas import TaskInput
 
-VERSION = "phase3-interpret-2"
+VERSION = "phase3-interpret-4"
 ACADEMIC = re.compile(
     r"\b(assignments?|submi(t|ssion)|quiz(zes)?|tests?|exams?|examination|viva|oral|practical|ost|ese|ia[- ]?\d|"
     r"internal assessment|experiments?|exp\s?-?\d+|labs?|laboratory|tutorials?|deadline|due|marks|syllabus|"
@@ -59,6 +59,8 @@ TIMING_FIELDS = (
 )  # fmt: skip
 DETAIL_FIELDS = ("location", "assessmentLabel", "deliverableLabel", "durationMinutes")
 SCHEDULE_FIELDS = {*TIMING_FIELDS, "dueDate", "dateWindowStart", "dateWindowEnd", "timingMode"}
+TASK_FIELDS = {f.alias for f in TaskInput.model_fields.values()}
+TASK_DEFAULTS = {f.alias: f.default for f in TaskInput.model_fields.values() if not f.is_required()}
 KIND_ORDER = {
     "classroom_coursework": 0,
     "classroom_announcement": 1,
@@ -103,6 +105,12 @@ class Cand:
     course_label: str | None = None
     kt_only: bool = False
     subject_link: dict | None = None
+    tentative: bool = False
+    # Classroom only: "coursework" is an item the student turns work in on; "post" is stream text,
+    # a material, or further work a coursework description mentions.
+    posted_as: str | None = None
+    display_title: str | None = None  # Clean name shown to the student (see naming).
+    naming: dict | None = None
 
 
 @dataclass
@@ -114,8 +122,11 @@ class Prepared:
     paused: str | None = None
     meta: dict = field(default_factory=dict)
     receipt_retry: int = 0
+    relink: int = 0  # Times detached work was queued again; keeps its new event keys distinct.
     paused_retry_after: int = 60
     paused_code: str = "AI_UNAVAILABLE"
+    text: str = ""  # Source wording the timing is checked against; never stored.
+    ref: datetime | None = None
 
 
 def norm(text):
@@ -128,14 +139,20 @@ def tokens(text):
     }
 
 
+IST = timezone(timedelta(hours=5, minutes=30))
+DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 def utc(value):
-    if not value or not isinstance(value, str):
+    if not value or not isinstance(value, str) or DATE_ONLY.match(value.strip()):
         return None
     try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
-    return dt.astimezone(UTC).isoformat() if dt.tzinfo else None
+    # Extraction is told to use +05:30 unless a source states another zone. A model that drops
+    # the offset still means India time; discarding the stated time would lose the deadline.
+    return (dt if dt.tzinfo else dt.replace(tzinfo=IST)).astimezone(UTC).isoformat()
 
 
 def parse_dt(value):
@@ -325,6 +342,7 @@ def prepare(uid, record_id, token, account_email):
         record_id=record_id,
         revision=snapshot["revision"],
         receipt_retry=snapshot["data"].get("receiptRetry", 0),
+        relink=snapshot["data"].get("relinkRun", 0),
     )
     try:
         if snapshot["kind"] == "gmail_message":
@@ -333,7 +351,9 @@ def prepare(uid, record_id, token, account_email):
             submission_candidates(prepared, snapshot)
         else:
             classroom_candidates(prepared, snapshot, ctx, token)
+        fill_timing(prepared)
         resolve_subjects(prepared, ctx, snapshot)
+        name_candidates(prepared, ctx)
     except google.SourceError as exc:
         if exc.kind != "not_found":
             raise
@@ -412,6 +432,19 @@ def resolve_subjects(prepared, ctx, snap):
             }
 
 
+def name_candidates(prepared, ctx):
+    """One naming call per source for the work it adds; a tidy-up when AI is unavailable."""
+    work = [c for c in prepared.candidates if c.intent in WORK_INTENTS and c.title and not skipped_post(c)]
+    subjects = {s["id"]: s["name"] for s in ctx["subjects"]}
+    items = [
+        {"key": f"i{n}", "title": c.title, "type": c.task_type, "subject": subjects.get(c.subject_id)}
+        for n, c in enumerate(work)
+    ]
+    names, used_ai = naming.name_titles(items)
+    for n, c in enumerate(work):
+        c.display_title, c.naming = names.get(f"i{n}"), naming.naming(used_ai)
+
+
 def ai_payload(ctx, source, sections, allowed_subjects=None):
     subjects = [s for s in ctx["subjects"] if not allowed_subjects or s["id"] in allowed_subjects]
     p = ctx["profile"]
@@ -450,6 +483,7 @@ def gmail_candidates(prepared, snap, ctx, token, account_email):
         re.match(r"^(fwd?|fw):", decoded.subject.strip(), re.I)
     )
     from_lms = decoded.sender_email in lms_senders()
+    prepared.text, prepared.ref = decoded.subject + "\n" + decoded.authored_text, occurred
     template, found = lms.parse(decoded.subject, decoded.authored_text, links) if from_lms else (None, [])
     prepared.meta = {"method": template or "ai", "sender": decoded.sender_email}
     exclusion = mail.academic_exclusion(
@@ -522,6 +556,7 @@ def gmail_candidates(prepared, snap, ctx, token, account_email):
         "attachments": [a["title"] for a in decoded.attachments][:10],
         "forwarded": forwarded,
     }
+    prepared.text = "\n".join([decoded.subject, *(s["text"] for s in sections)])
     extraction, meta = ai.extract(ai_payload(ctx, source, sections))
     prepared.meta.update(meta)
     course = targeting.merge(lms.course_targeting(label.group(1))) if label else {}
@@ -529,7 +564,15 @@ def gmail_candidates(prepared, snap, ctx, token, account_email):
     for i, item in enumerate(extraction.items):
         if not grounded_item(item, sections, decoded.subject):
             continue
-        cand = from_item(item, ctx, base_choices=choices, allowed=None, occurred=occurred, source="gmail")
+        cand = from_item(
+            item,
+            ctx,
+            base_choices=choices,
+            allowed=None,
+            occurred=occurred,
+            source="gmail",
+            prepared=prepared,
+        )
         cand.observed = targeting.merge(
             course.get("course"), {**item.targeting.model_dump(), "scope": "activity"}
         )
@@ -573,6 +616,10 @@ def classroom_candidates(prepared, snap, ctx, token):
     occurred = parse_dt(utc(item.get("updateTime") or item.get("creationTime")))
     if occurred is None:
         occurred = snap["published"]
+    # Relative wording ("tomorrow") is read against the original post, not a later edit.
+    posted = parse_dt(utc(item.get("creationTime"))) or occurred
+    prepared.text, prepared.ref = "\n".join(filter(None, [item.get("title"), text])), posted
+    main = own_item(extraction.items, item.get("title")) if resource == "coursework" else None
     for i, it in enumerate(extraction.items):
         if not grounded_item(it, sections, item.get("title")):
             continue
@@ -583,19 +630,27 @@ def classroom_candidates(prepared, snap, ctx, token):
             allowed=set(ctx["mapped"]),
             occurred=occurred,
             source="classroom",
+            prepared=prepared,
         )
         cand.observed = targeting.merge({**it.targeting.model_dump(), "scope": "activity"})
         cand.trusted = True  # The student explicitly linked this course to their subject(s).
         cand.kt_only = cand.kt_only or kt_text(item.get("title"))
-        cand.identity_key = (
-            snap["provider_id"] if (resource == "coursework" and i == 0) else f"{snap['provider_id']}:{i}"
-        )
+        cand.identity_key = snap["provider_id"] if i == main else f"{snap['provider_id']}:{i}"
         cand.links = [data.get("alternateLink")] if data.get("alternateLink") else []
+        submittable = resource == "coursework" and item.get("workType") != "MATERIAL"
+        cand.posted_as = "coursework" if submittable and i == main else "post"
         structured_due = due_at(item)
-        if resource == "coursework" and i == 0 and structured_due and cand.task_type == "assignment":
-            # Structured Classroom deadlines (UTC) are authoritative over extracted wording.
+        # Only a precise stated time outranks Classroom's own due time; a bare date does not.
+        stated = any(cand.timing.get(k) for k in CUTOFFS)
+        if (
+            i == main
+            and structured_due
+            # Structured Classroom deadlines (UTC) are authoritative for assignments. For a test
+            # they fill in only when the wording gave no time of its own.
+            and (cand.task_type == "assignment" or not stated)
+        ):
             cand.timing["dueAt"] = structured_due.isoformat()
-            cand.mode, cand.date_only = "deadline_only", None
+            cand.mode, cand.date_only, cand.window = "deadline_only", None, None
             cand.provenance["dueAt"] = {
                 "basis": "source-exact",
                 "timezone": "UTC",
@@ -604,6 +659,311 @@ def classroom_candidates(prepared, snap, ctx, token):
         if cand.intent == "submission":
             cand.intent = "supporting"  # Only the student's own submission state proves Classroom turn-in.
         prepared.candidates.append(cand)
+    if resource == "coursework" and not any(
+        c.intent in WORK_INTENTS and c.identity_key == snap["provider_id"] for c in prepared.candidates
+    ):
+        # No extracted item is the coursework itself (a bare title, or a description listing other
+        # tasks): keep it from Classroom's own fields unless extraction deliberately set it aside.
+        fallback = structured_coursework(
+            item, snap, ctx, occurred, silent=main is None or not extraction.items
+        )
+        if fallback:
+            prepared.candidates = [c for c in prepared.candidates if c.identity_key != fallback.identity_key]
+            prepared.candidates.insert(0, fallback)
+
+
+def own_item(items, title):
+    """Which extracted item is the coursework itself. A description can list other work first
+    ("IA 1.8" mentioning "IA1.3"), so position alone does not say; a lone work item still does."""
+    for match in (lambda t: norm(t) == norm(title), lambda t: same_title(t, title)):
+        found = [i for i, it in enumerate(items) if it.title and match(it.title)]
+        if found:
+            return found[0]
+    work = [i for i, it in enumerate(items) if it.intent in WORK_INTENTS]
+    return work[0] if len(items) == 1 and work else None
+
+
+TEST_WORDS = re.compile(r"\b(quiz|test|exam|examination|viva|mcq|practical exam)\b", re.I)
+# What a Classroom post may add as new work (student decision): assessments, tutorials, projects and
+# presentations. Ordinary work such as experiments and write-ups comes from Classroom only as
+# coursework with a turn-in slot, never from stream text or materials.
+CLASSROOM_POST_WORK = re.compile(
+    r"\b(tutorials?|tut\s?-?\d+|quiz(?:zes)?|mcqs?|tests?|ia\s?-?\d*(?:\.\d+)?|internal assessments?|"
+    r"exams?|examinations?|viva|orals?|ost|ese|mse|ise|mid-?terms?|mid-?sems?|end-?sems?|"
+    r"(?:mini[\s-]?)?projects?|presentations?)\b",
+    re.I,
+)
+
+
+def classroom_post_work(cand):
+    return bool(CLASSROOM_POST_WORK.search(" ".join(filter(None, [cand.title, cand.assessment_label]))))
+
+
+def skipped_post(cand):
+    """New work a Classroom post states but the post rule does not add (see CLASSROOM_POST_WORK)."""
+    return cand.posted_as == "post" and cand.intent in WORK_INTENTS and not classroom_post_work(cand)
+
+
+def structured_coursework(item, snap, ctx, occurred, silent):
+    """Coursework in a linked course is the student's own work. When extraction yields nothing
+    actionable (a bare title, an empty description), keep it from Classroom's own fields rather
+    than silently dropping it. Materials and undated posts the model set aside stay ignored."""
+    due = due_at(item)
+    work_type = item.get("workType")
+    if work_type == "MATERIAL" or not (item.get("title") or "").strip():
+        return None
+    # A Classroom due date settles that this is work to submit; without one, only stand in when
+    # extraction returned nothing at all, never over its deliberate "supporting" verdict.
+    if not due and not (
+        silent and work_type in ("ASSIGNMENT", "SHORT_ANSWER_QUESTION", "MULTIPLE_CHOICE_QUESTION")
+    ):
+        return None
+    title = item["title"].strip()[:300]
+    cand = Cand(
+        intent="new_work",
+        task_type="test" if TEST_WORDS.search(title) else "assignment",
+        title=title,
+        subject_choices=list(ctx["mapped"]),
+        subject_id=ctx["mapped"][0] if len(ctx["mapped"]) == 1 else None,
+        trusted=True,
+        occurred_at=occurred,
+        method="classroom_structured",
+        source="classroom",
+        excerpt=title,
+        kt_only=kt_text(title),
+        identity_key=snap["provider_id"],
+        links=[snap["data"]["alternateLink"]] if snap["data"].get("alternateLink") else [],
+        posted_as="coursework",
+    )
+    if due:
+        cand.timing["dueAt"] = due.isoformat()
+        cand.mode = "deadline_only"
+        cand.provenance["dueAt"] = {
+            "basis": "source-exact",
+            "timezone": "UTC",
+            "phrase": "Classroom due date",
+        }
+    return cand
+
+
+# --- Timing ------------------------------------------------------------------------------------
+
+WORK_INTENTS = ("new_work", "revision", "due_notice")
+CUTOFFS = ("dueAt", "availabilityClosesAt", "startsAt")
+# Wording that states a time of day without a clock figure; such a time is not invented.
+TIME_WORDS = re.compile(r"\b(midnight|tonight|eod|end of (?:the )?day|morning|afternoon|evening)\b", re.I)
+
+
+def as_date(value):
+    try:
+        return date.fromisoformat(str(value).strip()[:10])
+    except ValueError:
+        return None
+
+
+def has_timing(cand):
+    return bool(cand.date_only or cand.window or any(cand.timing.get(k) for k in CUTOFFS))
+
+
+def settle_timing(cand, text, ref, raw=None):
+    """Make extracted timing consistent before validation, keeping every date the source states.
+
+    Models sometimes read 10/8/26 month first, copy one time into every role, invent a midnight for
+    a date-only notice, or add a window beside an exact time. Each is settled here, so one bad
+    field cannot make the whole schedule invalid and leave the work without a date."""
+    day = (ref or now()).astimezone(IST).date()
+    words = " ".join(filter(None, [text, cand.title, cand.excerpt]))
+    t = cand.timing
+    for name, value in list(t.items()):
+        local = parse_dt(value).astimezone(IST)
+        fixed = dates.day_first(local.date(), words, day)
+        if fixed != local.date():
+            t[name] = datetime.combine(fixed, local.timetz()).astimezone(UTC).isoformat()
+    if cand.date_only:
+        fixed = dates.day_first(as_date(cand.date_only), words, day)
+        cand.date_only = fixed.isoformat() if fixed else None
+    if cand.window:
+        start, end = (as_date(v) for v in cand.window)
+        start, end = (dates.day_first(v, words, day) if v else None for v in (start, end))
+        cand.window = tuple(sorted((start, end))) if start and end else None
+    choices = sorted({d for d in (as_date(a) for a in cand.alternatives) if d})
+    if choices and not cand.window and not has_timing(cand):
+        # Tentative dates still bound the work: keep them as the range of possible days.
+        if len(choices) == 1:
+            cand.date_only = choices[0].isoformat()
+        else:
+            cand.window = (choices[0], choices[-1])
+        cand.alternatives = []
+    if cand.window:
+        start, end = cand.window
+        cand.window = None if start == end else (start.isoformat(), end.isoformat())
+        if start == end and not cand.date_only:
+            cand.date_only = start.isoformat()
+
+    def at(name):
+        return parse_dt(t[name]) if t.get(name) else None
+
+    # Only times the source states survive; a model that wrote one value into every role, or a role
+    # ordering that cannot hold, loses the repeated or impossible copy rather than the whole schedule.
+    if at("startsAt") and at("endsAt") and at("endsAt") <= at("startsAt"):
+        t.pop("endsAt")
+    if (
+        at("availabilityOpensAt")
+        and at("availabilityClosesAt")
+        and at("availabilityOpensAt") >= at("availabilityClosesAt")
+    ):
+        t.pop("availabilityOpensAt")
+    if at("submissionOpensAt") and at("dueAt") and at("submissionOpensAt") >= at("dueAt"):
+        t.pop("submissionOpensAt")
+    for name in ("loginByAt", "reportingAt"):
+        if at(name) and at("startsAt") and at(name) > at("startsAt"):
+            t.pop(name)
+    if cand.task_type == "test" and at("startsAt"):
+        if at("availabilityClosesAt") and at("availabilityClosesAt") <= at("startsAt"):
+            t.pop("availabilityClosesAt")
+            t.pop("availabilityOpensAt", None)
+    if cand.task_type != "test" and not t.get("dueAt"):
+        # Work to submit is due at the time stated for it, whichever role the model chose.
+        name = next((n for n in ("availabilityClosesAt", "endsAt", "startsAt") if t.get(n)), None)
+        if name:
+            t["dueAt"] = t[name]
+            if name in cand.provenance:
+                cand.provenance["dueAt"] = cand.provenance[name]
+    raw = raw or {}
+    stated = [n for n in CUTOFFS if t.get(n) and raw.get(n)]
+    if stated and text and not dates.find_times(words) and not TIME_WORDS.search(words):
+        # The source states no time of day at all, so the model's clock is invented: keep its date
+        # as written (a midnight-UTC guess must not become 5:30 am the same day).
+        written = as_date(raw[stated[0]])
+        if not cand.window:
+            cand.date_only = cand.date_only or (written.isoformat() if written else None)
+        t.clear()
+    if cand.date_only and any(t.get(n) for n in CUTOFFS):
+        local = parse_dt(t[next(n for n in CUTOFFS if t.get(n))]).astimezone(IST)
+        if (
+            local.date().isoformat() == cand.date_only
+            and local.time() != time(0, 0)
+            and (dates.find_times(words) or TIME_WORDS.search(words))
+        ):
+            cand.date_only = None  # A stated time on that very date is more precise.
+    if cand.window and (cand.date_only or any(t.get(n) for n in CUTOFFS)):
+        cand.window = None  # A stated date settles the range it falls in.
+    if has_timing(cand) and cand.question and TIMING_DOUBT.search(cand.question):
+        # A doubted date is still the best date known. Keep it, widened to any other day the doubt
+        # names ("25 or 26 October?"), and mark it tentative rather than leaving the work undated.
+        known = [as_date(cand.date_only)] if cand.date_only else []
+        known += [as_date(v) for v in cand.window or ()]
+        known += [parse_dt(t[n]).astimezone(IST).date() for n in CUTOFFS if t.get(n)]
+        named = sorted({*known, *dates.find_dates(cand.question, day)} - {None})
+        if len(named) > 1:
+            t.clear()
+            cand.date_only, cand.window = None, (named[0].isoformat(), named[-1].isoformat())
+        cand.tentative = True
+    if has_timing(cand):
+        # Validation infers the mode from the roles the source states; a model's "unresolved"
+        # label beside a stated date must not discard that date.
+        cand.mode = None
+
+
+def found_timing(cand, day, clock, phrase, method, role=None):
+    if clock:
+        # A dated time for a test is when it is held, unless the source says it is due by then.
+        name = "startsAt" if cand.task_type == "test" and role != "due" else "dueAt"
+        cand.timing[name] = dates.at_ist(day, clock).astimezone(UTC).isoformat()
+        cand.provenance[name] = {
+            "basis": "source-exact",
+            "timezone": "Asia/Kolkata",
+            "phrase": (phrase or "")[:200],
+            "method": method,
+        }
+    else:
+        cand.date_only = day.isoformat()
+        cand.provenance["dueDate"] = {
+            "basis": "source-exact",
+            "phrase": (phrase or "")[:200],
+            "method": method,
+        }
+    cand.mode = None
+
+
+def resolved_timing(cand, r, text, ref):
+    """Accept a timing-pass answer only when its phrase is in the source and states that date."""
+    if r.kind == "none" or not r.phrase:
+        return
+    if lms.flat(r.phrase).casefold() not in lms.flat(text).casefold():
+        return
+    day = ref.astimezone(IST).date()
+    stated = dates.find_dates(r.phrase, day)
+
+    def checked(value):
+        value = dates.day_first(as_date(value), r.phrase, day) if value and as_date(value) else None
+        if not value or (stated and value not in stated):
+            return None
+        return value if day - timedelta(days=200) <= value <= day + timedelta(days=400) else None
+
+    if r.kind == "window":
+        start, end = checked(r.windowStart), checked(r.windowEnd)
+        if start and end:
+            start, end = sorted((start, end))
+            if start == end:
+                found_timing(cand, start, None, r.phrase, "timing-pass")
+            else:
+                cand.window, cand.mode = (start.isoformat(), end.isoformat()), None
+                cand.provenance["dateWindowEnd"] = {"basis": "source-exact", "phrase": r.phrase[:200]}
+        return
+    exact = parse_dt(utc(r.at)) if r.kind == "exact" else None
+    value = checked(exact.astimezone(IST).date().isoformat() if exact else r.date)
+    if not value:
+        return
+    clock = exact.astimezone(IST).timetz().replace(tzinfo=None) if exact else None
+    if clock and clock not in dates.find_times(r.phrase) and not TIME_WORDS.search(r.phrase):
+        clock = None  # A time the phrase does not state is not kept.
+    found_timing(cand, value, clock, r.phrase, "timing-pass", r.role)
+
+
+def fill_timing(prepared):
+    """Work whose extraction carried no date gets one more, timing-only look at its own source: first
+    its own words, then one focused AI call. Nothing is filled from a source that states no date, and
+    a doubt the source raises about timing is never overridden."""
+    ref = prepared.ref or now()
+    day = ref.astimezone(IST).date()
+    pending = []
+    for c in prepared.candidates:
+        if c.intent not in WORK_INTENTS or not c.task_type or has_timing(c) or skipped_post(c):
+            continue
+        if c.question and TIMING_DOUBT.search(c.question):
+            continue
+        for words in (" ".join(filter(None, [c.title, c.excerpt])), c.title, c.excerpt):
+            found = dates.single(words or "", day)
+            if found:
+                found_timing(c, *found, words, "source-date")
+                break
+        else:
+            pending.append(c)
+    if not pending or not prepared.text or not dates.mentions_timing(prepared.text, day):
+        return
+    payload = {
+        "sentAt": ref.isoformat(),
+        "text": prepared.text[:12000],
+        "items": [
+            {"key": f"i{n}", "title": c.title, "type": c.task_type, "evidence": (c.excerpt or "")[:300]}
+            for n, c in enumerate(pending)
+        ],
+    }
+    try:
+        result, meta = ai.resolve_timing(payload)
+    except ai.AIUnavailable:
+        # Keep the work; the timing look is retried by the undated-work repair on a later sync.
+        prepared.meta = {**prepared.meta, "timingPass": {"used": False, "unavailable": True}}
+        return
+    prepared.meta = {
+        **prepared.meta,
+        "timingPass": {"used": True, **meta, "prompt": ai.TIMING_PROMPT_VERSION},
+    }
+    answers = {r.key: r for r in result.items}
+    for n, c in enumerate(pending):
+        if f"i{n}" in answers:
+            resolved_timing(c, answers[f"i{n}"], prepared.text, ref)
 
 
 def iso_or_none(value):
@@ -662,7 +1022,7 @@ def kt_text(*texts):
     return bool(KT_ONLY.search(text)) and not REGULAR.search(text)
 
 
-def from_item(item, ctx, base_choices, allowed, occurred, source):
+def from_item(item, ctx, base_choices, allowed, occurred, source, prepared=None):
     owned = {s["id"] for s in ctx["subjects"]}
     subject = (
         item.subjectId if item.subjectId in owned and (not allowed or item.subjectId in allowed) else None
@@ -670,8 +1030,14 @@ def from_item(item, ctx, base_choices, allowed, occurred, source):
     task_ids = {t["id"] for t in ctx["tasks"]}
     t = item.timing
     timing, provenance, question = {}, {}, item.question
+    date_only = t.dateOnly if t.dateOnly and DATE_ONLY.match(t.dateOnly) else None
     for name in TIMING_FIELDS:
         value = getattr(t, name)
+        if value and isinstance(value, str) and DATE_ONLY.match(value.strip()):
+            # A bare date in a precise field states no time: keep it as the date-only deadline.
+            if name in ("dueAt", "availabilityClosesAt", "startsAt") and not date_only:
+                date_only = value.strip()
+            continue
         if value:
             parsed = utc(value)
             if parsed:
@@ -698,9 +1064,8 @@ def from_item(item, ctx, base_choices, allowed, occurred, source):
                 provenance[name].update(
                     basis="timetable-derived", slotId=slot["id"], subjectRevision=slot.get("subjectRevision")
                 )
-    date_only = t.dateOnly if t.dateOnly and re.match(r"^\d{4}-\d{2}-\d{2}$", t.dateOnly) else None
     window = (t.dateWindowStart, t.dateWindowEnd) if t.dateWindowStart and t.dateWindowEnd else None
-    return Cand(
+    cand = Cand(
         intent=item.intent,
         task_type=item.taskType,
         title=(item.title or "").strip() or None,
@@ -728,6 +1093,9 @@ def from_item(item, ctx, base_choices, allowed, occurred, source):
         source=source,
         kt_only=item.ktOnly or kt_text(item.title, item.assessmentLabel),
     )
+    raw = {name: getattr(t, name) for name in TIMING_FIELDS}
+    settle_timing(cand, prepared.text if prepared else "", prepared.ref if prepared else occurred, raw)
+    return cand
 
 
 # --- Commit ------------------------------------------------------------------------------------
@@ -945,7 +1313,10 @@ def proposal(cand, subject_id):
     if cand.mode:
         out["timingMode"] = cand.mode
     if cand.window:
-        out["dateWindowStart"], out["dateWindowEnd"] = cand.window
+        # Older saved proposals can hold full timestamps here; a window is calendar days.
+        days = [as_date(v) for v in cand.window]
+        if all(days):
+            out["dateWindowStart"], out["dateWindowEnd"] = (d.isoformat() for d in days)
     if cand.date_only:
         out["dueDate"] = cand.date_only
     return source_fields({k: v for k, v in out.items() if v not in (None, "")})
@@ -993,6 +1364,13 @@ def candidate_from_event(event, record, fields=None):
         section=data.get("section", "authored"),
         source="classroom" if record.kind.startswith("classroom") else "gmail",
         course_label=data.get("courseLabel"),
+        question=data.get("question"),
+        posted_as=data.get("postedAs"),
+        display_title=data.get("displayTitle"),
+        naming=data.get("naming"),
+        # A schedule the student changed from the source's proposal is no longer the source's doubt.
+        tentative=bool(data.get("tentative"))
+        and all(values.get(k) == data.get("proposal", {}).get(k) for k in SCHEDULE_FIELDS),
     )
 
 
@@ -1017,17 +1395,26 @@ def task_input(fields):
     return task_data(TaskInput.model_validate(clean))
 
 
+TIMING_DOUBT = re.compile(
+    r"\b(date|dates|day|days|time|times|timing|when|deadline|schedule[ds]?|session|slot|start|starts|"
+    r"close|closes|window|reschedul\w*|postpon\w*|tentative)\b",
+    re.I,
+)
+
+
 def unresolved(cand):
-    """Timing the source does not settle: never invent a slot, date, or start time."""
-    if cand.date_only and not cand.window and not cand.alternatives:
+    """Timing the source does not settle: never invent a slot, date, or start time.
+
+    A stated date is always kept: a doubt about it marks it tentative (see settle_timing), and a
+    stated range of days is due by its last day, shown as the whole range. Only work whose source
+    gives no date at all is left without one."""
+    if has_timing(cand):
         return None
-    if cand.question:
+    if cand.question and TIMING_DOUBT.search(cand.question):
         return cand.question
-    if cand.window:
-        return "Exact date has not been announced. Which date in this window applies to you?"
     if cand.alternatives:
         return "The notice gives tentative alternatives. Which date applies?"
-    if cand.mode == "unresolved":
+    if cand.mode == "unresolved" and not has_timing(cand):
         return "The source does not settle the timing for this work."
     return None
 
@@ -1035,6 +1422,35 @@ def unresolved(cand):
 def undated_fields(fields):
     """Keep the obligation without accepting any uncertain date or time."""
     return {**{k: v for k, v in fields.items() if k not in SCHEDULE_FIELDS}, "timingMode": "undated"}
+
+
+def schedule_fallbacks(values):
+    """When a stated schedule does not validate as a whole, keep its clearest single cutoff, then its
+    date, then its range of days, before giving up on timing altogether."""
+    base = {k: v for k, v in values.items() if k not in SCHEDULE_FIELDS}
+    test = values.get("type") == "test"
+    for name in (
+        ("startsAt", "availabilityClosesAt", "dueAt")
+        if test
+        else ("dueAt", "availabilityClosesAt", "startsAt")
+    ):
+        if values.get(name):
+            yield {**base, (name if test and name != "dueAt" else "dueAt"): values[name]}
+    if values.get("dueDate"):
+        yield {**base, "dueDate": values["dueDate"]}
+    if values.get("dateWindowStart") and values.get("dateWindowEnd"):
+        yield {**base, "dateWindowStart": values["dateWindowStart"], "dateWindowEnd": values["dateWindowEnd"]}
+
+
+def valid_schedule(values):
+    """task_input for the fullest valid form of a source schedule, or None when none validates."""
+    for attempt in (values, *schedule_fallbacks(values)):
+        try:
+            return task_input(attempt)
+        except (ApiError, ValidationError) as exc:
+            if not timing_error(exc):
+                raise
+    return None
 
 
 def timing_error(exc):
@@ -1050,13 +1466,13 @@ def create_task(db, uid, ctx, record, event, cand, subject_id, method, fields=No
     timing_omitted = method != "student_review" and bool(unresolved(cand))
     if timing_omitted:
         values = undated_fields(values)
-    try:
+    if method == "student_review":
         d = task_input(values)
-    except (ApiError, ValidationError) as exc:
-        if method == "student_review" or not timing_error(exc):
-            raise
-        timing_omitted = True
-        d = task_input(undated_fields(values))
+    else:
+        d = valid_schedule(values)
+        if d is None:
+            timing_omitted = True
+            d = task_input(undated_fields(values))
     provenance = {**d.get("timingProvenance", {})}
     for name, prov in cand.provenance.items():
         if name in provenance or d.get(name):
@@ -1078,6 +1494,12 @@ def create_task(db, uid, ctx, record, event, cand, subject_id, method, fields=No
         }
     if d.get("dueDate"):
         provenance["dueAt"] = {**provenance["dueAt"], "basis": "source-date-only", "defaultTime": "23:59 IST"}
+    elif window_derived(d):
+        provenance["dueAt"] = {
+            **provenance["dueAt"],
+            "basis": "source-window-end",
+            "defaultTime": "23:59 IST",
+        }
     if timing_omitted:
         # Clearing uncertain timing is also a source decision: an older notice must not
         # fill it back in merely because the accepted values are now null.
@@ -1095,6 +1517,12 @@ def create_task(db, uid, ctx, record, event, cand, subject_id, method, fields=No
     d["sourceLinks"] = mail.source_links(cand.links)
     d["observedTargeting"] = cand.observed
     d["groupWork"] = cand.group_work
+    if cand.display_title and cand.title == d["title"]:
+        d["displayTitle"], d["naming"] = cand.display_title, cand.naming
+    else:
+        d["displayTitle"], d["naming"] = naming.tidy(d["title"]), naming.naming(False)
+    if cand.tentative and d.get("dueAt") and method != "student_review":
+        d["timingTentative"] = {"question": (cand.question or "")[:300], "evidenceRef": str(event.id)}
     if cand.subject_link:
         d["subjectLink"] = cand.subject_link
     task = Task(
@@ -1290,12 +1718,28 @@ def settle_reviews(db, task, issues, reason):
     return count
 
 
-def update_task(db, task, cand, event, explicit, method):
-    """Reconcile role-specific fields. Never touches completion."""
+def stale_omission(db, prov):
+    """Timing an older interpreter dropped (as unreadable or unsettled) is no source statement."""
+    if (prov or {}).get("basis") != "source-timing-omitted" or not prov.get("evidenceRef"):
+        return False
+    old = db.get(SourceEvent, uuid.UUID(prov["evidenceRef"]))
+    return bool(old) and old.processing_version != VERSION
+
+
+def update_task(db, task, cand, event, explicit, method, schedule_only=False, restore=()):
+    """Reconcile role-specific fields. Never touches completion.
+
+    restore names fields that wrongly attached work had set: they take this (the task's own) source's
+    value, or none, whatever newer time the wrong source carried."""
     changes, conflicts = {}, {}
     incoming = proposal(cand, cand.subject_id)
+    for name in restore:
+        if name in TASK_DEFAULTS:
+            incoming.setdefault(name, TASK_DEFAULTS[name])
     if method != "student_review" and unresolved(cand):
         incoming = {**undated_fields(incoming), **{k: None for k in SCHEDULE_FIELDS if k != "timingMode"}}
+    if schedule_only:
+        incoming = {k: v for k, v in incoming.items() if k in SCHEDULE_FIELDS}
     if not cand.title:
         incoming.pop("title", None)
     mode = task.data.get("timingMode")
@@ -1317,7 +1761,22 @@ def update_task(db, task, cand, event, explicit, method):
         current = task.data.get(name)
         if name in overrides or (name in ("startsAt", "availabilityClosesAt") and "dueAt" in overrides):
             continue
-        if method != "student_review" and incoming_order < field_order(db, task, name, provenance):
+        older = (
+            method != "student_review"
+            and name not in restore
+            and incoming_order < field_order(db, task, name, provenance)
+        )
+        if older and method == "retime":
+            # Repair fills timing that is empty only through an earlier interpreter's mistake. With
+            # no accepted value to protect, an older stated date is the best date there is; a
+            # current-version omission (a newer notice doubting the timing) still stands.
+            current = (provenance.get(name) or {}).get(
+                "basis"
+            ) == "source-timing-omitted" and not stale_omission(db, provenance.get(name))
+            older = current or task.data.get(name) not in (None, "", "undated", "unresolved")
+        elif older:
+            older = not stale_omission(db, provenance.get(name))
+        if older:
             continue
         prov[name] = {
             **cand.provenance.get(name, {"basis": "source-exact"}),
@@ -1342,6 +1801,15 @@ def update_task(db, task, cand, event, explicit, method):
         merged = {k: v for k, v in task.data.items() if k in allowed}
         if any(k in changes for k in ("startsAt", "availabilityClosesAt")) and "dueAt" not in changes:
             merged["dueAt"] = None
+        if window_derived(task.data) and "dueAt" not in changes:
+            merged["dueAt"] = None  # A window's cutoff follows the window or a newly stated deadline.
+        if (
+            "timingMode" not in changes
+            and merged.get("timingMode") in ("undated", "unresolved")
+            and any(k in changes for k in (*CUTOFFS, "dueDate", "dateWindowEnd"))
+        ):
+            # Work that had no date now has one: its mode follows the newly stated timing.
+            merged.pop("timingMode")
         merged.update(changes)
         merged.pop("dueDate", None) if "dueAt" in changes else None
         try:
@@ -1366,11 +1834,8 @@ def update_task(db, task, cand, event, explicit, method):
                     if k in schedule and k in prov and prov[k].get("evidenceRef") == str(event.id)
                 }
             )
-            try:
-                d = task_input(reset)
-            except (ApiError, ValidationError) as exc:
-                if not timing_error(exc):
-                    raise
+            d = valid_schedule(reset)
+            if d is None:
                 # An older inconsistent schedule cannot clear a newer accepted one.
                 reset = undated_fields(merged)
                 preserve_schedule = any(
@@ -1409,7 +1874,25 @@ def update_task(db, task, cand, event, explicit, method):
                     "basis": "source-date-only",
                     "defaultTime": "23:59 IST",
                 }
+            elif window_derived(d):
+                prov["dueAt"] = {
+                    **prov.get("dueAt", {}),
+                    "basis": "source-window-end",
+                    "defaultTime": "23:59 IST",
+                }
             keep = {k: task.data[k] for k in task.data if k not in allowed}
+            if "title" in changes:
+                # A source that retitles the work renames it too (a student's own title is kept).
+                named = cand.display_title if cand.display_title and cand.title == d["title"] else None
+                keep["displayTitle"] = named or naming.tidy(d["title"])
+                keep["naming"] = cand.naming if named else naming.naming(False)
+            if any(k in changes for k in SCHEDULE_FIELDS):
+                keep.pop("timingTentative", None)
+                if cand.tentative and d.get("dueAt") and method != "student_review":
+                    keep["timingTentative"] = {
+                        "question": (cand.question or "")[:300],
+                        "evidenceRef": str(event.id),
+                    }
             task.data = {
                 **keep,
                 **d,
@@ -1492,6 +1975,46 @@ def reopen_task(db, task, event):
     return "reopened"
 
 
+def new_event(db, record, key, cand):
+    event_type = cand.intent if cand.intent in ("new_work", "revision", "due_notice", "supporting", "submission",
+                                                "unsubmission", "withdrawal") else "unknown"  # fmt: skip
+    event = SourceEvent(
+        user_id=record.user_id,
+        source_record_id=record.id,
+        event_key=key,
+        event_type=event_type,
+        identity_key=cand.identity_key,
+        occurred_at=cand.occurred_at,
+        outcome="pending",
+        processing_version=VERSION,
+        data={
+            "method": cand.method,
+            "title": cand.title,
+            "taskType": cand.task_type,
+            "assessmentLabel": cand.assessment_label,
+            "deliverableLabel": cand.deliverable_label,
+            "section": cand.section,
+            "courseLabel": cand.course_label,
+            "observedTargeting": cand.observed,
+            "timing": cand.timing,
+            "provenance": cand.provenance,
+            "validation": cand.validation,
+            "excerpt": cand.excerpt,
+            "links": mail.source_links(cand.links),
+            "proposal": proposal(cand, cand.subject_id),
+            # Replays (faculty approval, review) rebuild the candidate from this event.
+            "question": cand.question,
+            "tentative": cand.tentative,
+            "postedAs": cand.posted_as,
+            "displayTitle": cand.display_title,
+            "naming": cand.naming,
+        },
+    )
+    db.add(event)
+    db.flush()
+    return event
+
+
 def apply_candidate(db, uid, ctx, record, index, cand, run):
     from .privacy import suppressed
 
@@ -1527,36 +2050,8 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
     ):
         # Reprocessing an unchanged source revision already applied to a task adds no duplicate evidence.
         return "replayed"
-    event_type = cand.intent if cand.intent in ("new_work", "revision", "due_notice", "supporting", "submission",
-                                                "unsubmission", "withdrawal") else "unknown"  # fmt: skip
-    event = SourceEvent(
-        user_id=record.user_id,
-        source_record_id=record.id,
-        event_key=key,
-        event_type=event_type,
-        identity_key=cand.identity_key,
-        occurred_at=cand.occurred_at,
-        outcome="pending",
-        processing_version=VERSION,
-        data={
-            "method": cand.method,
-            "title": cand.title,
-            "taskType": cand.task_type,
-            "assessmentLabel": cand.assessment_label,
-            "deliverableLabel": cand.deliverable_label,
-            "section": cand.section,
-            "courseLabel": cand.course_label,
-            "observedTargeting": cand.observed,
-            "timing": cand.timing,
-            "provenance": cand.provenance,
-            "validation": cand.validation,
-            "excerpt": cand.excerpt,
-            "links": mail.source_links(cand.links),
-            "proposal": proposal(cand, cand.subject_id),
-        },
-    )
-    db.add(event)
-    db.flush()
+    event = new_event(db, record, key, cand)
+    event_type = event.event_type
 
     def done(outcome):
         event.outcome = outcome
@@ -1565,6 +2060,16 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
     if event_type == "unknown" and cand.intent != "returned_ambiguous":
         return done("ignored_unrelated")
     task = task_by_identity(db, uid, cand.identity_key)
+    if (
+        task
+        and cand.method == "ai"
+        and re.search(r":\d+$", cand.identity_key or "")
+        and norm(cand.title) != norm(task.title)
+        and not same_work(cand, task, ctx)
+    ):
+        # An item identified by its position in a message: when extraction lists the message's work
+        # in another order, that position now names different work, which must not update this task.
+        task = None
     if not task and cand.match_task_id:
         task = db.scalar(
             select(Task)
@@ -1576,6 +2081,10 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
     if not task and cand.intent == "submission" and verified_lms_receipt(cand):
         matches = receipt_tasks(db, uid, cand, ctx)
         task = matches[0] if matches else None
+    if not task and skipped_post(cand):
+        # A Classroom post adds only assessments, tutorials, projects and presentations. Work it
+        # mentions still updates a task already tracked (e.g. a changed coursework deadline).
+        return done("ignored_classroom_post")
     if cand.kt_only and ctx["profile"].get("ignoreKtNotices") and not task:
         # The student chose to ignore KT notices. Work already tracked keeps receiving updates.
         return done("ignored_kt")
@@ -1808,6 +2317,406 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
     return done("created")
 
 
+# --- Repair of work imported without its date ---------------------------------------------------
+
+
+RETIME_ATTEMPTS = 3
+
+
+def same_title(a, b):
+    mine, theirs = tokens(a), tokens(b)
+    return bool(mine and theirs) and (
+        norm(a) == norm(b)
+        or len(mine & theirs) / len(mine | theirs) >= 0.5
+        or mine <= theirs
+        or theirs <= mine
+    )
+
+
+def invented_clock(cand, words):
+    """Saved evidence from an earlier interpreter: a midnight the excerpt does not state is a guess
+    for a date-only notice (31 October must not become 31 October, 5:30 am)."""
+    if dates.find_times(words) or TIME_WORDS.search(words):
+        return
+    stated = dates.find_dates(words, (cand.occurred_at or now()).astimezone(IST).date())
+    for name in CUTOFFS:
+        if not cand.timing.get(name):
+            continue
+        if cand.provenance.get(name, {}).get("timezone") == "UTC":
+            return  # Classroom's own due fields are authoritative, whatever their clock.
+        value = parse_dt(cand.timing[name])
+        local = value.astimezone(IST)
+        written = (
+            value.date()
+            if value.time() in (time(0, 0), time(23, 59), time(23, 59, 59))
+            else local.date()
+            if local.time() == time(0, 0)
+            else None
+        )
+        if written and (written in stated or not stated):
+            cand.timing.clear()
+            if not cand.window:
+                cand.date_only = written.isoformat()
+        return
+
+
+def needs_date(task):
+    """No deadline, or a midnight-UTC one with no date-only basis: what a guessed clock looks like."""
+    if not task.due_at:
+        return True
+    basis = (task.data.get("timingProvenance") or {}).get("dueAt") or {}
+    return (
+        task.due_at.astimezone(UTC).time() == time(0, 0)
+        and not task.data.get("dueDate")
+        and basis.get("timezone") != "UTC"  # Classroom's structured due time is never a guess.
+        and basis.get("basis") != "student-entered"
+    )
+
+
+def gmail_recent(record):
+    stamp = record.received_at or record.sent_at or record.created_at
+    return record.kind != "gmail_message" or (stamp and stamp >= now() - GMAIL_LOOKBACK)
+
+
+def repair_undated(db, conn):
+    """Work an earlier interpreter imported without its date (or with an invented midnight) gets the
+    date its source states: first from the timing its saved evidence recorded, without any network
+    call; otherwise its source is queued for one timing-only look. Repair only sets the schedule of
+    that same task; it never creates, merges, retitles or completes work, and never overrides a
+    schedule the student entered. Each task is examined once per interpreter version."""
+    midnight = func.to_char(func.timezone("UTC", Task.due_at), "HH24:MI") == "00:00"
+    rows = db.execute(
+        select(Task, SourceEvent, SourceRecord)
+        .join(TaskEvidence, TaskEvidence.task_id == Task.id)
+        .join(SourceEvent, SourceEvent.id == TaskEvidence.event_id)
+        .join(SourceRecord, SourceRecord.id == SourceEvent.source_record_id)
+        .where(
+            Task.user_id == conn.user_id,
+            Task.due_at.is_(None) | (midnight & Task.data["dueDate"].astext.is_(None)),
+            Task.completed_at.is_(None),
+            Task.data["mergedInto"].astext.is_(None),
+            Task.data["retimeVersion"].astext.is_distinct_from(VERSION),
+            TaskEvidence.state == "active",
+            SourceRecord.connection_id == conn.id,
+            SourceEvent.event_type.in_(WORK_INTENTS),
+        )
+        .with_for_update(of=Task)
+    ).all()
+    found = {}
+    for task, event, record in rows:
+        found.setdefault(task.id, (task, []))[1].append((event, record))
+    queue = {}
+    for task, evidence in found.values():
+        if task.data.get("dateWindowEnd") and needs_date(task):
+            # A window saved before a window carried its deadline: derive it from the task's own fields.
+            own = {k: v for k, v in task.data.items() if k in TASK_FIELDS and k != "dueAt"}
+            d = valid_schedule(own)
+            if d and d.get("dueAt"):
+                task.data = {
+                    **task.data,
+                    "dueAt": d["dueAt"],
+                    "timingMode": d["timingMode"],
+                    "timingProvenance": {
+                        **(task.data.get("timingProvenance") or {}),
+                        "dueAt": {"basis": "source-window-end", "defaultTime": "23:59 IST"},
+                    },
+                }
+                task.due_at, task.revision = parse_dt(d["dueAt"]), task.revision + 1
+                task.status = effective_status(task, now())
+                history(db, task, "source_update", {"dueAt": d["dueAt"], "timingMode": d["timingMode"]})
+                continue
+        if any(k in SCHEDULE_FIELDS for k in task.data.get("manualFieldOverrides", {})):
+            task.data = {**task.data, "retimeVersion": VERSION}
+            continue  # The student's own timing decision stands.
+        evidence = [(e, r) for e, r in evidence if same_title(e.data.get("title"), task.title)]
+        if not evidence:
+            continue  # Its own source may be on another connection; that pass examines it.
+        task.data = {**task.data, "retimeVersion": VERSION}
+        evidence.sort(key=lambda x: source_order(db, x[0]), reverse=True)
+        for event, record in evidence:
+            cand = candidate_from_event(event, record)
+            words = " ".join(filter(None, [cand.title, cand.excerpt]))
+            invented_clock(cand, words)
+            settle_timing(cand, words, cand.occurred_at)
+            if not has_timing(cand):
+                found_date = dates.single(words, (cand.occurred_at or now()).astimezone(IST).date())
+                if found_date:
+                    found_timing(cand, *found_date, words, "source-date")
+            if has_timing(cand):
+                update_task(db, task, cand, event, True, "retime", schedule_only=True)
+            if not needs_date(task):
+                break
+        if not needs_date(task):
+            continue
+        record = evidence[0][1]
+        timing_pass = (record.data.get("interpretation") or {}).get("timingPass") or {}
+        if (
+            (record.processing_version != VERSION or timing_pass.get("unavailable"))
+            and record.processing_state in ("interpreted", "needs_review")
+            and gmail_recent(record)
+        ):
+            queue.setdefault(record.id, (record, set()))[1].add(str(task.id))
+    for record, task_ids in queue.values():
+        record.data = {
+            **record.data,
+            "retime": {"tasks": sorted(task_ids), "state": record.processing_state, "reason": record.reason},
+        }
+        record.processing_state, record.expires_at = "awaiting_interpretation", None
+    return len(queue)
+
+
+STUDENT_OUTCOMES = ("accepted", "linked")
+STUDENT_METHODS = ("student_review", "student_link", "reassigned")
+
+
+def settle_completion(db, task, detached, own, events):
+    """A completion that came from detached work moves to the task's own turn-in, or is undone."""
+    completion = task.data.get("completion") or {}
+    if not task.completed_at or completion.get("eventId") not in detached:
+        return
+    turned_in = [
+        e
+        for e in events
+        if e.event_type == "submission" and e.identity_key in own and str(e.id) not in detached
+    ]
+    if turned_in:
+        latest = max(turned_in, key=lambda e: e.occurred_at or datetime.min.replace(tzinfo=UTC))
+        task.data = {**task.data, "completion": {**completion, "eventId": str(latest.id)}}
+        return
+    task.completed_at = None
+    task.data = {**task.data, "completion": None}
+    task.status = effective_status(task, now())
+    task.revision += 1
+    history(db, task, "reopened", {"reason": "completion came from another work's turn-in"})
+
+
+def requeue_relink(records):
+    for record in records:
+        # Interpreted again under a fresh event key, so the detached work becomes its own task.
+        record.data = {**record.data, "relinkRun": record.data.get("relinkRun", 0) + 1}
+        record.processing_state, record.expires_at = "awaiting_interpretation", None
+
+
+def repair_claimed_identity(db, conn):
+    """An earlier interpreter gave a coursework's identity to whichever item its description listed
+    first, so other work (IA1.3 in IA 1.8's description) took the coursework's place and its turn-ins.
+    That item gets its own identity back, the coursework's turn-ins leave the wrong task, and the
+    coursework is interpreted again so it becomes its own task. Examined once per interpreter version."""
+    rows = db.execute(
+        select(SourceEvent, SourceRecord)
+        .join(SourceRecord, SourceRecord.id == SourceEvent.source_record_id)
+        .where(
+            SourceRecord.connection_id == conn.id,
+            SourceRecord.kind == "classroom_coursework",
+            SourceEvent.identity_key == SourceRecord.provider_id,
+            SourceEvent.event_type.in_(WORK_INTENTS),
+            SourceEvent.processing_version != VERSION,
+            SourceEvent.data["identityChecked"].astext.is_distinct_from(VERSION),
+        )
+    ).all()
+    requeue = {}
+    for event, record in rows:
+        event.data = {**event.data, "identityChecked": VERSION}
+        title = event.data.get("title")
+        if not title or norm(title) == norm(record.title) or same_title(title, record.title):
+            continue
+        event.identity_key = f"{record.provider_id}:{event.event_key.rsplit(':', 1)[-1]}"
+        for sibling in db.scalars(
+            select(SourceEvent).where(
+                SourceEvent.source_record_id == record.id,
+                SourceEvent.event_type.in_(WORK_INTENTS),
+                SourceEvent.task_id.is_not(None),
+            )
+        ):
+            named = sibling.data.get("title") or ""
+            if norm(named) == norm(record.title) or same_title(named, record.title):
+                # The item that is the coursework takes its identity, and is applied again as the
+                # coursework (with Classroom's own due date) rather than replayed as before.
+                sibling.identity_key, sibling.outcome = record.provider_id, "rekeyed"
+        task = (
+            db.scalar(select(Task).where(Task.id == event.task_id).with_for_update())
+            if event.task_id
+            else None
+        )
+        if task:
+            evidence = db.execute(
+                select(TaskEvidence, SourceEvent, SourceRecord)
+                .join(SourceEvent, SourceEvent.id == TaskEvidence.event_id)
+                .join(SourceRecord, SourceRecord.id == SourceEvent.source_record_id)
+                .where(TaskEvidence.task_id == task.id, TaskEvidence.state == "active")
+            ).all()
+            turn_ins = [
+                (te, e, r)
+                for te, e, r in evidence
+                if e.event_type in ("submission", "unsubmission") and e.identity_key == record.provider_id
+            ]
+            for te, e, r in turn_ins:
+                te.state, e.task_id, e.outcome = "reassigned", None, "detached"
+                if r.processing_state in ("interpreted", "needs_review"):
+                    requeue[r.id] = r
+            if turn_ins:
+                history(
+                    db,
+                    task,
+                    "evidence_detached",
+                    {"reason": "turn-in of other coursework", "title": record.title},
+                )
+            own = {e.identity_key for _, e, _ in evidence if e.event_type in WORK_INTENTS}
+            settle_completion(db, task, {str(e.id) for _, e, _ in turn_ins}, own, [e for _, e, _ in evidence])
+        if record.processing_state in ("interpreted", "needs_review"):
+            requeue[record.id] = record
+    requeue_relink(requeue.values())
+    return len(requeue)
+
+
+def repair_misattributed(db, conn):
+    """Undo work an earlier interpreter attached to the wrong task. Before AI-suggested matches were
+    checked (same_work), one task could absorb other work entirely: "IA 2.15" created by "IA2.8",
+    renamed by "IA 2.10", and completed by another item's turn-in, so those items never became tasks.
+
+    A task belongs to the work its current title names. Other AI-attached work (no shared identity,
+    not the same work) is detached; fields it set are restored from the task's own source; a
+    completion that came from its turn-in is moved to the task's own turn-in or undone; and its
+    sources are interpreted again so each becomes its own task. Student decisions, manual titles and
+    current-version links are never touched; each link is examined once per interpreter version."""
+    candidates = db.scalars(
+        select(Task.id)
+        .join(TaskEvidence, TaskEvidence.task_id == Task.id)
+        .join(SourceEvent, SourceEvent.id == TaskEvidence.event_id)
+        .join(SourceRecord, SourceRecord.id == SourceEvent.source_record_id)
+        .where(
+            Task.user_id == conn.user_id,
+            Task.data["mergedInto"].astext.is_(None),
+            TaskEvidence.state == "active",
+            SourceRecord.connection_id == conn.id,
+            SourceEvent.processing_version != VERSION,
+            SourceEvent.data["linkChecked"].astext.is_distinct_from(VERSION),
+        )
+        .distinct()
+    ).all()
+    requeue, ctx = {}, None
+    for task in db.scalars(select(Task).where(Task.id.in_(candidates)).with_for_update()):
+        evidence = db.execute(
+            select(TaskEvidence, SourceEvent, SourceRecord)
+            .join(SourceEvent, SourceEvent.id == TaskEvidence.event_id)
+            .join(SourceRecord, SourceRecord.id == SourceEvent.source_record_id)
+            .where(TaskEvidence.task_id == task.id, TaskEvidence.state == "active")
+        ).all()
+        for _, event, _ in evidence:
+            event.data = {**event.data, "linkChecked": VERSION}
+        if "title" in task.data.get("manualFieldOverrides", {}):
+            continue  # The student named this task; what it stands for is theirs to say.
+        work = [(te, e, r) for te, e, r in evidence if e.event_type in WORK_INTENTS]
+        owners = [
+            (te, e, r)
+            for te, e, r in work
+            if norm(e.data.get("title")) == norm(task.title)
+            or e.outcome in STUDENT_OUTCOMES
+            or te.method in STUDENT_METHODS
+            or e.data.get("method") != "ai"
+        ]
+        if not owners:
+            continue  # Nothing shows which work this task is; leave it as it is.
+        own = {e.identity_key for _, e, _ in owners}
+        ctx = ctx or load_context(db, conn.user_id, owners[0][2])
+        foreign = [
+            (te, e, r)
+            for te, e, r in work
+            if (te, e, r) not in owners
+            and e.processing_version != VERSION
+            and e.identity_key not in own
+            and not same_work(candidate_from_event(e, r), task, ctx)
+        ]
+        if not foreign:
+            continue
+        stray = {e.identity_key for _, e, _ in foreign} - own
+        # A Classroom turn-in belongs to the coursework it names; it leaves with that coursework.
+        foreign += [
+            (te, e, r)
+            for te, e, r in evidence
+            if e.event_type in ("submission", "unsubmission") and e.identity_key in stray
+        ]
+        detached = {str(e.id) for _, e, _ in foreign}
+        for te, event, record in foreign:
+            te.state, event.task_id, event.outcome = "reassigned", None, "detached"
+            if record.processing_state in ("interpreted", "needs_review") and gmail_recent(record):
+                requeue[record.id] = record
+            history(
+                db, task, "evidence_detached", {"reason": "different work", "title": event.data.get("title")}
+            )
+        provenance = task.data.get("timingProvenance") or {}
+        tainted = {k for k, p in provenance.items() if (p or {}).get("evidenceRef") in detached}
+        if tainted:
+            _, owner, owner_record = max(owners, key=lambda x: source_order(db, x[1]))
+            task.data = {
+                **task.data,
+                "timingProvenance": {k: v for k, v in provenance.items() if k not in tainted},
+            }
+            update_task(
+                db, task, candidate_from_event(owner, owner_record), owner, True, "repair", restore=tainted
+            )
+        settle_completion(db, task, detached, own, [e for _, e, _ in evidence])
+        kinds = {
+            "gmail" if r.kind == "gmail_message" else "classroom"
+            for _, e, r in evidence
+            if str(e.id) not in detached
+        }
+        if kinds:
+            task.data = {**task.data, "sources": sorted(kinds)}
+    requeue_relink(requeue.values())
+    return len(requeue)
+
+
+def retime_candidate(db, uid, record, index, cand, retime):
+    """A timing-only second look at a source: set the schedule of the listed undated task, nothing
+    else. Work the look finds without a listed task is left alone (it was set aside before)."""
+    if cand.intent not in WORK_INTENTS or not has_timing(cand):
+        return "retime_skipped"
+    listed = [uuid.UUID(i) for i in retime.get("tasks", [])]
+    candidates = db.scalars(
+        select(Task)
+        .where(Task.user_id == uid, Task.id.in_(listed))
+        .order_by(Task.created_at)
+        .with_for_update()
+    ).all()
+    by_identity = task_by_identity(db, uid, cand.identity_key)
+    ordered = ([by_identity] if by_identity in candidates else []) + candidates
+    task = next((t for t in ordered if same_title(cand.title, t.title)), None)
+    if not task or task.completed_at or not needs_date(task):
+        return "retime_skipped"
+    key = f"{record.revision}:retime-{VERSION}:{index}"
+    if db.scalar(
+        select(SourceEvent.id).where(SourceEvent.source_record_id == record.id, SourceEvent.event_key == key)
+    ):
+        return "replayed"
+    event = new_event(db, record, key, cand)
+    changes, _ = update_task(db, task, cand, event, True, "retime", schedule_only=True)
+    event.outcome = "updated" if changes else "evidence_recorded"
+    return event.outcome
+
+
+def finish_retime(db, uid, record, prepared, progress):
+    retime = record.data["retime"]
+    outcomes = (
+        []
+        if prepared.ignore
+        else [retime_candidate(db, uid, record, i, c, retime) for i, c in enumerate(prepared.candidates)]
+    )
+    progress["tasksUpdated"] = progress.get("tasksUpdated", 0) + outcomes.count("updated")
+    data = {k: v for k, v in record.data.items() if k not in ("retime", "aiPausedUntil", "aiPausedReason",
+                                                               "aiPausedCode")}  # fmt: skip
+    interpretation = {
+        **(data.get("interpretation") or {}),
+        "retime": {"version": VERSION, "outcomes": outcomes},
+    }
+    if prepared.meta.get("timingPass"):
+        interpretation["timingPass"] = prepared.meta["timingPass"]
+    record.data = {**data, "interpretation": interpretation}
+    record.processing_state, record.reason = retime["state"], retime.get("reason")
+    record.processing_version = VERSION
+    return progress
+
+
 def commit(db, uid, record, prepared, ctx, progress, run):
     """Apply one prepared record. Returns updated progress."""
 
@@ -1826,6 +2735,18 @@ def commit(db, uid, record, prepared, ctx, progress, run):
             minimize(db, record, "blocked", "sender_blocked")
             bump("blocked")
             return progress
+    if record.data.get("retime") is not None:
+        retime = record.data["retime"]
+        if not prepared.paused and (prepared.meta.get("timingPass") or {}).get("unavailable"):
+            # A timing-only look exists to ask AI; wait for it rather than finishing without it.
+            prepared.paused, prepared.paused_retry_after = "AI timing look is temporarily unavailable", 60
+        if prepared.paused and retime.get("attempts", 0) + 1 >= RETIME_ATTEMPTS:
+            # A repair must never hold a sync open: after a few failed looks the work stays as it was.
+            prepared.paused, prepared.candidates = None, []
+        if prepared.paused:
+            record.data = {**record.data, "retime": {**retime, "attempts": retime.get("attempts", 0) + 1}}
+        else:
+            return finish_retime(db, uid, record, prepared, progress)
     if record.kind == "gmail_message" and mail.academic_exclusion(
         record.title, record.sender_email, record.data.get("senderName"), record.excerpt
     ):
@@ -1878,6 +2799,8 @@ def commit(db, uid, record, prepared, ctx, progress, run):
             if "ignored_mismatch" in outcomes
             else "kt_notice"
             if "ignored_kt" in outcomes
+            else "classroom_post_not_work"
+            if "ignored_classroom_post" in outcomes
             else ("unmatched_receipt" if "unmatched_receipt" in outcomes else "not_academic_work")
         )
         if reason == "unmatched_receipt" or record.kind.startswith("classroom"):
@@ -1907,6 +2830,8 @@ def unit(snap, token, record_id=None):
     run = snap.checkpoint.get("run", 0)
     if prepared.receipt_retry:
         run = f"{run}r{prepared.receipt_retry}"
+    if prepared.relink:
+        run = f"{run}l{prepared.relink}"
 
     def apply(db, job, conn):
         record = db.scalar(select(SourceRecord).where(SourceRecord.id == record_id).with_for_update())

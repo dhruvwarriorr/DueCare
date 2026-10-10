@@ -1,3 +1,5 @@
+import type { Task } from "./types";
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -36,16 +38,14 @@ export async function api<T>(
     : { "Content-Type": "application/json" };
   if (method !== "GET") {
     headers["X-CSRF-Token"] = await token();
-    headers["Idempotency-Key"] =
-      options.idempotencyKey || crypto.randomUUID();
+    headers["Idempotency-Key"] = options.idempotencyKey || crypto.randomUUID();
   }
   const response = await fetch(
     path.startsWith("/auth") ? path : "/api/v1" + path,
     {
       method,
       headers,
-      body:
-        body === undefined ? undefined : form ? body : JSON.stringify(body),
+      body: body === undefined ? undefined : form ? body : JSON.stringify(body),
       cache: "no-store",
     },
   );
@@ -113,4 +113,59 @@ export function formatTime(value: string | null | undefined) {
         minute: "2-digit",
       }).format(new Date(value))
     : "No due date yet";
+}
+const dayFormat = new Intl.DateTimeFormat("en-IN", {
+  timeZone: "Asia/Kolkata",
+  day: "numeric",
+  month: "short",
+});
+// Calendar dates (YYYY-MM-DD) are India dates; read them at IST midday so no zone shifts the day.
+function day(value: string, withYear = false) {
+  const d = new Date(value + "T12:00:00+05:30");
+  return withYear
+    ? dayFormat.format(d) + " " + value.slice(0, 4)
+    : dayFormat.format(d);
+}
+type Dated = Pick<
+  Task,
+  | "dueAt"
+  | "dueDate"
+  | "type"
+  | "dateWindowStart"
+  | "dateWindowEnd"
+  | "timingProvenance"
+  | "timingTentative"
+>;
+/** The days a window-derived deadline stands for, when the exact day is not announced. */
+export function dueWindow(t: Dated) {
+  const basis = t.timingProvenance?.dueAt?.basis || "";
+  return t.dateWindowStart && t.dateWindowEnd && basis.endsWith("window-end")
+    ? { start: t.dateWindowStart, end: t.dateWindowEnd }
+    : null;
+}
+export function formatRange(start: string, end: string) {
+  const sameYear = start.slice(0, 4) === end.slice(0, 4);
+  return day(start, !sameYear) + " – " + day(end, true);
+}
+/** One description of when work is due, shared by every view. */
+export function deadline(t: Dated): { main: string; note: string | null } {
+  if (!t.dueAt) return { main: "No due date yet", note: null };
+  const tentative = t.timingTentative ? "Tentative · " : "";
+  const w = dueWindow(t);
+  if (w)
+    return {
+      main: formatRange(w.start, w.end),
+      note: tentative + "exact day not announced",
+    };
+  if (t.dueDate)
+    return {
+      main: day(t.dueDate, true),
+      note:
+        tentative +
+        (t.type === "test" ? "time not announced" : "date only · due by 23:59"),
+    };
+  return {
+    main: formatTime(t.dueAt),
+    note: t.timingTentative ? "Tentative" : null,
+  };
 }

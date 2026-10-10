@@ -44,7 +44,7 @@ export type Task = {
   revision: number;
   title: string;
   type: "assignment" | "test";
-  status: "due" | "completed" | "overdue" | "missed";
+  status: "due" | "completed" | "missed";
   subjectId: string | null;
   subjectName: string | null;
   subjectKind: string | null;
@@ -85,6 +85,9 @@ export type Task = {
   sources: string[];
   mergedInto: string | null;
   timingProvenance?: Record<string, { basis?: string; phrase?: string }>;
+  timingTentative?: { question?: string } | null;
+  /** The title as the source wrote it; `title` is the clean name shown to the student. */
+  sourceTitle?: string;
 };
 export type Slot = {
   id?: string;
@@ -151,6 +154,8 @@ export type Connection = {
     photo: string | null;
   };
   permissions: string[];
+  /** Permissions that add detail (teacher names) but never block syncing. */
+  optionalPermissionsMissing?: string[];
   lastAttemptAt: string | null;
   lastSuccessAt: string | null;
   retryAt: string | null;
@@ -263,8 +268,17 @@ export type Evidence = {
   method: string;
   state: "active" | "reassigned";
   occurredAt: string | null;
-  sourceKind: string;
+  sourceKind:
+    | "gmail_message"
+    | "classroom_announcement"
+    | "classroom_coursework"
+    | "classroom_submission";
   sender: string | null;
+  senderName: string | null;
+  postedAt: string | null;
+  courseName: string | null;
+  postedBy: string | null;
+  openUrl: string | null;
   sourceTitle: string | null;
   links: string[];
   excerpt: string | null;

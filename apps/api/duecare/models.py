@@ -62,9 +62,7 @@ class Task(Owned, Base):
         UniqueConstraint("id", "user_id"),
         ForeignKeyConstraint(["subject_id", "user_id"], ["duecare.subjects.id", "duecare.subjects.user_id"]),
         CheckConstraint("type in ('assignment','test')"),
-        CheckConstraint("status in ('due','completed','overdue','missed')"),
-        CheckConstraint("status != 'overdue' or type = 'assignment'"),
-        CheckConstraint("status != 'missed' or type = 'test'"),
+        CheckConstraint("status in ('due','completed','missed')", name="tasks_status_check"),
         {"schema": "duecare"},
     )
     subject_id: Mapped[uuid.UUID | None] = mapped_column(UUID, nullable=True, index=True)

@@ -24,7 +24,7 @@ from types import SimpleNamespace
 from sqlalchemy import delete, exists, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 
-from . import ai, google, interpret, mail, subject_link
+from . import ai, google, interpret, mail, naming, subject_link
 from .classroom_time import due_at
 from .common import owned, work
 from .config import GMAIL_LOOKBACK, settings
@@ -304,6 +304,8 @@ def advance(user, job_id, stop=None):
             finally:
                 imported.set()
             worker.result()
+            with ai.request_budget(deadline):
+                name_tasks(user, job_id, lease, deadline)
         finish_pipeline(user, job_id, lease)
     except Exception as exc:
         log.error("sync step failed type=%s job=%s", type(exc).__name__, str(job_id))
@@ -515,6 +517,29 @@ def interpret_stream(user, job_id, lease, deadline, imported, stop=None):
         finally:
             for future in inflight:
                 future.cancel()
+
+
+def name_tasks(user, job_id, lease, deadline):
+    """Clean names for imported tasks, a batch at a time, once interpretation has drained. AI runs
+    outside transactions; results apply only while this job still holds its lease."""
+    with work(user) as db:
+        job = owned(db, SyncJob, job_id, user["id"])
+        if (
+            job.lease_owner != lease
+            or job.checkpoint.get("stage") != "interpret"
+            or interpret.pending_record(db, job.connection_id) is not None
+        ):
+            return
+        snap = SimpleNamespace(uid=user["id"], service=db.get(Connection, job.connection_id).service)
+    while time.monotonic() < deadline:
+        apply = naming.unit(snap)
+        if not apply:
+            return
+        with work(user) as db:
+            job = owned(db, SyncJob, job_id, user["id"], lock=True)
+            if job.lease_owner != lease:
+                return
+            apply(db, job, None)
 
 
 def finish_pipeline(user, job_id, lease):
@@ -754,6 +779,9 @@ def gmail_unit(snap, token):
     def finished(db, job, conn):
         conn.checkpoint = {**conn.checkpoint, "historyId": final}
         requeue_subject_questions(db, conn, job)
+        interpret.repair_claimed_identity(db, conn)
+        interpret.repair_misattributed(db, conn)
+        interpret.repair_undated(db, conn)
         return to_interpretation(job)
 
     return finished
@@ -996,10 +1024,22 @@ def classroom_unit(snap, token):
     if stage == "courses":
         page = provider.classroom_courses(token, cp.get("pageToken"))
         courses, next_token = page.get("courses", []), page.get("nextPageToken")
+        teachers = course_teachers(provider, token, courses)
 
         def discovered(db, job, conn):
-            for course in courses:
-                upsert_course(db, conn, course, job.id)
+            named = [
+                str(course["id"])
+                for course in courses
+                if upsert_course(db, conn, course, job.id, teachers.get(str(course["id"])))
+            ]
+            if named:
+                # Teacher names just became available: list these courses in full once, so posts
+                # imported earlier also learn who posted them.
+                known = conn.checkpoint.get("courses", {})
+                conn.checkpoint = {
+                    **conn.checkpoint,
+                    "courses": {k: v for k, v in known.items() if k not in named},
+                }
             progress = bump(bump(job.progress, "pages"), "courses", len(courses))
             if next_token:
                 set_checkpoint(job, {**job.checkpoint, "pageToken": next_token}, progress=progress)
@@ -1021,6 +1061,9 @@ def classroom_unit(snap, token):
             "courses": {k: {**known.get(k, {}), **v} for k, v in {**known, **marks}.items()},
         }
         requeue_subject_questions(db, conn, job)
+        interpret.repair_claimed_identity(db, conn)
+        interpret.repair_misattributed(db, conn)
+        interpret.repair_undated(db, conn)
         return to_interpretation(job)
 
     return finished
@@ -1124,7 +1167,27 @@ def next_course(cp):
     }
 
 
-def upsert_course(db, conn, course, job_id):
+def course_teachers(provider, token, courses):
+    """{course id: {teacher user id: name}} when the optional rosters permission is granted.
+    Without it (or on any lookup failure) teacher names are simply unknown; sync continues."""
+    out = {}
+    for course in courses:
+        try:
+            page = provider.classroom_teachers(token, str(course["id"]))
+        except google.SourceError as exc:
+            if exc.kind == "permission":
+                return out  # Not granted for this account: no course will answer.
+            continue
+        out[str(course["id"])] = {
+            t["userId"]: name
+            for t in page.get("teachers", [])
+            if t.get("userId") and (name := ((t.get("profile") or {}).get("name") or {}).get("fullName"))
+        }
+    return out
+
+
+def upsert_course(db, conn, course, job_id, teachers=None):
+    """Store a discovered course; True when its teachers' names are known for the first time."""
     row = db.scalar(
         select(SourceCourse).where(
             SourceCourse.connection_id == conn.id, SourceCourse.external_course_id == str(course["id"])
@@ -1138,7 +1201,11 @@ def upsert_course(db, conn, course, job_id):
     # Source metadata only. Discovering a course never creates or changes a subject.
     row.data = {
         # The student's unlinking and the last automatic-linking check survive rediscovery.
-        **{k: v for k, v in (row.data or {}).items() if k in ("autoLinkDeclined", "autoLinkChecked")},
+        **{
+            k: v
+            for k, v in (row.data or {}).items()
+            if k in ("autoLinkDeclined", "autoLinkChecked", "teachers")
+        },
         "section": course.get("section"),
         "room": course.get("room"),
         "courseState": course.get("courseState"),
@@ -1146,6 +1213,10 @@ def upsert_course(db, conn, course, job_id):
         "updateTime": course.get("updateTime"),
         "lastSeenJob": str(job_id),
     }
+    first = bool(teachers) and not row.data.get("teachers")
+    if teachers is not None:
+        row.data = {**row.data, "teachers": teachers}
+    return first
 
 
 def finish_discovery(db, conn, job_id):
@@ -1375,7 +1446,10 @@ def store_classroom(db, conn, sub, cid, resource, item):
         .where(SourceRecord.connection_id == conn.id, SourceRecord.provider_id == pid)
         .with_for_update()
     )
+    creator = item.get("creatorUserId") if resource != "submissions" else None
     if record and record.content_hash == digest:
+        if creator and record.data.get("creatorUserId") != creator:
+            record.data = {**record.data, "creatorUserId": creator}  # Who posted it; not a new revision.
         return "unchanged"
     result = "updated" if record else "stored"
     if record is None:
@@ -1391,7 +1465,7 @@ def store_classroom(db, conn, sub, cid, resource, item):
     record.processing_state = "awaiting_interpretation"
     record.processing_version = VERSION
     record.reason = None
-    record.data = data
+    record.data = {**data, "creatorUserId": creator} if creator else data
     db.flush()
     replace_attachments(db, record, attachments)
     return result

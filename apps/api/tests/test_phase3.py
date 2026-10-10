@@ -4,6 +4,7 @@ Fixtures are synthetic, redacted messages modelled on the catalogued LMS templat
 notices (specification section 6). The AI provider is faked; no external calls are made.
 """
 
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -18,7 +19,7 @@ from duecare import ai, google, interpret, sync, targeting
 from duecare.config import settings
 from duecare.db import transaction
 from duecare.domain import effective_status
-from duecare.models import ReviewItem, SourceEvent, Task, now
+from duecare.models import History, ReviewItem, SourceEvent, Task, now
 from tests.fake_google import FakeGoogle, eml
 from tests.test_phase1 import PROFILE
 from tests.test_phase2 import connect, fresh, records, run
@@ -36,9 +37,25 @@ REFERENCE = Path(__file__).resolve().parents[3] / "docs/reference-files/emails"
 class FakeAI:
     def __init__(self):
         self.items, self.calls, self.down = {}, [], False
+        self.timings, self.timing_calls = {}, []
+
+    def timing(self, payload):
+        """Timing-only look: answers keyed by item title; anything unlisted states no date."""
+        self.timing_calls.append([i["title"] for i in payload["items"]])
+        if self.down:
+            raise ai.AIUnavailable("AI providers are temporarily unavailable")
+        items = [
+            {"key": i["key"], **self.timings.get(i["title"], {"kind": "none"})} for i in payload["items"]
+        ]
+        return ai.TimingResolution.model_validate({"items": items}), {"provider": "fake", "model": "fake-1"}
 
     def __call__(self, payload):
-        key = payload["source"].get("subject") or payload["source"].get("title")
+        # Classroom announcements have no title: they are keyed by their text.
+        key = (
+            payload["source"].get("subject")
+            or payload["source"].get("title")
+            or payload["sections"][0]["text"]
+        )
         self.calls.append(key)
         if self.down:
             raise ai.AIUnavailable("AI providers are temporarily unavailable")
@@ -58,6 +75,7 @@ def fake(monkeypatch):
 def model(monkeypatch):
     fake_ai = FakeAI()
     monkeypatch.setattr(ai, "extract", fake_ai)
+    monkeypatch.setattr(ai, "resolve_timing", fake_ai.timing)
     return fake_ai
 
 
@@ -203,7 +221,7 @@ def test_exp6_lms_flow_review_alias_receipts_and_completion_precedence(client, h
     assert str(task.subject_id) == subjects["Data Structures Laboratory"]["id"]
     assert task.data["subjectLink"] == {"method": "name"}
     assert task.type == "assignment" and task.due_at == ist(2026, 9, 21, 23, 59)
-    assert effective_status(task, now()) == "overdue"
+    assert effective_status(task, now()) == "missed"
 
     # The overdue notice and a later receipt for the same activity link to the same task.
     send(
@@ -602,7 +620,7 @@ def test_classroom_turned_in_reclaimed_returned_and_materials(client, headers, s
                               {"stateHistory": {"state": "RECLAIMED_BY_STUDENT", "stateTimestamp": later}}]}  # fmt: skip
     run(client, headers, conn)
     ia = next(t for t in tasks(student.uid) if t.title == "IA2.14 normalization")
-    assert ia.completed_at is None and effective_status(ia, now()) == "overdue"
+    assert ia.completed_at is None and effective_status(ia, now()) == "missed"
     assert len(tasks(student.uid)) == 2
 
 
@@ -1353,3 +1371,690 @@ def test_gmail_queue_is_newest_first_and_excludes_mail_older_than_30_days(client
     assert interpret.next_record(student.uid, conn) == ids["newest"]
     counts = client.get("/api/v1/connections", headers=headers).json()["items"][0]["records"]
     assert counts["awaitingInterpretation"] == 2 and counts["aiPaused"] == 0
+
+
+def test_stated_dates_survive_side_questions_and_missing_offsets(client, headers, student, fake, model):
+    ds = setup_student(client, headers)["Data Structures"]["id"]
+    div = {"divisions": ["B"]}
+    model.items = {
+        # A question about something other than timing must not discard a stated time, and a
+        # time without an offset is India time rather than no time at all.
+        "DS IA2 quiz on 20 Oct at 1:30 pm": [{"intent": "new_work", "taskType": "test", "title": "DS IA2 quiz", "subjectId": ds,
+            "targeting": div, "timing": {"startsAt": "2026-10-20T13:30:00"}, "question": "Is a calculator allowed?", "evidence": "DS IA2 quiz on 20 Oct"}],
+        # A bare date in a precise field is a date-only deadline.
+        "DS assignment 3 due on 22 Oct": [{"intent": "new_work", "taskType": "assignment", "title": "DS assignment 3",
+            "subjectId": ds, "targeting": div, "timing": {"dueAt": "2026-10-22"}, "evidence": "DS assignment 3 due on 22 Oct"}],
+        # A real doubt about timing keeps the date, widened to the days it names, as tentative.
+        "DS lab test date tentative": [{"intent": "new_work", "taskType": "test", "title": "DS lab test", "subjectId": ds,
+            "targeting": div, "timing": {"startsAt": "2026-10-25T10:00:00+05:30"},
+            "question": "Which date applies, 25 or 26 October?", "evidence": "DS lab test date tentative"}],
+    }  # fmt: skip
+    t0 = now() - timedelta(days=2)
+    for gid, subject in [
+        ("q1", "DS IA2 quiz on 20 Oct at 1:30 pm"),
+        ("q2", "DS assignment 3 due on 22 Oct"),
+        ("q3", "DS lab test date tentative"),
+    ]:
+        send(
+            fake,
+            gid,
+            "faculty.ds@somaiya.edu",
+            (subject, f"{subject}. Division B, submit the assignment."),
+            t0,
+        )
+    conn = connect(client, headers, fake, "gmail")
+    run(client, headers, conn)
+    by_title = {t.title: t for t in tasks(student.uid)}
+    assert by_title["DS IA2 quiz"].due_at == datetime(2026, 10, 20, 8, 0, tzinfo=UTC)
+    assert by_title["DS assignment 3"].due_at == datetime(2026, 10, 22, 18, 29, tzinfo=UTC)
+    assert by_title["DS assignment 3"].data["dueDate"] == "2026-10-22"
+    lab = by_title["DS lab test"]
+    assert lab.data["dateWindowStart"] == "2026-10-25" and lab.due_at == datetime(
+        2026, 10, 26, 18, 29, tzinfo=UTC
+    )
+    assert lab.data["timingTentative"]["question"].startswith("Which date applies")
+
+
+def test_classroom_due_dates_fill_tests_and_bare_coursework(client, headers, student, fake, model):
+    setup_student(client, headers)
+    dbms = client.post("/api/v1/subjects", headers=headers, json={"name": "DBMS", "kind": "theory"}).json()
+    recent = (now() - timedelta(days=2)).isoformat().replace("+00:00", "Z")
+    base = {"creationTime": recent, "updateTime": recent}
+    fake.courses = [{"id": "c1", "name": "26-27 dbms Div B"}]
+    fake.coursework["c1"] = [
+        # Midnight UTC arrives as an empty dueTime.
+        {**base, "id": "w1", "title": "DBMS IA1 quiz", "description": "Online quiz", "workType": "ASSIGNMENT",
+         "dueDate": {"year": 2026, "month": 10, "day": 15}, "dueTime": {}},
+        {**base, "id": "w2", "title": "Experiment 9", "description": "", "workType": "ASSIGNMENT",
+         "dueDate": {"year": 2026, "month": 10, "day": 18}, "dueTime": {"hours": 18, "minutes": 29}},
+        {**base, "id": "w3", "title": "Reading list", "description": "Optional reading", "workType": "ASSIGNMENT"},
+        {**base, "id": "w4", "title": "Lab manual", "description": "", "workType": "MATERIAL"},
+    ]  # fmt: skip
+    model.items = {
+        # The model names a test but gives no time: Classroom's own due date fills it in.
+        "DBMS IA1 quiz": [{"intent": "new_work", "taskType": "test", "title": "DBMS IA1 quiz", "subjectId": dbms["id"], "evidence": "DBMS IA1 quiz"}],
+        "Experiment 9": [],  # Nothing extracted from a bare title: the coursework is still kept.
+        "Reading list": [{"intent": "supporting", "title": "Reading list"}],
+        "Lab manual": [],
+    }  # fmt: skip
+    conn = connect(client, headers, fake, "classroom")
+    run(client, headers, conn)
+    client.put(f"/api/v1/subjects/{dbms['id']}/classroom-mappings/{conn}/c1", headers=fresh(headers))
+    run(client, headers, conn)
+    by_title = {t.title: t for t in tasks(student.uid)}
+    assert set(by_title) == {"DBMS IA1 quiz", "Experiment 9"}
+    quiz = by_title["DBMS IA1 quiz"]
+    assert quiz.due_at == datetime(2026, 10, 15, 0, 0, tzinfo=UTC) and quiz.type == "test"
+    exp = by_title["Experiment 9"]
+    assert exp.due_at == datetime(2026, 10, 18, 18, 29, tzinfo=UTC) and exp.type == "assignment"
+    assert str(exp.subject_id) == dbms["id"]
+
+
+def test_stated_dates_survive_model_timing_mistakes(client, headers, student, fake, model):
+    subjects = setup_student(client, headers)
+    coa, wdl = (
+        subjects["Computer Organization & Architecture"]["id"],
+        subjects["Web Development Laboratory"]["id"],
+    )
+    ds = subjects["Data Structures"]["id"]
+    div = {"divisions": ["B"]}
+    same = "2026-09-28T13:30:00+05:30"
+    model.items = {
+        # One time copied into every role must not make the whole schedule invalid.
+        "COA IA 1 scheduled on 28/09/2026 at 1:30 pm": [{"intent": "new_work", "taskType": "test",
+            "title": "COA IA 1", "subjectId": coa, "targeting": div, "evidence": "COA IA 1 scheduled on 28/09/2026",
+            "timing": {"dueAt": same, "startsAt": same, "endsAt": same, "loginByAt": same, "availabilityClosesAt": same}}],
+        # Numeric dates are day first: 10/8/26 is 10 August, not 8 October.
+        "DS viva": [{"intent": "new_work", "taskType": "test", "title": "DS viva", "subjectId": ds, "targeting": div,
+            "timing": {"dateOnly": "2026-10-08"}, "evidence": "held in lab on 10/8/26"}],
+        # A source stating no time of day: the model's midnight is a guess, not 5:30 am.
+        "MDM test": [{"intent": "new_work", "taskType": "test", "title": "MDM test", "targeting": div,
+            "timing": {"startsAt": "2026-10-31T00:00:00Z"}, "evidence": "conducted on 31st October 2026"}],
+        # A range of days is due by its last day, even when the model calls it unresolved.
+        "WDL practical exam": [{"intent": "new_work", "taskType": "test", "title": "WDL practical exam",
+            "subjectId": wdl, "targeting": div, "evidence": "between 30 Nov and 4 Dec",
+            "timing": {"mode": "unresolved", "dateWindowStart": "2026-11-30", "dateWindowEnd": "2026-12-04"}}],
+        # Tentative alternatives bound the work as a range rather than leaving it undated.
+        "Mini project": [{"intent": "new_work", "taskType": "assignment", "title": "Mini project presentation",
+            "subjectId": wdl, "targeting": div, "evidence": "tentatively scheduled on 23rd/30th Sept 2026",
+            "question": "Which date applies to you?", "timing": {"alternatives": ["2026-09-23", "2026-09-30"]}}],
+    }  # fmt: skip
+    for gid, subject, body, sent in [
+        (
+            "t1",
+            "COA IA 1 scheduled on 28/09/2026 at 1:30 pm",
+            "Log in to the LMS by 1:30 pm.",
+            datetime(2026, 9, 27),
+        ),
+        ("t2", "DS viva", "Viva based on experiment 1 will be held in lab on 10/8/26.", datetime(2026, 8, 5)),
+        ("t3", "MDM test", "The MDM test will be conducted on 31st October 2026.", now() - timedelta(days=2)),
+        ("t4", "WDL practical exam", "Practical exam between 30 Nov and 4 Dec.", now() - timedelta(days=2)),
+        (
+            "t5",
+            "Mini project",
+            "Mini project tentatively scheduled on 23rd/30th Sept 2026.",
+            datetime(2026, 9, 10),
+        ),
+    ]:
+        send(fake, gid, "faculty.ds@somaiya.edu", (subject, body + " Division B."), sent.replace(tzinfo=UTC))
+    conn = connect(client, headers, fake, "gmail")
+    run(client, headers, conn)
+    by_title = {t.title: t for t in tasks(student.uid)}
+    coa_task = by_title["COA IA 1"]
+    assert coa_task.due_at == ist(2026, 9, 28, 13, 30) and coa_task.data["timingMode"] == "fixed_session"
+    assert coa_task.data["endsAt"] is None
+    assert by_title["DS viva"].data["dueDate"] == "2026-08-10"
+    mdm = by_title["MDM test"]
+    assert mdm.data["dueDate"] == "2026-10-31" and mdm.due_at == ist(2026, 10, 31, 23, 59)
+    wdl_task = by_title["WDL practical exam"]
+    assert wdl_task.due_at == ist(2026, 12, 4, 23, 59) and wdl_task.data["dateWindowStart"] == "2026-11-30"
+    assert wdl_task.data["timingProvenance"]["dueAt"]["basis"] == "source-window-end"
+    mini = by_title["Mini project presentation"]
+    assert mini.data["dateWindowStart"] == "2026-09-23" and mini.due_at == ist(2026, 9, 30, 23, 59)
+
+
+def test_missing_dates_get_a_grounded_timing_only_look(client, headers, student, fake, model):
+    subjects = setup_student(client, headers)
+    ds, dsm = subjects["Data Structures"]["id"], subjects["Discrete Mathematics"]["id"]
+    div = {"divisions": ["B"]}
+
+    def item(title, subject, evidence):
+        return [{"intent": "new_work", "taskType": "test" if "IA" in title else "assignment", "title": title,
+                 "subjectId": subject, "targeting": div, "evidence": evidence}]  # fmt: skip
+
+    model.items = {
+        "DS assignment 4": item("DS assignment 4", ds, "DS assignment 4"),
+        "DSM IA2": item("DSM IA2", dsm, "DSM IA2"),
+        "Lab journal": item("Lab journal", ds, "Lab journal"),
+        "DS assignment 5": item("DS assignment 5", ds, "DS assignment 5"),
+        "ITVC worksheet due 22 Oct": item("ITVC worksheet due 22 Oct", None, "ITVC worksheet"),
+    }
+    model.timings = {
+        "DS assignment 4": {"kind": "date", "role": "due", "date": "2026-10-16", "phrase": "by next Friday"},
+        "DSM IA2": {
+            "kind": "exact",
+            "role": "start",
+            "at": "2026-10-20T13:30:00+05:30",
+            "phrase": "held on 20/10/2026 at 1:30 pm",
+        },  # fmt: skip
+        # A phrase the source does not contain is never accepted.
+        "DS assignment 5": {"kind": "date", "role": "due", "date": "2026-10-25", "phrase": "by 25 October"},
+    }
+    t0 = now() - timedelta(days=1)
+    for gid, subject, body in [
+        ("m1", "DS assignment 4", "Submit DS assignment 4 by next Friday. Division B."),
+        ("m2", "DSM IA2", "DSM IA2 will be held on 20/10/2026 at 1:30 pm in B115A. Division B."),
+        ("m3", "Lab journal", "Complete the lab journal. Division B."),
+        ("m4", "DS assignment 5", "Upload DS assignment 5 soon, before the due day. Division B."),
+        ("m5", "ITVC worksheet due 22 Oct", "Solve the ITVC worksheet. Division B."),
+    ]:
+        send(fake, gid, "faculty.ds@somaiya.edu", (subject, body), t0)
+    conn = connect(client, headers, fake, "gmail")
+    run(client, headers, conn)
+    by_title = {t.title: t for t in tasks(student.uid)}
+    assert by_title["DS assignment 4"].data["dueDate"] == "2026-10-16"
+    assert by_title["DSM IA2"].due_at == ist(2026, 10, 20, 13, 30)
+    assert by_title["DS assignment 5"].due_at is None
+    assert by_title["Lab journal"].due_at is None
+    # A date in the item's own words is read without asking AI.
+    assert by_title["ITVC worksheet due 22 Oct"].data["dueDate"] == "2026-10-22"
+    asked = {title for call in model.timing_calls for title in call}
+    assert "Lab journal" not in asked and "ITVC worksheet due 22 Oct" not in asked
+
+
+def test_undated_work_is_repaired_once_without_new_tasks(client, headers, student, fake, model, monkeypatch):
+    subjects = setup_student(client, headers)
+    coa, dsm = subjects["Computer Organization & Architecture"]["id"], subjects["Discrete Mathematics"]["id"]
+    div = {"divisions": ["B"]}
+    same = "2026-10-01T13:30:00+05:30"
+    model.items = {
+        "DSM IA1 seating": [{"intent": "new_work", "taskType": "test", "title": "DSM IA1", "subjectId": dsm,
+            "targeting": div, "evidence": "DSM IA1 scheduled on 1st October at 1:30 pm",
+            "timing": {"startsAt": same, "endsAt": same}}],
+        "COA IA2": [{"intent": "new_work", "taskType": "test", "title": "COA IA2", "subjectId": coa,
+            "targeting": div, "evidence": "COA IA2"}],
+    }  # fmt: skip
+    t0 = now() - timedelta(days=1)
+    send(
+        fake,
+        "r1",
+        "faculty.ds@somaiya.edu",
+        ("DSM IA1 seating", "DSM IA1 scheduled on 1st October at 1:30 pm. Div B."),
+        t0,
+    )
+    send(
+        fake,
+        "r2",
+        "faculty.ds@somaiya.edu",
+        ("COA IA2", "COA IA2 will be held next Tuesday. Division B."),
+        t0,
+    )
+
+    def unavailable(payload):
+        raise ai.AIUnavailable("AI providers are temporarily unavailable")
+
+    monkeypatch.setattr(ai, "resolve_timing", unavailable)
+    conn = connect(client, headers, fake, "gmail")
+    run(client, headers, conn)
+    by_title = {t.title: t for t in tasks(student.uid)}
+    assert by_title["COA IA2"].due_at is None  # The timing look could not run: kept, not lost.
+    # Simulate DSM IA1 as an earlier interpreter left it: dated evidence, undated task.
+    with transaction(student.uid) as db:
+        task = db.get(Task, by_title["DSM IA1"].id)
+        event = db.scalars(select(SourceEvent).where(SourceEvent.task_id == task.id)).one()
+        event.processing_version = "phase3-interpret-2"
+        omitted = {
+            "basis": "source-timing-omitted",
+            "evidenceRef": str(event.id),
+            "sourceTime": t0.isoformat(),
+        }
+        task.data = {
+            **{k: v for k, v in task.data.items() if k not in interpret.SCHEDULE_FIELDS},
+            "timingMode": "undated",
+            "timingProvenance": {k: omitted for k in interpret.SCHEDULE_FIELDS},
+        }
+        task.due_at = None
+        db.commit()
+    assert next(t for t in tasks(student.uid) if t.title == "DSM IA1").due_at is None
+    monkeypatch.setattr(ai, "resolve_timing", model.timing)
+    model.timings = {
+        "COA IA2": {"kind": "date", "role": "start", "date": "2026-10-13", "phrase": "next Tuesday"}
+    }
+    run(client, headers, conn)
+    after = tasks(student.uid)
+    assert sorted(t.title for t in after) == ["COA IA2", "DSM IA1"]  # Repair never creates work.
+    by_title = {t.title: t for t in after}
+    assert by_title["DSM IA1"].due_at == ist(2026, 10, 1, 13, 30)  # From saved evidence, no AI.
+    assert by_title["COA IA2"].data["dueDate"] == "2026-10-13"  # From a timing-only look.
+    assert all(r.processing_state == "interpreted" and "retime" not in r.data for r in records(student.uid))
+    calls = len(model.timing_calls)
+    run(client, headers, conn)
+    assert len(model.timing_calls) == calls  # Each task is repaired once per interpreter version.
+
+
+def test_repair_that_cannot_reach_ai_never_holds_a_sync_open(
+    client, headers, student, fake, model, monkeypatch
+):
+    subjects = setup_student(client, headers)
+    coa = subjects["Computer Organization & Architecture"]["id"]
+    model.items = {
+        "COA IA2": [{"intent": "new_work", "taskType": "test", "title": "COA IA2", "subjectId": coa,
+                     "targeting": {"divisions": ["B"]}, "evidence": "COA IA2"}],
+    }  # fmt: skip
+    send(fake, "z1", "faculty.ds@somaiya.edu", ("COA IA2", "COA IA2 next Tuesday. Division B."), now())
+
+    def unavailable(payload):
+        raise ai.AIUnavailable("AI providers are temporarily unavailable")
+
+    monkeypatch.setattr(ai, "resolve_timing", unavailable)
+    conn = connect(client, headers, fake, "gmail")
+    run(client, headers, conn)
+    model.down = True
+    job = run(client, headers, conn)  # Queues the repair, whose first look pauses.
+    for _ in range(interpret.RETIME_ATTEMPTS - 1):
+        assert job["status"] == "waiting_retry"
+        with transaction(student.uid) as db:
+            for r in db.scalars(
+                select(interpret.SourceRecord).where(interpret.SourceRecord.user_id == student.uid)
+            ):
+                r.data = {k: v for k, v in r.data.items() if k != "aiPausedUntil"}  # Let the retry fall due.
+            pending = db.scalar(select(sync.SyncJob).where(sync.SyncJob.id == job["id"]))
+            pending.next_retry_at = now() - timedelta(seconds=1)
+            db.commit()
+        for _ in range(10):
+            job = client.post(f"/api/v1/sync-jobs/{job['id']}/advance", headers=headers).json()
+            if job["status"] in ("completed", "waiting_retry"):
+                break
+    (record,) = records(student.uid)
+    assert record.processing_state == "interpreted" and "retime" not in record.data
+    assert job["status"] == "completed"
+    assert [t.title for t in tasks(student.uid)] == ["COA IA2"]
+
+
+def test_classroom_posts_add_only_assessments_tutorials_projects_and_presentations(
+    client, headers, student, fake, model
+):
+    setup_student(client, headers)
+    dbms = client.post("/api/v1/subjects", headers=headers, json={"name": "DBMS", "kind": "theory"}).json()[
+        "id"
+    ]
+    recent = (now() - timedelta(days=2)).isoformat().replace("+00:00", "Z")
+    stamp = {"creationTime": recent, "updateTime": recent}
+
+    def work(title, kind="assignment", **extra):
+        return {
+            "intent": "new_work",
+            "taskType": kind,
+            "title": title,
+            "subjectId": dbms,
+            "evidence": title,
+            **extra,
+        }
+
+    fake.courses = [{"id": "c1", "name": "26-27 dbms Div B"}]
+    fake.announcements["c1"] = [
+        {**stamp, "id": "a1", "text": "Complete the writeup of experiment 4 before the next lab."},
+        {**stamp, "id": "a2", "text": "DBMS IA1 quiz on 20 Oct at 1:30 pm."},
+        {**stamp, "id": "a3", "text": "Mini Project Presentation on 25 Oct."},
+        {**stamp, "id": "a4", "text": "Tutorial 3 is due on 22 Oct."},
+    ]
+    fake.coursework["c1"] = [
+        {**stamp, "id": "w1", "title": "Experiment 9", "workType": "ASSIGNMENT",
+         "description": "Perform Experiment 9. Also finish the Experiment 8 write-up.",
+         "dueDate": {"year": 2026, "month": 10, "day": 18}, "dueTime": {"hours": 18, "minutes": 29}},
+        {**stamp, "id": "w2", "title": "Lab manual", "workType": "MATERIAL",
+         "description": "Experiment 10 write-up due Friday."},
+    ]  # fmt: skip
+    model.items = {
+        "Complete the writeup of experiment 4 before the next lab.": [work("writeup of experiment 4")],
+        "DBMS IA1 quiz on 20 Oct at 1:30 pm.": [work("DBMS IA1 quiz", "test")],
+        "Mini Project Presentation on 25 Oct.": [work("Mini Project Presentation")],
+        "Tutorial 3 is due on 22 Oct.": [{**work("Tutorial 3"), "evidence": "Tutorial 3 is due on 22 Oct."}],
+        "Experiment 9": [work("Experiment 9"), work("Experiment 8 write-up")],
+        "Lab manual": [work("Experiment 10 write-up")],
+    }
+    conn = connect(client, headers, fake, "classroom")
+    run(client, headers, conn)
+    client.put(f"/api/v1/subjects/{dbms}/classroom-mappings/{conn}/c1", headers=fresh(headers))
+    run(client, headers, conn)
+    # Stream text and materials add assessments, tutorials, projects and presentations only;
+    # ordinary work comes from coursework the student turns in, never from text it mentions.
+    by_title = {t.title: t for t in tasks(student.uid)}
+    assert set(by_title) == {"DBMS IA1 quiz", "Mini Project Presentation", "Tutorial 3", "Experiment 9"}
+    assert by_title["Tutorial 3"].data["dueDate"] == "2026-10-22"
+    skipped = [r for r in records(student.uid) if r.provider_id.endswith(":a1")]
+    assert skipped[0].processing_state == "ignored" and skipped[0].reason == "classroom_post_not_work"
+    # A post still updates work already tracked from coursework.
+    experiment = by_title["Experiment 9"]
+    later = (now() - timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    fake.announcements["c1"].append(
+        {
+            "id": "a5",
+            "text": "Experiment 9 deadline extended to 30 Oct.",
+            "creationTime": later,
+            "updateTime": later,
+        }
+    )
+    model.items["Experiment 9 deadline extended to 30 Oct."] = [
+        {**work("Experiment 9"), "intent": "revision", "matchTaskId": str(experiment.id),
+         "timing": {"dueAt": "2026-10-30T23:59:00+05:30"}}
+    ]  # fmt: skip
+    run(client, headers, conn)
+    after = {t.title: t for t in tasks(student.uid)}
+    assert len(after) == 4 and after["Experiment 9"].due_at == ist(2026, 10, 30, 23, 59)
+
+
+def test_work_wrongly_attached_by_an_older_interpreter_becomes_its_own_task(
+    client, headers, student, fake, model, auto, monkeypatch
+):
+    setup_student(client, headers)
+    arvr = client.post("/api/v1/subjects", headers=headers, json={"name": "ARVR", "kind": "theory"}).json()[
+        "id"
+    ]
+
+    def at(days):
+        return (now() - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+
+    fake.courses = [{"id": "c1", "name": "ARVR MDM sem3"}]
+    w13 = {
+        "id": "w13",
+        "title": "IA 2.13",
+        "workType": "ASSIGNMENT",
+        "creationTime": at(9),
+        "updateTime": at(9),
+        "dueDate": {"year": 2026, "month": 9, "day": 29},
+        "dueTime": {"hours": 6, "minutes": 29},
+    }
+    w15 = {
+        "id": "w15",
+        "title": "IA 2.15 MCQ",
+        "workType": "ASSIGNMENT",
+        "creationTime": at(5),
+        "updateTime": at(5),
+        "dueDate": {"year": 2026, "month": 10, "day": 20},
+        "dueTime": {"hours": 5},
+    }
+    turned = {"stateHistory": {"state": "TURNED_IN", "stateTimestamp": at(8)}}
+    fake.coursework["c1"] = [w13]
+    fake.submissions["c1"] = [
+        {"id": "s13", "courseWorkId": "w13", "state": "TURNED_IN", "updateTime": at(8), "submissionHistory": [turned]}
+    ]  # fmt: skip
+
+    def matched_to_existing(payload):
+        # The older interpreter trusted the model's suggested match without checking it.
+        other = next((t["id"] for t in payload["candidateTasks"] if t["title"] == "IA 2.13"), None)
+        return [{"intent": "new_work", "taskType": "assignment", "title": "IA 2.15 MCQ", "subjectId": arvr,
+                 "evidence": "IA 2.15 MCQ", "matchTaskId": other}]  # fmt: skip
+
+    model.items = {
+        "IA 2.13": [
+            {
+                "intent": "new_work",
+                "taskType": "assignment",
+                "title": "IA 2.13",
+                "subjectId": arvr,
+                "evidence": "IA 2.13",
+            }
+        ],  # fmt: skip
+        "IA 2.15 MCQ": matched_to_existing,
+    }
+    version, same_work = interpret.VERSION, interpret.same_work
+    monkeypatch.setattr(interpret, "VERSION", "phase3-interpret-2")
+    monkeypatch.setattr(interpret, "same_work", lambda cand, task, ctx: True)
+    conn = connect(client, headers, fake, "classroom")
+    run(client, headers, conn)
+    client.put(f"/api/v1/subjects/{arvr}/classroom-mappings/{conn}/c1", headers=fresh(headers))
+    run(client, headers, conn)
+    fake.coursework["c1"].append(w15)  # Posted later, then matched to the earlier task.
+    fake.submissions["c1"].append(
+        {"id": "s15", "courseWorkId": "w15", "state": "CREATED", "updateTime": at(5)}
+    )
+    run(client, headers, conn)
+    (glued,) = tasks(student.uid)  # The defect: one task, named after the newer work...
+    assert glued.title == "IA 2.15 MCQ" and glued.completed_at  # ...completed by IA 2.13's turn-in.
+
+    monkeypatch.setattr(interpret, "VERSION", version)  # The current interpreter, with its check.
+    monkeypatch.setattr(interpret, "same_work", same_work)
+    run(client, headers, conn)
+    by_title = {t.title: t for t in tasks(student.uid)}
+    assert set(by_title) == {"IA 2.13", "IA 2.15 MCQ"}
+    mcq, other = by_title["IA 2.15 MCQ"], by_title["IA 2.13"]
+    assert mcq.id == glued.id and mcq.completed_at is None  # Not turned in: no longer complete.
+    assert mcq.due_at == datetime(2026, 10, 20, 5, 0, tzinfo=UTC)
+    assert other.completed_at and other.due_at == datetime(2026, 9, 29, 6, 29, tzinfo=UTC)
+    with transaction(student.uid) as db:
+        actions = db.scalars(select(History.action).where(History.task_id == mcq.id)).all()
+    assert "evidence_detached" in actions and "reopened" in actions
+    run(client, headers, conn)  # Examined once: a later sync changes nothing.
+    assert {t.title: t.revision for t in tasks(student.uid)} == {
+        t.title: t.revision for t in by_title.values()
+    }
+
+
+def test_coursework_is_its_own_item_even_when_its_description_lists_other_work_first(
+    client, headers, student, fake, model, auto, monkeypatch
+):
+    setup_student(client, headers)
+    arvr = client.post("/api/v1/subjects", headers=headers, json={"name": "ARVR", "kind": "theory"}).json()[
+        "id"
+    ]
+    stamp = (now() - timedelta(days=4)).isoformat().replace("+00:00", "Z")
+    fake.courses = [{"id": "c1", "name": "ARVR MDM sem3"}]
+    fake.coursework["c1"] = [
+        {"id": "w8", "title": "IA 1.8 Compare OLED, LCD and Micro OLED", "workType": "ASSIGNMENT",
+         "description": "Revise the reading notes first. Then compare OLED, LCD and Micro OLED.",
+         "creationTime": stamp, "updateTime": stamp,
+         "dueDate": {"year": 2026, "month": 10, "day": 20}, "dueTime": {"hours": 5}},
+    ]  # fmt: skip
+    turned = {"stateHistory": {"state": "TURNED_IN", "stateTimestamp": stamp}}
+    fake.submissions["c1"] = [
+        {
+            "id": "s8",
+            "courseWorkId": "w8",
+            "state": "TURNED_IN",
+            "updateTime": stamp,
+            "submissionHistory": [turned],
+        }
+    ]
+
+    def item(title):
+        return {
+            "intent": "new_work",
+            "taskType": "assignment",
+            "title": title,
+            "subjectId": arvr,
+            "evidence": title,
+        }
+
+    model.items = {
+        "IA 1.8 Compare OLED, LCD and Micro OLED": [
+            item("Reading notes"),
+            item("IA 1.8 Compare OLED, LCD and Micro OLED"),
+        ]
+    }
+    version, own_item = interpret.VERSION, interpret.own_item
+    monkeypatch.setattr(interpret, "VERSION", "phase3-interpret-2")
+    monkeypatch.setattr(interpret, "own_item", lambda items, title: 0)  # The older rule: the first item.
+    conn = connect(client, headers, fake, "classroom")
+    run(client, headers, conn)
+    client.put(f"/api/v1/subjects/{arvr}/classroom-mappings/{conn}/c1", headers=fresh(headers))
+    run(client, headers, conn)
+    before = {t.title: t for t in tasks(student.uid)}
+    # The defect: the first listed item took the coursework's identity and its turn-in.
+    assert before["Reading notes"].completed_at
+    assert not before["IA 1.8 Compare OLED, LCD and Micro OLED"].completed_at
+
+    monkeypatch.setattr(interpret, "VERSION", version)
+    monkeypatch.setattr(interpret, "own_item", own_item)
+    run(client, headers, conn)
+    by_title = {t.title: t for t in tasks(student.uid)}
+    coursework = by_title["IA 1.8 Compare OLED, LCD and Micro OLED"]
+    assert coursework.completed_at and coursework.due_at == datetime(2026, 10, 20, 5, 0, tzinfo=UTC)
+    assert coursework.id == before["IA 1.8 Compare OLED, LCD and Micro OLED"].id  # No duplicate.
+    assert by_title["Reading notes"].completed_at is None  # Its turn-in was the coursework's.
+    run(client, headers, conn)  # Repaired once.
+    assert len(tasks(student.uid)) == 2
+
+
+def test_tasks_get_clean_names_that_keep_identifiers_and_never_override_the_student(
+    client, headers, student, fake, model, monkeypatch
+):
+    from duecare import naming
+    from tests.conftest import AI_NAME_TITLES
+
+    calls = []
+
+    def provider(system, user, schema):
+        tasks_ = json.loads(user)["tasks"]
+        calls.append([t["title"] for t in tasks_])
+        proposals = {
+            "COA IA 1 scheduled on 28/09/2026 at 1:30 pm": "COA IA 1",
+            "Experiment 8- TCL and DCL commands": "Experiment 8: TCL and DCL Commands",
+            "IA 2.15 MCQ": "IA 2.16 MCQ",  # Changes an identifier: rejected for the tidy-up.
+        }
+        items = [{"key": t["key"], "name": proposals.get(t["title"])} for t in tasks_]
+        return schema.model_validate({"items": items}), {"provider": "fake"}
+
+    monkeypatch.setattr(naming, "name_titles", AI_NAME_TITLES)
+    monkeypatch.setattr(ai, "structured", provider)
+    subjects = setup_student(client, headers)
+    coa = subjects["Computer Organization & Architecture"]["id"]
+    div = {"divisions": ["B"]}
+    titles = [
+        "COA IA 1 scheduled on 28/09/2026 at 1:30 pm",
+        "Experiment 8- TCL and DCL commands",
+        "IA 2.15 MCQ",
+    ]
+    model.items = {
+        t: [{"intent": "new_work", "taskType": "assignment", "title": t, "subjectId": coa, "targeting": div, "evidence": t}]
+        for t in titles
+    }  # fmt: skip
+    for n, t in enumerate(titles):
+        send(fake, f"n{n}", "faculty.coa@somaiya.edu", (t, t + ". Division B."), now() - timedelta(days=1))
+    conn = connect(client, headers, fake, "gmail")
+    run(client, headers, conn)
+    shown = {t["sourceTitle"]: t for t in client.get("/api/v1/tasks", headers=headers).json()["items"]}
+    assert shown[titles[0]]["title"] == "COA IA 1"
+    assert shown[titles[1]]["title"] == "Experiment 8: TCL and DCL Commands"
+    assert shown[titles[2]]["title"] == "IA 2.15 MCQ"
+    # The clean name is searchable; the student's own title always wins.
+    found = client.get("/api/v1/tasks?q=TCL and DCL Commands", headers=headers).json()["items"]
+    assert [t["sourceTitle"] for t in found] == [titles[1]]
+    task = shown[titles[0]]
+    edited = client.patch(
+        f"/api/v1/tasks/{task['id']}",
+        headers=fresh(headers),
+        json={"revision": task["revision"], "title": "My COA quiz"},
+    ).json()
+    assert edited["title"] == "My COA quiz"
+    calls.clear()
+    run(client, headers, conn)
+    assert calls == []  # Named once; a student-named task is never renamed.
+
+    # Source details: who posted it, when, and a link back to the original.
+    (source,) = [
+        e
+        for e in client.get(f"/api/v1/tasks/{task['id']}/evidence", headers=headers).json()["items"]
+        if e["state"] == "active"
+    ]
+    assert source["sender"] == "faculty.coa@somaiya.edu" and source["postedAt"]
+    assert source["openUrl"].startswith("https://mail.google.com/mail/u/?authuser=student%40somaiya.edu#all/")
+
+
+def test_tasks_imported_before_naming_get_clean_names_on_a_later_sync(client, headers, student, fake, model):
+    subjects = setup_student(client, headers)
+    coa = subjects["Computer Organization & Architecture"]["id"]
+    title = "Re: COA IA 1 scheduled on 28/09/2026 at 1:30 pm"
+    model.items = {
+        title: [{"intent": "new_work", "taskType": "test", "title": title, "subjectId": coa,
+                 "targeting": {"divisions": ["B"]}, "evidence": "COA IA 1"}]
+    }  # fmt: skip
+    send(fake, "old", "faculty.coa@somaiya.edu", (title, "COA IA 1. Division B."), now() - timedelta(days=1))
+    conn = connect(client, headers, fake, "gmail")
+    run(client, headers, conn)
+    with transaction(student.uid) as db:  # As imported before names existed.
+        (task,) = db.scalars(select(Task)).all()
+        task.data = {k: v for k, v in task.data.items() if k not in ("displayTitle", "naming")}
+        db.commit()
+    assert client.get("/api/v1/tasks", headers=headers).json()["items"][0]["title"] == title
+    run(client, headers, conn)
+    assert client.get("/api/v1/tasks", headers=headers).json()["items"][0]["title"] == "COA IA 1"
+
+
+@pytest.mark.parametrize("granted", [True, False])
+def test_classroom_sources_name_the_teacher_only_when_allowed(client, headers, student, fake, model, granted):
+    from duecare.google import IDENTITY_SCOPES, OPTIONAL_SCOPES, SERVICE_SCOPES
+
+    rosters = OPTIONAL_SCOPES["classroom"]
+    if granted:
+        fake.scopes = [*IDENTITY_SCOPES, *SERVICE_SCOPES["classroom"], *rosters]
+    else:  # Google refuses the teacher lookup without the permission.
+        fake.failures += [("teachers:c1", "permission")] * 2  # Once per sync.
+    dbms = client.post("/api/v1/subjects", headers=headers, json={"name": "DBMS", "kind": "theory"}).json()[
+        "id"
+    ]
+    stamp = (now() - timedelta(days=2)).isoformat().replace("+00:00", "Z")
+    fake.courses = [
+        {"id": "c1", "name": "DBMS B2 116A", "alternateLink": "https://classroom.google.com/c/c1"}
+    ]
+    fake.teachers["c1"] = [{"userId": "t1", "profile": {"name": {"fullName": "Sheetal Pereira"}}}]
+    fake.coursework["c1"] = [
+        {"id": "w8", "title": "Experiment 8", "workType": "ASSIGNMENT", "creatorUserId": "t1",
+         "alternateLink": "https://classroom.google.com/c/c1/a/w8", "creationTime": stamp, "updateTime": stamp,
+         "dueDate": {"year": 2026, "month": 10, "day": 20}, "dueTime": {"hours": 18, "minutes": 29}}
+    ]  # fmt: skip
+    model.items = {"Experiment 8": []}
+    conn = connect(client, headers, fake, "classroom")
+    run(client, headers, conn)
+    client.put(f"/api/v1/subjects/{dbms}/classroom-mappings/{conn}/c1", headers=fresh(headers))
+    assert run(client, headers, conn)["status"] == "completed"  # A missing permission never blocks sync.
+    (connection,) = client.get("/api/v1/connections", headers=headers).json()["items"]
+    assert connection["optionalPermissionsMissing"] == ([] if granted else rosters)
+    (task,) = client.get("/api/v1/tasks", headers=headers).json()["items"]
+    (source,) = client.get(f"/api/v1/tasks/{task['id']}/evidence", headers=headers).json()["items"]
+    assert source["courseName"] == "DBMS B2 116A"
+    assert source["postedBy"] == ("Sheetal Pereira" if granted else None)
+    assert source["openUrl"] == "https://classroom.google.com/c/c1/a/w8"
+
+
+def test_posts_imported_before_teacher_names_were_allowed_get_their_teacher(
+    client, headers, student, fake, model
+):
+    from duecare.google import IDENTITY_SCOPES, OPTIONAL_SCOPES, SERVICE_SCOPES
+    from duecare.models import SourceRecord
+
+    dbms = client.post("/api/v1/subjects", headers=headers, json={"name": "DBMS", "kind": "theory"}).json()[
+        "id"
+    ]
+
+    def at(days):
+        return (now() - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+
+    fake.courses = [{"id": "c1", "name": "DBMS B2 116A"}]
+    fake.teachers["c1"] = [{"userId": "t1", "profile": {"name": {"fullName": "Sheetal Pereira"}}}]
+    fake.coursework["c1"] = [
+        {"id": "w7", "title": "Experiment 7", "workType": "ASSIGNMENT", "creatorUserId": "t1",
+         "creationTime": at(20), "updateTime": at(20), "dueDate": {"year": 2026, "month": 10, "day": 25},
+         "dueTime": {"hours": 18, "minutes": 29}},
+        {"id": "w8", "title": "Experiment 8", "workType": "ASSIGNMENT", "creatorUserId": "t1",
+         "creationTime": at(2), "updateTime": at(2), "dueDate": {"year": 2026, "month": 10, "day": 26},
+         "dueTime": {"hours": 18, "minutes": 29}},
+    ]  # fmt: skip
+    model.items = {"Experiment 7": [], "Experiment 8": []}
+    fake.failures += [("teachers:c1", "permission")] * 2
+    conn = connect(client, headers, fake, "classroom")
+    run(client, headers, conn)
+    client.put(f"/api/v1/subjects/{dbms}/classroom-mappings/{conn}/c1", headers=fresh(headers))
+    run(client, headers, conn)
+    with transaction(student.uid) as db:  # As stored before posters were recorded.
+        for record in db.scalars(select(SourceRecord).where(SourceRecord.kind == "classroom_coursework")):
+            record.data = {k: v for k, v in record.data.items() if k != "creatorUserId"}
+        db.commit()
+    # The student allows teacher names: the next sync lists the course in full once.
+    fake.scopes = [*IDENTITY_SCOPES, *SERVICE_SCOPES["classroom"], *OPTIONAL_SCOPES["classroom"]]
+    connect(client, headers, fake, "classroom", code="c2")
+    run(client, headers, conn)
+    by_title = {t["sourceTitle"]: t for t in client.get("/api/v1/tasks", headers=headers).json()["items"]}
+    old = by_title["Experiment 7"]
+    (source,) = client.get(f"/api/v1/tasks/{old['id']}/evidence", headers=headers).json()["items"]
+    assert source["postedBy"] == "Sheetal Pereira"

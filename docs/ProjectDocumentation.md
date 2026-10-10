@@ -134,18 +134,17 @@ Optional task information includes:
 - Reporting, attendance, and submission timing where the source distinguishes them.
 - Venue, relevant syllabus, permitted tools, and preparation instructions stated by the source.
 
-Tasks have exactly four statuses: `due`, `completed`, `overdue`, and `missed`. The user explicitly added `missed` after supplying online-quiz examples; this supersedes the earlier three-status decision. It is a stored/API status, not merely a display label.
+Tasks have exactly three statuses: `due`, `completed`, and `missed`. The user first added `missed` for tests, then merged the former assignment-only `overdue` into it: any incomplete work past its cutoff is missed. This supersedes the earlier four-status decision. It is a stored/API status, not merely a display label.
 
 - `due`: incomplete work whose applicable cutoff has not arrived, including work without a precise cutoff.
 - `completed`: work completed manually or through validated submission evidence.
-- `overdue`: an incomplete **assignment** whose submission cutoff has arrived.
-- `missed`: an incomplete **test** whose applicable cutoff has arrived; an online attempt-window quiz uses its closing time.
+- `missed`: incomplete work (assignment or test) whose applicable cutoff has arrived; an online attempt-window quiz uses its closing time. A missed task can still be completed.
 
-Compute the effective incomplete status from task type, timing mode, the accepted cutoff, and current time whenever tasks are read or displayed. At `now >= dueAt`, an incomplete assignment is overdue and an incomplete test is missed. With no precise cutoff, it remains due. A completed task remains completed after the cutoff. Reopening or an accepted timing correction recalculates due/overdue/missed within those type-specific rules.
+Compute the effective incomplete status from task type, timing mode, the accepted cutoff, and current time whenever tasks are read or displayed. At `now >= dueAt`, incomplete work is missed. With no precise cutoff, it remains due. A completed task remains completed after the cutoff. Reopening or an accepted timing correction recalculates due/missed.
 
-The database/API status enum supports all four values; overdue is valid only for assignments and missed only for tests. Persist the status snapshot during ordinary application processing and writes, while responses always compute the effective value rather than relying on a stale snapshot. No scheduled job is required merely for a status to change with time.
+The database/API status enum supports exactly these three values for both task types. Persist the status snapshot during ordinary application processing and writes, while responses always compute the effective value rather than relying on a stale snapshot. No scheduled job is required merely for a status to change with time.
 
-Completed tasks are excluded from due, overdue, and missed views/counts. Needs attention remains a separate review queue, not a fifth task status.
+Completed tasks are excluded from due and missed views/counts. Needs attention remains a separate review queue, not a fifth task status.
 
 Tests without completion evidence become missed at their applicable cutoff and remain incomplete until the student completes or deletes them. A fixed-session test uses its confirmed start; an online quiz offering only an attempt window uses the window's closing time, as confirmed by the user. An opening time alone is not that quiz's missed cutoff.
 
@@ -181,7 +180,7 @@ Additional rules:
 - A test's reporting or login time must not be silently substituted for its start time. Display these roles together. Deadline-based status and priority continue to use `dueAt`; earlier arrival requirements are visible task instructions.
 - For an online quiz that specifies only an attempt window, the user chose the closing time as the incomplete-status cutoff. Keep opening/closing fields separate, set `timingMode` to `attempt_window`, and use `availabilityClosesAt` for `dueAt`. Do not claim the student began an attempt when the window opened or that the attempt duration equals the full availability interval.
 - A quiz closing notice can describe an online availability bound for a fixed-session classroom test. In that case, retain the independently confirmed classroom start/end and the availability close as different roles; a generic closing notice does not silently change the established timing mode.
-- For assignments and tests with a specific date but no time, use a labelled 23:59 IST deadline default. This is a cutoff, never an invented exam start. Date-only notices do not require a timing review; date ranges and tentative alternatives remain undated until a specific date is known. Explicit source times retain their original roles.
+- For assignments and tests with a specific date but no time, use a labelled 23:59 IST deadline default. This is a cutoff, never an invented exam start. Date-only notices do not require a timing review. A date range, or tentative alternatives, is due by 23:59 IST on its last possible day and is shown as the whole range ("exact day not announced"); it never selects one day. A date the source itself doubts is kept, widened to any other day the doubt names, and labelled tentative. Explicit source times retain their original roles; numeric dates are read day first (DD/MM/YYYY), and a clock time the source does not state is never kept.
 - A window such as 30 November–4 December means the student's test falls somewhere in that interval. Do not choose the first day, turn the last day into a submission deadline, or claim that the test lasts the entire interval. Keep the proposed item in Needs attention; if accepted before the individual slot is known, retain the range and leave `dueAt` unset.
 - “During any lecture in the week” does not select one lecture. “Tentatively 23rd/30th” does not select one date. Unresolved choices remain in review.
 - Interpret relative text using the source author's publication time and stated timezone, not import time. Preserve the phrase and the resolved basis for phrases such as “today,” “next week,” and “before the next lab.” Quoted text uses its own earlier message date.
@@ -261,7 +260,7 @@ Effective priority follows this precedence:
 
 | Deadline condition | Default priority |
 |---|---|
-| Overdue assignment, missed test, or cutoff within 24 hours | Critical |
+| Missed work, or cutoff within 24 hours | Critical |
 | Within 3 days | High |
 | Within 7 days | Medium |
 | Later or undated | Low |
@@ -367,6 +366,7 @@ Classroom source mappings must retain theory/lab/tutorial context and use the st
 #### Assignment and announcement reconciliation
 
 - Import actionable announcement text as well as structured coursework. The supplied DBMS examples place test dates, upload instructions, and later changes in the stream, so reading coursework alone would miss obligations.
+- Student decision: a Classroom post without a turn-in slot (stream announcement, material, or further work a coursework description mentions) adds new work only for tests/assessments (quiz, IA, test, exam, viva, OST/ESE/MSE), tutorials, projects, and presentations. Ordinary work such as experiments, write-ups, journals, and lab tasks is added from Classroom only as coursework the student turns work in on. Such a post can still update a task already tracked (for example, a changed deadline). Gmail is unaffected.
 - Classify actual intent instead of copying the provider's work type into DueCare's two task types. Preserve the provider work type as source metadata.
 - Match structured coursework by account, course ID, and coursework ID. Labels such as `IA2.14`, `IA2.15`, and Experiment 4 are identifiers, not decimal dates; neighbouring numbers are separate work until evidence establishes otherwise.
 - A stream card saying “posted a new assignment” and the corresponding coursework resource describe the same item when the source link/identifier establishes that relation. Avoid duplicate tasks for the stream card, Gmail notification, and coursework.
@@ -479,7 +479,7 @@ Classroom exposes distinct submission states; DueCare must interpret the state t
 - Unchanged source evidence cannot undo a manual correction.
 - Genuinely newer final submission evidence can complete reopened work.
 - Announcements, all generic due/overdue notices regardless of their age, and stale unsubmitted source states cannot reopen completed work.
-- Reopened work is due before its cutoff; after the cutoff, an assignment is overdue and a test is missed. No status beyond the approved four is introduced.
+- Reopened work is due before its cutoff; after the cutoff, it is missed. No status beyond the approved three is introduced.
 
 Students can reassign receipt evidence and undo merges. Recalculate affected tasks from remaining evidence and manual decisions, preserving the change history.
 
@@ -521,7 +521,7 @@ A newer applicable notice can withdraw a viva or another requirement. Record the
 | Two applicable sources disagree about dates/details on the same task | Latest source publication/edit timestamp wins automatically; retain history and no source-conflict review |
 | A newer source contradicts a student-edited field | Preserve the manual override; no source-conflict review |
 | An explicit exam slot differs from ordinary reference hours | Use the explicit slot and expose the reference discrepancy; review any unresolved exam-specific conflict |
-| Teacher supplies a tentative interval or two alternatives | Keep the task normally with no specific dates; retain the original alternatives as source evidence |
+| Teacher supplies a tentative interval or two alternatives | Keep the task as the range of possible days, due by the last one and labelled tentative; retain the original alternatives as source evidence |
 | A newer general guideline refers to a known assessment without enough identity/context | Enrich only when an established association is safe; otherwise request association review |
 | A due/overdue notice disagrees with accepted completion | Keep completed; no reopen, duplicate task, or review merely for the status contradiction |
 
@@ -677,7 +677,7 @@ Scopes:
 
 - Identity: `openid`, `email`, `profile`.
 - Gmail: `gmail.readonly`.
-- Classroom: `classroom.courses.readonly`, `classroom.coursework.me.readonly`, `classroom.announcements.readonly`.
+- Classroom: `classroom.courses.readonly`, `classroom.coursework.me.readonly`, `classroom.announcements.readonly`. Optional: `classroom.rosters.readonly`, used only to name the teacher who posted Classroom work; its absence never blocks a connection, and the Sources page offers to grant it.
 
 Encrypt refresh tokens at rest with versioned encryption keys. Keep credentials server-side. Preserve an existing refresh token when a later authorization response omits a replacement.
 
@@ -776,7 +776,7 @@ Use revisions for editable records. Preserve source occurrence time separately f
 | `subjects` | Owner; manually entered name; kind (`theory`, `lab`, or `tutorial`); optional subject code/confirmed aliases/academic-term label; confirmed source class-code references with their identifier namespace and component label; revision; timestamps; academic context inherited from the profile, with no subject-level student batch field |
 | `subject_timetable_slots` | Owner; existing subject ID; ISO weekday; local start/end time; Asia/Kolkata timezone; optional venue/instructor; optional validity date bounds; semester/term context at entry; stable ID; timestamps; edits governed by subject revision; no student batch value or override |
 | `subject_mappings` | Subject; connection; external Classroom course identifier; relevant source course name/section metadata; explicit mapping state; source availability; theory/lab/tutorial context; no student batch override |
-| `tasks` | Owner; optional subject; type; title; relevant instructions; assessment/deliverable labels; optional source component label; academic-term context; observed audience/batch targeting (evidence only, not student membership); timing mode/fields defined below; venue; accepted completion state, origin, evidence reference, recorded time and source-time basis; latest explicit manual decision and permitted reopening evidence; status enum/snapshot (`due`, `completed`, `overdue`, or `missed`); notes; estimated effort; manual priority; rule priority; manual field overrides; revision |
+| `tasks` | Owner; optional subject; type; title; relevant instructions; assessment/deliverable labels; optional source component label; academic-term context; observed audience/batch targeting (evidence only, not student membership); timing mode/fields defined below; venue; accepted completion state, origin, evidence reference, recorded time and source-time basis; latest explicit manual decision and permitted reopening evidence; status enum/snapshot (`due`, `completed`, or `missed`); notes; estimated effort; manual priority; rule priority; manual field overrides; revision |
 | `source_records` | Connection; namespaced provider ID and relevant course/work or activity-resource ID; external link; sender mailbox; relevant source title; sent/received/published/updated time separately; thread/parent references when available; content/revision hash; processing state; academic-targeting outcome; minimal ignored/review/status-suppression reason; minimal evidence excerpt for eligible work only; processing version; expiry when applicable; blocked records retain only permitted identifiers/reason |
 | `source_attachments` | Source record; filename/title; link or provider reference; media type and available size |
 | `source_events` | Source record/revision; classified event type (including due/overdue notice, submission confirmation, or explicit reopen); candidate obligation/deliverable identity; relevant section/digest-row reference; observed targeting with qualifier scope; role-specific fields with evidence references; source occurrence/submission/state-transition time and basis when supplied; superseded event references; sender/template/ownership validation result; processing version |
@@ -829,11 +829,11 @@ Important constraints:
 - Sender preferences are user-owned; block decisions supersede all inclusion and processing paths. Do not store blocked message bodies or excerpts.
 - Record academic-targeting outcomes and minimal reasons separately from the four task statuses; reject AI output that bypasses a confirmed mismatch or unresolved applicability.
 - Exactly four effective task statuses; derive incomplete status from type, timing mode, accepted cutoff, and current time. Enforce overdue-only-for-assignment and missed-only-for-test constraints. Completed always takes precedence over the clock and reminder labels.
-- A confirmed fixed-session test's `starts_at` and `due_at` agree; an attempt-window test's `availability_closes_at` and `due_at` agree. Reporting/login/opening fields do not overwrite the applicable cutoff. Reject inconsistent accepted intervals and negative durations; conflicting extracted timing values leave the imported task undated without a timing review.
+- A confirmed fixed-session test's `starts_at` and `due_at` agree; an attempt-window test's `availability_closes_at` and `due_at` agree. Reporting/login/opening fields do not overwrite the applicable cutoff. Reject inconsistent accepted intervals and negative durations. Conflicting extracted timing values are settled to the clearest single stated cutoff (start, closing time, deadline, date, then range); only when none validates is the imported task left undated, without a timing review.
 - Accepted completion is persisted independently of reminder labels and effective deadline calculations. The backend rejects any attempt to apply a generic reminder event as a completed-to-incomplete transition, even when AI proposes it or the event is newer.
 - Recheck the current task completion state, latest manual decision, and revision in the applying transaction. A queued reminder extracted before a receipt/user confirmation cannot commit an incomplete status after that confirmation; retries and concurrent syncs obey the same guard.
 - Preserve the latest manual completion/reopen decision and explicit permitted-reopen evidence during replay, reprocessing, merge undo, and evidence reassignment. A status change requires its own authorized action/evidence; updating a deadline cannot clear completion.
-- Preserve local date windows and tentative alternatives without manufacturing timestamps. Each accepted timing field retains its independent provenance; source-update timestamps never become deadlines by default.
+- Preserve local date windows and tentative alternatives without manufacturing an exact slot; a window's only derived value is its last-day 23:59 IST cutoff. Each accepted timing field retains its independent provenance; source-update timestamps never become deadlines by default.
 - Ordinary assessment points, published marks, and receipt sender addresses cannot independently set completion.
 - Indexed task completion/deadline/subject, subject kind, source identifiers, active jobs, unread activity, and unresolved reviews.
 - Suppression survives removal of a deleted task's ordinary contents.
@@ -878,7 +878,7 @@ FastAPI exposes versioned REST under `/api/v1`, with generated OpenAPI documenta
 | Restore | `GET /suppression-records`; `POST /suppression-records/{id}/restore`; `POST /connections/{id}/reimport` for explicit source reimport after restoration |
 | Health | Minimal public liveness endpoint; protected dependency diagnostics |
 
-Task edits cover completion, reopening, notes, deadlines, subject assignment, and priority overrides. Task responses and filters expose exactly `due`, `completed`, `overdue`, and `missed`. Students mark work completed or reopen it; the server determines the effective incomplete status from type, timing mode, and cutoff. Clients cannot force overdue/missed through an arbitrary status edit or use missed for an assignment. Reject unsupported task statuses.
+Task edits cover completion, reopening, notes, deadlines, subject assignment, and priority overrides. Task responses and filters expose exactly `due`, `completed`, and `missed`. Students mark work completed or reopen it; the server determines the effective incomplete status from type, timing mode, and cutoff. Clients cannot force missed through an arbitrary status edit. Reject unsupported task statuses.
 
 The existing task create/edit contracts can accept optional timing and supporting fields in camelCase: `timingMode`, `submissionOpensAt`, `availabilityOpensAt`, `availabilityClosesAt`, `loginByAt`, `reportingAt`, `startsAt`, `endsAt`, `dateWindowStart`, `dateWindowEnd`, `durationMinutes`, `location`, `assessmentLabel`, and `deliverableLabel`. Required manual fields remain `title` and `type`. Validate related fields atomically and mark student edits as manual overrides. No additional scheduling endpoint or external calendar connection is implied.
 
@@ -972,10 +972,10 @@ Representative extracted timing proposal for the revised Discrete Maths quiz (an
 |---|---|
 | Sign-in | Somaiya Google sign-in; clear rejection for ineligible identities |
 | Onboarding | Six required academic fields with fixed institution/programme and a branch dropdown with separate class/year, semester, division, and one batch for all subjects; manually add theory/lab/tutorial subjects without entering another batch; optional timetable and connections; no Classroom course-selection step |
-| Dashboard | Due, completed, overdue assignments, missed tests, undated work, Needs attention, and sync progress |
+| Dashboard | Due, completed, missed work, undated work, Needs attention, and sync progress |
 | Tasks | Search; subject/subject-kind/batch/type/status/priority/date/source filters; due/completed/overdue/missed status filters with type-specific validity; editing, completion, and reopening actions |
 | Task detail | Instructions, assessment/deliverable labels, subject kind, profile batch versus observed targeting; clearly separate upload opening/deadline, quiz availability, and login/report/start/end; venue, date precision, personal fields, links, attachment metadata, completion origin/evidence, revision timeline |
-| Calendar | Confirmed dated assignments and tests; clear date-only labels; exam windows/tentative alternatives visibly unresolved, never plotted as an invented exact slot or all-day exam lasting the whole window |
+| Calendar | Confirmed dated assignments and tests; clear date-only labels; exam windows/tentative alternatives shown as their range and placed on their last day as a cutoff, never plotted as an invented exact slot or all-day exam lasting the whole window |
 | Subjects | Manually add/edit subjects using only name and theory/lab/tutorial kind; enter/edit/remove weekly slots with weekday, local times, optional venue/instructor; no Valid from/Valid until inputs; use the profile's batch without another batch input; explicitly link existing subjects to Classroom source metadata |
 | Needs attention | Show observed versus student academic context; missing/conflicting targeting or timing, tentative alternatives, unknown eligibility, and proposed withdrawal; confirm applicability, select an existing manual subject, resolve the actual question, or dismiss; do not show blocked mail or confirmed mismatches as review items |
 | Rules | Simple rule editor; natural-language interpretation preview; enable/order/edit/reprocess |
@@ -1005,7 +1005,10 @@ Use concrete review explanations rather than scores: “Exact exam date has not 
 - Exported authentication-result headers are sample data, not independently verified live sender authentication.
 - Three assignment-submission-confirmation exports now establish candidate receipt patterns: two EXP6-BST messages and one ITVC IA2 message. Sender authentication, recipient ownership, template semantics, and live task association still require validation before production enablement. Test-submission and withdrawal receipt patterns have not been supplied.
 - Supplied EXP6 and ITVC reminder links match their respective receipt activity identifiers. Due/overdue mail is not submission-state authority. The user explicitly requires confirmed completion to survive even a newer contradictory reminder.
-- Online-quiz closing was chosen as the attempt-window cutoff, and `missed` was explicitly added as a fourth stored/API task status for expired tests. This supersedes the earlier three-status requirement.
+- The user required that work whose source states any date never shows without one. Date windows and tentative alternatives are therefore due by their last possible day (shown as the range), doubted dates are kept as tentative, and a timing-only second look (deterministic first, then a grounded AI call) fills dates the main extraction missed. This supersedes leaving windows and alternatives undated. Work imported without its date by an earlier interpreter is repaired once per interpreter version, setting only that task's schedule.
+- An earlier interpreter accepted the model's suggested task match without checking it, so some work was attached to another task (and could complete or rename it) and never became its own task. The current interpreter checks every suggested match (same subject, type and numbered identity) and repairs earlier links once: wrongly attached work is detached and interpreted again, fields it set are restored from the task's own source, and a completion that came from another item's turn-in is moved to the task's own turn-in or undone. Student decisions and student-named tasks are never changed.
+- Imported tasks show a clean name (`displayTitle`): AI proposes it and it is accepted only if it keeps every identifier, course code and kind of work the source title gives and adds no word; otherwise a deterministic tidy-up is used. The source title remains the task's identity for matching. A title the student edits is never renamed. Task details list each source (sender or Classroom course, posting time, original title) with a link to open it in Gmail or Classroom.
+- Online-quiz closing was chosen as the attempt-window cutoff, and `missed` was explicitly added as a fourth stored/API task status for expired tests. This superseded the earlier three-status requirement; `overdue` was later merged into `missed` for all work (three statuses: due, completed, missed).
 - The examples have not been used to train a model, and no extraction implementation or automated acceptance suite has been run. Section 6 defines expected behavior for future redacted fixtures.
 
 ### Required acceptance scenarios
@@ -1022,7 +1025,7 @@ Use concrete review explanations rather than scores: “Exact exam date has not 
 | Task statuses | Exactly due/completed/overdue/missed in database/API; incomplete assignments expire to overdue, tests to missed; attempt-window quizzes become missed at close, not open; completed tasks remain completed; reopening/timing edits recalculate within type-specific rules |
 | Dates/priority | IST conversion, date-only default labeling, overdue boundaries, and priority precedence are correct |
 | Timing roles | Login, reporting, start, end, and upload opening/closing remain distinct; source publication/edit dates do not become deadlines; duration-derived times retain their basis |
-| Windows and tentative dates | ESE and lecture-week windows do not choose a slot; alternative presentation dates remain unresolved; accepted unknown-time tests do not receive invented start times |
+| Windows and tentative dates | ESE and lecture-week windows do not choose a slot but are due by their last day; alternative presentation dates become a tentative range; accepted unknown-time tests do not receive invented start times |
 | Source chronology | New authored revisions supersede compatible old quoted fields; importing an old message later cannot roll back a newer schedule; explicit same-test revisions do not create duplicate tests |
 | Gmail | Primary assignment sender recognized; faculty quizzes/tutorials/internal assessments classified within the two task types; theory/lab/tutorial and batch context used; pagination and incremental updates work |
 | Sender inclusion | Student-added sender passes sender eligibility but still requires academic relevance, targeting checks, and receipt validation |
@@ -1038,7 +1041,7 @@ Use concrete review explanations rather than scores: “Exact exam date has not 
 | Online quiz boundary | E20 remains due before 21:00 IST, including between opening and closing; incomplete test is missed at/after 21:00; completed test remains completed |
 | Matching | Candidate-only AI selection; unmatched receipt retries when its exact task arrives, within the Gmail 30-day window |
 | Classroom | Own submissions only; explicitly mapped manual subjects only; discovering source courses never creates subjects; older outstanding/future work included |
-| Classroom content | Actionable announcements are detected; materials/sample questions do not generate tasks; decimal assessment labels remain identifiers; stream and coursework representations reconcile through exact source links |
+| Classroom content | Actionable announcements are detected; posts and materials add only assessments, tutorials, projects, and presentations, while experiments and write-ups come only from turn-in coursework; materials/sample questions do not generate tasks; decimal assessment labels remain identifiers; stream and coursework representations reconcile through exact source links |
 | Completion | Genuinely newer validated explicit withdrawal/resubmission can reopen; generic reminders never do, even when newer; manual corrections survive unchanged/old evidence |
 | Group work | One-uploader instructions do not prove the connected student's completion; independent deliverables/viva remain independent; manual group confirmation keeps its provenance |
 | Withdrawn requirements | An applicable withdrawal proposes review/deletion rather than setting completed or adding a fourth task status |
@@ -1512,7 +1515,7 @@ The upload card requests one person per group, but its title is truncated in the
 | Broad A-B-C-D audience plus B2 profile | Division B is included; no rewrite of division or global batch; unresolved batch still uses confirmed context or review |
 | Synthetic broad course with B1-only activity | Explicit B1 qualifier excludes B2; ignore the activity despite the familiar sender or broad course audience |
 | Mixed-cohort digest | Process applicable rows individually; ignore explicit other-class/batch rows; ambiguous rows reviewed, no cross-row completion |
-| Stored status validity | Database/API supports missed as a distinct fourth value; assignment-missed and test-overdue combinations rejected; effective status refreshed without scheduled work |
+| Stored status validity | Database/API support exactly due, completed and missed for assignments and tests; effective status refreshed without scheduled work |
 
 ### Confirmed additions and evidence still needed
 

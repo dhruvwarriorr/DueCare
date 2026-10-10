@@ -7,6 +7,19 @@ from .schemas import TaskInput
 IST = ZoneInfo("Asia/Kolkata")
 
 
+def window_cutoff(end):
+    """A range of possible days is over by the end of its last day."""
+    if not end:
+        return None
+    day = end if not isinstance(end, str) else datetime.fromisoformat(end[:10]).date()
+    return datetime.combine(day, time(23, 59), IST).astimezone(UTC).isoformat()
+
+
+def window_derived(data):
+    """The stored cutoff only stands for a date window, not a stated deadline."""
+    return bool(data.get("dateWindowEnd")) and data.get("dueAt") == window_cutoff(data["dateWindowEnd"])
+
+
 def task_data(payload: TaskInput):
     d = payload.model_dump(mode="json", by_alias=True)
     for name in (
@@ -35,6 +48,15 @@ def task_data(payload: TaskInput):
         if d["startsAt"] or d["availabilityClosesAt"]:
             raise ApiError(422, "INVALID_TIME", "Choose a date-only deadline or a timed test, not both")
         d["dueAt"], d["timingMode"] = cutoff, "deadline_only"
+    from_window = (
+        d["dateWindowEnd"]
+        and not any(d[k] for k in ("dueDate", "startsAt", "availabilityClosesAt"))
+        and d["timingMode"] in ("undated", "unresolved", "deadline_only")
+        and (not d["dueAt"] or d["dueAt"] == window_cutoff(payload.date_window_end))
+    )
+    if from_window:
+        # The exact day is not announced yet, but the work is settled by the window's last day.
+        d["dueAt"], d["timingMode"] = window_cutoff(payload.date_window_end), "deadline_only"
     if d["timingMode"] == "fixed_session":
         if d["type"] != "test" or not d["startsAt"]:
             raise ApiError(422, "INVALID_TIME", "A fixed-session test requires a confirmed start")
@@ -78,6 +100,8 @@ def task_data(payload: TaskInput):
     if d["dueDate"]:
         d["timingProvenance"]["dueAt"]["basis"] = "student-date-only"
         d["timingProvenance"]["dueAt"]["defaultTime"] = "23:59 IST"
+    if from_window:
+        d["timingProvenance"]["dueAt"].update(basis="window-end", defaultTime="23:59 IST")
     return d
 
 
@@ -85,7 +109,7 @@ def effective_status(task, at):
     if task.completed_at:
         return "completed"
     if task.due_at and at >= task.due_at:
-        return "missed" if task.type == "test" else "overdue"
+        return "missed"  # One past-deadline status for assignments and tests alike.
     return "due"
 
 

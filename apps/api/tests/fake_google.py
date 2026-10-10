@@ -44,6 +44,7 @@ class FakeGoogle(GoogleSource):
         self.messages, self.order, self.history = {}, [], []
         self.history_id, self.history_expired = 100, False
         self.courses, self.coursework, self.announcements, self.submissions = [], {}, {}, {}
+        self.teachers = {}
         self.page_size = 2
         self.failures, self.calls, self.revoked, self.refreshes = [], [], [], []
         self.identity_claims = {"sub": "google-sub-1", "email": "student@somaiya.edu", "email_verified": True}
@@ -180,6 +181,10 @@ class FakeGoogle(GoogleSource):
     def _course(self, course_id):
         if not any(c["id"] == course_id for c in self.courses):
             raise SourceError("not_found", "Missing course")
+
+    def classroom_teachers(self, token, course_id, page_token=None):
+        self._call("teachers:" + course_id)
+        return self._page(self.teachers.get(course_id, []), page_token, "teachers")
 
     def classroom_coursework(self, token, course_id, page_token=None):
         self._call("coursework:" + course_id)
