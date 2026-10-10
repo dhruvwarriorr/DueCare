@@ -3,6 +3,26 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 test("onboarding offers timetable upload, Maths tutorials and instant subject creation", async ({ page, context }) => {
+  let bulkRequests = 0;
+  let previewRequests = 0;
+  let saveRequests = 0;
+  let csrfToken = "";
+  page.on("request", (request) => {
+    csrfToken = request.headers()["x-csrf-token"] || csrfToken;
+  });
+  await page.route("**/api/v1/subjects/bulk", async (route) => {
+    bulkRequests += 1;
+    const response = await route.fetch();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await route.fulfill({ response });
+  });
+  await page.route("**/api/v1/timetable-imports/confirm", async (route) => {
+    if (route.request().postDataJSON().dryRun) previewRequests += 1;
+    else saveRequests += 1;
+    const response = await route.fetch();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await route.fulfill({ response });
+  });
   const { instantHandle } = JSON.parse(readFileSync(resolve("../../.local/e2e-account.json"), "utf8"));
   await context.addCookies([{
     name: "duecare-session", value: instantHandle, domain: "localhost", path: "/", httpOnly: true, sameSite: "Lax",
@@ -44,13 +64,17 @@ test("onboarding offers timetable upload, Maths tutorials and instant subject cr
   await dialog.locator('input[type="file"]').setInputFiles(resolve("../../.local/e2e-timetable.pdf"));
   await dialog.getByRole("button", { name: "Read timetable" }).click();
   await expect(dialog.getByRole("button", { name: "Instant create subjects" })).toBeVisible();
-  const maths = dialog.locator("fieldset").filter({ has: page.locator("legend", { hasText: /Maths.*tutorial/ }) });
+  const maths = dialog.locator("fieldset.import-row").filter({ has: page.locator("legend", { hasText: /Maths.*tutorial/ }) });
   await maths.getByRole("button", { name: "Create subject from this" }).click();
   await expect(maths.getByRole("combobox", { name: "Kind", exact: true })).toHaveValue("tutorial");
   await maths.getByRole("button", { name: "Cancel", exact: true }).click();
-  await dialog.getByRole("button", { name: "Instant create subjects" }).click();
+  await dialog.getByRole("button", { name: "Instant create subjects" }).evaluate((button: HTMLButtonElement) => {
+    for (let i = 0; i < 8; i += 1) button.click();
+  });
+  await expect(dialog.getByRole("button", { name: "Start over" })).toBeDisabled();
   await expect(dialog.getByText("3 subjects created. All recognized courses are linked.")).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Instant create subjects" })).toHaveCount(0);
+  expect(bulkRequests).toBe(1);
   const response = await page.request.get("/api/v1/subjects");
   expect((await response.json()).items.map((s: { name: string; kind: string }) => [s.name, s.kind])).toEqual(
     expect.arrayContaining([["Maths", "theory"], ["Maths", "tutorial"], ["DS", "theory"]]),
@@ -65,10 +89,45 @@ test("onboarding offers timetable upload, Maths tutorials and instant subject cr
     expect(hours.every((width) => width >= 54)).toBe(true);
     await page.screenshot({ path: `test-results/timetable-setup-${width}.png` });
   }
-  await dialog.getByRole("button", { name: "Review save" }).click();
+  const patchProfile = async (changes: Record<string, string>) => {
+    const profile = await (await page.request.get("/api/v1/me")).json();
+    const response = await page.request.patch("/api/v1/me", {
+      headers: { Origin: "http://localhost:3001", "X-CSRF-Token": csrfToken },
+      data: { revision: profile.revision, ...changes },
+    });
+    expect(response.ok()).toBe(true);
+  };
+  // An appearance change must not make a valid batch review stale.
+  await patchProfile({ theme: "dark" });
+  await dialog.getByRole("button", { name: "Review save" }).evaluate((button: HTMLButtonElement) => {
+    for (let i = 0; i < 8; i += 1) button.click();
+  });
+  await expect(dialog.getByRole("button", { name: "Start over" })).toBeDisabled();
   await expect(dialog.getByText("Will add (4)")).toBeVisible();
-  await dialog.getByRole("button", { name: "Confirm timetable" }).click();
+  expect(previewRequests).toBe(1);
+  await expect(dialog.getByRole("button", { name: "Back to draft" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Back to draft" }).click();
+  await dialog.getByLabel("Room for Monday 10:00").fill("B999");
+  // A genuine batch change offers recovery and preserves edits and subject links.
+  await patchProfile({ generalBatch: "3" });
+  await dialog.getByRole("button", { name: "Review save" }).click();
+  const refresh = dialog.getByRole("button", { name: "Refresh batch decisions" });
+  await expect(refresh).toBeVisible();
+  await expect(refresh).toBeEnabled();
+  await refresh.evaluate((button: HTMLButtonElement) => {
+    for (let i = 0; i < 8; i += 1) button.click();
+  });
+  await expect(dialog.getByText(/Batch decisions refreshed/)).toBeVisible();
+  await expect(dialog.getByText(/Your batch: B3/)).toBeVisible();
+  await expect(dialog.getByLabel("Room for Monday 10:00")).toHaveValue("B999");
+  await dialog.getByRole("button", { name: "Review save" }).click();
+  await expect(dialog.getByText("Will add (2)")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Confirm timetable" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Confirm timetable" }).evaluate((button: HTMLButtonElement) => {
+    for (let i = 0; i < 8; i += 1) button.click();
+  });
   await expect(dialog.getByText("Timetable saved", { exact: true })).toBeVisible();
+  expect(saveRequests).toBe(1);
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Maths", exact: true })).toHaveCount(2);
 });

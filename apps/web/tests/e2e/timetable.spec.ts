@@ -125,7 +125,7 @@ test("scheduler screenshots are read and linked without AI", async ({
   ).toBeVisible();
   await page.screenshot({ path: "test-results/scheduler-review.png" });
   // A missing subject is created from its course card and linked to every slot.
-  const dbms = dialog.locator("fieldset", {
+  const dbms = dialog.locator("fieldset.import-row", {
     has: page.locator("legend", { hasText: "Database Management Systems" }),
   });
   await dbms.getByRole("button", { name: "Create subject from this" }).click();
@@ -136,7 +136,7 @@ test("scheduler screenshots are read and linked without AI", async ({
   await dbms.getByRole("button", { name: "Create and link 1 slot" }).click();
   await expect(dbms.getByLabel("Subject", { exact: true })).toHaveValue(/.+/);
   // An existing subject is never created again; it is offered for linking instead.
-  const lab = dialog.locator("fieldset", {
+  const lab = dialog.locator("fieldset.import-row", {
     has: page.locator("legend", { hasText: "Data Structures Laboratory" }),
   });
   await lab.getByRole("button", { name: "Create subject from this" }).click();

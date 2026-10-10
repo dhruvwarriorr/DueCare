@@ -374,6 +374,7 @@ export type TimetableDraft = {
   families: CourseFamily[];
   ai: { used: boolean; unavailable?: boolean };
   profileRevision: number;
+  profileContext?: string;
 };
 export type ImportSlotBrief = {
   subjectId: string;

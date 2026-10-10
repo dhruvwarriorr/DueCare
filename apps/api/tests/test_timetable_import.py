@@ -5,9 +5,9 @@ import pytest
 from PIL import Image
 from sqlalchemy import select
 
-from duecare import ai, timetable_draft, timetable_extract, timetable_scheduler
+from duecare import ai, timetable_api, timetable_draft, timetable_extract, timetable_scheduler
 from duecare.db import transaction
-from duecare.models import Slot
+from duecare.models import Profile, Slot
 
 from . import scheduler_png
 from .conftest import account
@@ -427,6 +427,57 @@ def test_confirm_replace_conflicts_rollback_and_ownership(client, headers):
     assert r.status_code == 404
     mismatch = {"profileRevision": 3, "subjects": [{"id": ds["id"], "revision": 3}], "slots": [slot(coa, 5)]}
     assert confirm(client, headers, mismatch).status_code == 422
+
+
+def test_import_ignores_unrelated_profile_version_changes(client, headers, student):
+    subjects = setup(client, headers, [("DS", "theory")])
+    ds = subjects[("DS", "theory")]
+    body = {
+        "profileRevision": 2,
+        "profileContext": timetable_api.profile_context(PROFILE),
+        "subjects": [{"id": ds["id"], "revision": 1}],
+        "slots": [slot(ds)],
+    }
+    # Both explicit appearance changes and background faculty/policy updates increment revision.
+    client.patch("/api/v1/me", headers=headers.fresh(), json={"revision": 2, "theme": "dark"})
+    with transaction(str(student.uid)) as db:
+        p = db.get(Profile, student.uid)
+        p.data = {**p.data, "approvedFaculty": {"teacher@somaiya.edu": {"approved": True}}}
+        p.revision += 1
+    dry = confirm(client, headers, {**body, "dryRun": True})
+    assert dry.status_code == 200, dry.text
+    saved = confirm(client, headers, body, fresh=False)
+    assert saved.status_code == 200, saved.text
+    # Replaying the same save after further profile changes returns the original result.
+    client.patch("/api/v1/me", headers=headers.fresh(), json={"revision": 4, "generalBatch": "3"})
+    again = confirm(client, headers, body, fresh=False)
+    assert again.json() == saved.json()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"generalBatch": "3"},
+        {"division": "A"},
+        {"currentSemester": 4},
+        {"classYear": "TY"},
+        {"branchCode": "IT"},
+    ],
+)
+def test_import_still_rejects_changed_academic_context(client, headers, changes):
+    subjects = setup(client, headers, [("DS", "theory")])
+    ds = subjects[("DS", "theory")]
+    body = {
+        "profileRevision": 2,
+        "profileContext": timetable_api.profile_context(PROFILE),
+        "subjects": [{"id": ds["id"], "revision": 1}],
+        "slots": [slot(ds)],
+    }
+    client.patch("/api/v1/me", headers=headers.fresh(), json={"revision": 2, **changes})
+    response = confirm(client, headers, body)
+    assert response.status_code == 409
+    assert response.json()["code"] == "PROFILE_CHANGED"
+    assert client.get(f"/api/v1/subjects/{ds['id']}/timetable", headers=headers).json()["slots"] == []
 
 
 def test_overlaps_require_acknowledgement(client, headers):

@@ -227,6 +227,23 @@ export function TimetableImport({
   const [instantStatus, setInstantStatus] = useState("");
   const confirmKey = useRef<{ payload: string; key: string } | null>(null);
   const added = useRef(0);
+  const actionLock = useRef(false);
+  const [busy, setBusy] = useState(false);
+
+  async function runAction(action: () => Promise<unknown>) {
+    // A ref closes the gap before React paints disabled buttons, including same-frame clicks.
+    if (actionLock.current) return;
+    actionLock.current = true;
+    setBusy(true);
+    try {
+      await action();
+    } catch {
+      // Mutations retain their errors for the inline notice and a deliberate retry.
+    } finally {
+      actionLock.current = false;
+      setBusy(false);
+    }
+  }
 
   const urls = useMemo(() => files.map((f) => URL.createObjectURL(f)), [files]);
   useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u)), [urls]);
@@ -262,7 +279,7 @@ export function TimetableImport({
   );
 
   const interpret = useMutation({
-    mutationFn: (r: TimetableReading) =>
+    mutationFn: ({ reading: r }: { reading: TimetableReading; refresh?: boolean }) =>
       api<TimetableDraft>("/timetable-imports/interpret", "POST", {
         pages: r.pages.map((p) => ({
           id: p.id,
@@ -286,13 +303,37 @@ export function TimetableImport({
           })),
         ),
       }),
-    onSuccess: (d) => {
+    onSuccess: (d, { refresh }) => {
       setDraft(d);
-      setRows(d.rows);
+      setRows((old) => {
+        if (!refresh) return d.rows;
+        const previous = new Map(old.filter((r) => r.cellId).map((r) => [r.cellId, r]));
+        return [
+          ...d.rows.map((r) => {
+            const before = previous.get(r.cellId);
+            if (!before) return r;
+            return {
+              ...r,
+              weekday: before.weekday,
+              startTime: before.startTime,
+              endTime: before.endTime,
+              location: before.location,
+              subjectId: before.subjectId || r.subjectId,
+              link: before.subjectId ? before.link : r.link,
+              ...(before.exclusionReason === "Excluded by you"
+                ? { include: false, exclusionReason: before.exclusionReason }
+                : {}),
+            };
+          }),
+          ...old.filter((r) => !r.cellId),
+        ];
+      });
       setChoices({});
       setTaken(Object.fromEntries(d.families.map((f) => [f.key, f.selected])));
       setSummary(null);
-      setInstantStatus("");
+      setInstantStatus(refresh ? "Batch decisions refreshed. Review the included classes before saving." : "");
+      preview.reset();
+      save.reset();
     },
   });
   const extract = useMutation({
@@ -336,9 +377,9 @@ export function TimetableImport({
         );
       }
     },
-    onSuccess: (r) => {
+    onSuccess: async (r) => {
       setReading(r);
-      interpret.mutate(r);
+      await interpret.mutateAsync({ reading: r });
     },
   });
 
@@ -497,14 +538,17 @@ export function TimetableImport({
       dryRun,
       method: reading?.method || "pdf_text",
       profileRevision: draft?.profileRevision,
+      profileContext: draft?.profileContext,
       subjects: ids.map((id) => ({ id, revision: byId.get(id)?.revision })),
       slots,
       acknowledgeOverlaps: dryRun ? false : acknowledged.overlaps,
     };
   }
   const conflict = async () => {
-    await client.invalidateQueries({ queryKey: ["subjects"] });
-    await client.invalidateQueries({ queryKey: ["me"] });
+    await Promise.all([
+      client.invalidateQueries({ queryKey: ["subjects"] }),
+      client.invalidateQueries({ queryKey: ["me"] }),
+    ]);
   };
   const preview = useMutation({
     mutationFn: (m: "add" | "replace") =>
@@ -514,10 +558,11 @@ export function TimetableImport({
       }),
     onSuccess: (r) => {
       setSummary(r.summary);
+      save.reset();
       setAcknowledged({ overlaps: false, removals: false });
     },
-    onError: (e) => {
-      if (e instanceof ApiError && e.status === 409) void conflict();
+    onError: async (e) => {
+      if (e instanceof ApiError && e.status === 409) await conflict();
     },
   });
   const save = useMutation({
@@ -546,18 +591,22 @@ export function TimetableImport({
         ),
       );
     },
-    onError: (e) => {
+    onError: async (e) => {
       if (e instanceof ApiError && e.status === 409) {
         setSummary(null);
-        void conflict();
+        await conflict();
       }
     },
   });
 
   const close = () => {
+    if (actionLock.current) return;
     if (draft && !saved && !leaving) setLeaving(true);
     else onClose();
   };
+  const profileChanged = [preview.error, save.error].some(
+    (error) => error instanceof ApiError && error.code === "PROFILE_CHANGED",
+  );
   const stage = saved
     ? "done"
     : draft
@@ -598,10 +647,10 @@ export function TimetableImport({
             Discard this draft? Weekly slot edits will be lost. Any subjects
             you created will stay in your subject list.
           </p>
-          <Button variant="outline" size="sm" onClick={() => setLeaving(false)}>
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => setLeaving(false)}>
             Keep reviewing
           </Button>
-          <Button variant="destructive" size="sm" onClick={onClose}>
+          <Button variant="destructive" size="sm" disabled={busy} onClick={onClose}>
             Discard draft
           </Button>
         </div>
@@ -698,7 +747,7 @@ export function TimetableImport({
             <ErrorNotice error={extract.error} />
             <ErrorNotice
               error={interpret.error}
-              retry={reading ? () => interpret.mutate(reading) : undefined}
+              retry={reading ? () => void runAction(() => interpret.mutateAsync({ reading })) : undefined}
             />
           </div>
           <div className="dialog-footer">
@@ -706,10 +755,10 @@ export function TimetableImport({
               Cancel
             </Button>
             <Button
-              disabled={!files.length}
+              disabled={busy || !files.length}
               onClick={() => {
                 interpret.reset();
-                extract.mutate();
+                void runAction(() => extract.mutateAsync());
               }}
             >
               Read timetable
@@ -785,6 +834,7 @@ export function TimetableImport({
               })}
             </div>
             <div className="import-draft">
+              <fieldset className="import-controls" disabled={busy} aria-busy={busy}>
               {stage === "review" ? (
                 <>
                   <p className="import-counts" aria-live="polite">
@@ -842,7 +892,7 @@ export function TimetableImport({
                       <Button
                         size="sm"
                         disabled={instant.isPending}
-                        onClick={() => instant.mutate()}
+                        onClick={() => void runAction(() => instant.mutateAsync())}
                       >
                         <Plus size={15} />
                         {instant.isPending ? "Creating subjects…" : "Instant create subjects"}
@@ -1048,6 +1098,7 @@ export function TimetableImport({
                           onFocus={setFocus}
                           update={update}
                           updateMany={updateMany}
+                          runAction={runAction}
                         />
                       ))}
                     </section>
@@ -1064,12 +1115,27 @@ export function TimetableImport({
                           onFocus={setFocus}
                           update={update}
                           updateMany={updateMany}
+                          runAction={runAction}
                         />
                       ))}
                     </section>
                   )}
-                  <ErrorNotice error={preview.error} />
-                  <ErrorNotice error={save.error} />
+                  {profileChanged ? (
+                    <div className="import-note warn" role="alert">
+                      <p>Your academic details changed. Refresh the batch decisions to continue. Your subject links and time edits will be kept.</p>
+                      <Button size="sm" onClick={() => void runAction(() =>
+                        interpret.mutateAsync({ reading, refresh: true }),
+                      )}>
+                        Refresh batch decisions
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <ErrorNotice error={preview.error} />
+                      <ErrorNotice error={save.error} />
+                    </>
+                  )}
+                  <ErrorNotice error={interpret.error} />
                 </>
               ) : (
                 summary && (
@@ -1077,8 +1143,9 @@ export function TimetableImport({
                     summary={summary}
                     mode={mode}
                     setMode={(m) => {
+                      if (actionLock.current) return;
                       setMode(m);
-                      preview.mutate(m);
+                      void runAction(() => preview.mutateAsync(m));
                     }}
                     pending={preview.isPending}
                     acknowledged={acknowledged}
@@ -1087,6 +1154,7 @@ export function TimetableImport({
                   />
                 )
               )}
+              </fieldset>
             </div>
           </div>
           <div className="dialog-footer">
@@ -1095,6 +1163,7 @@ export function TimetableImport({
                 <Button
                   key="back"
                   variant="outline"
+                  disabled={busy}
                   onClick={() => setSummary(null)}
                 >
                   Back to draft
@@ -1102,6 +1171,7 @@ export function TimetableImport({
                 <Button
                   key="confirm"
                   disabled={
+                    busy ||
                     save.isPending ||
                     preview.isPending ||
                     summary!.added.length +
@@ -1111,7 +1181,7 @@ export function TimetableImport({
                     (summary!.overlaps.length > 0 && !acknowledged.overlaps) ||
                     (summary!.removed.length > 0 && !acknowledged.removals)
                   }
-                  onClick={() => save.mutate()}
+                  onClick={() => void runAction(() => save.mutateAsync())}
                 >
                   Confirm timetable
                 </Button>
@@ -1121,24 +1191,26 @@ export function TimetableImport({
                 <Button
                   key="restart"
                   variant="ghost"
-                  onClick={() => interpret.mutate(reading)}
-                  disabled={interpret.isPending}
+                  onClick={() => void runAction(() => interpret.mutateAsync({ reading }))}
+                  disabled={busy}
                   title="Rebuild the draft from the original, discarding your edits"
                 >
                   <RotateCcw size={15} />
                   Start over
                 </Button>
-                <Button key="cancel" variant="outline" onClick={close}>
+                <Button key="cancel" variant="outline" disabled={busy} onClick={close}>
                   Cancel
                 </Button>
                 <Button
                   key="review"
                   disabled={
+                    busy ||
+                    profileChanged ||
                     preview.isPending ||
                     blocked.length > 0 ||
                     !views.some((v) => v.included)
                   }
-                  onClick={() => preview.mutate(mode)}
+                  onClick={() => void runAction(() => preview.mutateAsync(mode))}
                 >
                   {attention.length
                     ? `${attention.length} ${attention.length === 1 ? "course needs" : "courses need"} review`
@@ -1177,6 +1249,7 @@ function CourseCard({
   onFocus,
   update,
   updateMany,
+  runAction,
 }: {
   course: Course;
   subjects: Subject[];
@@ -1184,6 +1257,7 @@ function CourseCard({
   onFocus: (id: string) => void;
   update: (id: string, patch: Partial<DraftRow>) => void;
   updateMany: (ids: Set<string>, patch: Partial<DraftRow>) => void;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const ids = new Set(c.slots.map((v) => v.row.id));
   const suggestion =
@@ -1240,6 +1314,7 @@ function CourseCard({
         <CreateSubject
           course={c}
           subjects={subjects}
+          runAction={runAction}
           onLinked={(subjectId) =>
             updateMany(ids, { subjectId, link: "manual" })
           }
@@ -1271,10 +1346,12 @@ function CreateSubject({
   course: c,
   subjects,
   onLinked,
+  runAction,
 }: {
   course: Course;
   subjects: Subject[];
   onLinked: (subjectId: string) => void;
+  runAction: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const client = useQueryClient();
   const first = c.slots[0].row;
@@ -1381,7 +1458,7 @@ function CreateSubject({
         <Button
           size="sm"
           disabled={!name.trim() || Boolean(existing) || create.isPending}
-          onClick={() => create.mutate()}
+          onClick={() => void runAction(() => create.mutateAsync())}
         >
           Create and link {c.slots.length}{" "}
           {c.slots.length === 1 ? "slot" : "slots"}

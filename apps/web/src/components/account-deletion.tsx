@@ -49,11 +49,12 @@ function DeletionProgress() {
       <h1>
         {done ? "Your account has been deleted" : "Deleting your account"}
       </h1>
-      <p>
-        {done
-          ? "Your workspace, source credentials, and DueCare login were removed. Your Google mail and Classroom work remain in Google."
-          : "This runs on DueCare’s servers, not in your browser. You can close this page: deletion finishes without it. Come back any time to see that it is done."}
-      </p>
+      {done && (
+        <p>
+          Your workspace, source credentials, and DueCare login were removed.
+          Your Google mail and Classroom work remain in Google.
+        </p>
+      )}
       <ol className="deletion-steps" aria-label="Deletion steps">
         {steps.map(([key, label], i) => (
           <li

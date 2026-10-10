@@ -5,6 +5,8 @@ extracted text and drafts are not stored.
 confirmed slots go into the existing per-subject timetable with minimal import provenance.
 """
 
+import hashlib
+import json
 import uuid
 from datetime import time
 from typing import Literal
@@ -14,7 +16,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import Field, field_validator, model_validator
 from sqlalchemy import select
 
-from . import timetable_draft, timetable_extract, timetable_storage
+from . import academic, timetable_draft, timetable_extract, timetable_storage
 from .common import User, finish, replay, work
 from .errors import ApiError
 from .models import Slot, Subject, now
@@ -153,6 +155,11 @@ def subject_candidate(s):
     }
 
 
+def profile_context(data):
+    # Mail approvals, source-policy updates and appearance do not change batch applicability.
+    return hashlib.sha256(json.dumps(academic.context(data), sort_keys=True).encode()).hexdigest()
+
+
 @router.post("/interpret")
 def interpret(body: InterpretInput, user=User):
     # Read the current context, then interpret outside the transaction: the AI call can take a
@@ -177,6 +184,7 @@ def interpret(body: InterpretInput, user=User):
     return {
         **draft,
         "profileRevision": profile_revision,
+        "profileContext": profile_context(profile_data),
         "subjects": subjects,
         "promptVersion": timetable_draft.PROMPT_VERSION,
     }
@@ -208,6 +216,7 @@ class ConfirmInput(Input):
     mode: Literal["add", "replace"] = "add"
     dry_run: bool = False
     profile_revision: int = Field(ge=1)
+    profile_context: str | None = Field(None, pattern=r"^[a-f0-9]{64}$")
     subjects: list[SubjectRevision] = Field(min_length=1, max_length=100)
     slots: list[ImportSlot] = Field(min_length=1, max_length=300)
     method: Literal["pdf_text", "scheduler_ocr", "image_ocr"] = "pdf_text"
@@ -256,11 +265,16 @@ def confirm(body: ConfirmInput, request: Request, user=User):
             if cached is not None:
                 return cached
         p = profile(db, user["id"])
-        if p.revision != body.profile_revision:
+        changed = (
+            profile_context(p.data) != body.profile_context
+            if body.profile_context is not None
+            else p.revision != body.profile_revision
+        )
+        if changed:
             raise ApiError(
                 409,
                 "PROFILE_CHANGED",
-                "Your profile changed while reviewing. Check the batch decisions again",
+                "Your academic details changed. Refresh the batch decisions before saving",
             )
         ids = sorted(s.id for s in body.subjects)
         # A consistent lock order keeps concurrent imports from deadlocking.
