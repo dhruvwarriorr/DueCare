@@ -1564,6 +1564,77 @@ def tidy_reviews(db, uid):
     return closed
 
 
+def rule_rows(db, uid):
+    return [
+        {"id": str(r.id), "name": r.name, "enabled": r.enabled, "data": r.data}
+        for r in db.scalars(
+            select(Rule).where(Rule.user_id == uid, Rule.enabled.is_(True)).order_by(Rule.position)
+        )
+    ]
+
+
+def task_facts(db, task):
+    """What rules see of a task: every source and sender it came from, its subject and words."""
+    subject = db.get(Subject, task.subject_id) if task.subject_id else None
+    senders = set(
+        db.scalars(
+            select(SourceRecord.sender_email)
+            .join(SourceEvent, SourceEvent.source_record_id == SourceRecord.id)
+            .join(TaskEvidence, TaskEvidence.event_id == SourceEvent.id)
+            .where(
+                TaskEvidence.task_id == task.id,
+                TaskEvidence.state == "active",
+                SourceRecord.sender_email.is_not(None),
+            )
+        )
+    )
+    data = task.data
+    return {
+        "source": data.get("sources") or ["manual"],
+        "sender": sorted(senders),
+        "subjectId": str(task.subject_id) if task.subject_id else None,
+        "subjectKind": subject.kind if subject else None,
+        "taskType": task.type,
+        "assessmentLabel": data.get("assessmentLabel"),
+        "text": " ".join(
+            filter(
+                None,
+                [
+                    task.title,
+                    data.get("displayTitle"),
+                    data.get("assessmentLabel"),
+                    data.get("deliverableLabel"),
+                ],
+            )
+        ),
+    }
+
+
+def apply_rules_to(db, task, rows):
+    """Set the task's rule priority and hidden state from the current rules. Only imported work is
+    hidden; a task the student created stays visible. True when anything changed."""
+    relevance, level, matched = rules.evaluate(rows, task_facts(db, task))
+    data = {k: v for k, v in task.data.items() if k not in ("rulePriority", "hiddenByRule")}
+    if level:
+        data["rulePriority"] = {"value": level, "ruleId": matched["priority"]}
+    if relevance == "exclude" and task.data.get("sources"):
+        name = next((r["name"] for r in rows if r["id"] == matched["relevance"]), None)
+        data["hiddenByRule"] = {"ruleId": matched["relevance"], "name": name}
+    if data == task.data:
+        return False
+    task.data = data
+    return True
+
+
+def reapply_rules(db, uid):
+    """Rules describe all work, not only future imports: re-apply them after any rule change."""
+    rows = rule_rows(db, uid)
+    tasks = db.scalars(
+        select(Task).where(Task.user_id == uid, Task.data["mergedInto"].astext.is_(None)).with_for_update()
+    ).all()
+    return sum(apply_rules_to(db, task, rows) for task in tasks)
+
+
 def similar_task(db, uid, cand, subject_id):
     """Similarity never merges; it only asks the student (different kinds/labels stay separate)."""
     if not cand.title:
@@ -2591,22 +2662,21 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
         "assessmentLabel": cand.assessment_label,
         "text": " ".join(filter(None, [cand.title, cand.excerpt, record.title])),
     }
-    relevance, rule_priority, matched = rules.evaluate(ctx["rules"], facts)
-    if relevance == "exclude":
+    relevance, _, matched = rules.evaluate(ctx["rules"], facts)
+    hidden = relevance == "exclude"
+    if hidden:
         event.data = {**event.data, "rule": matched}
-        return done("rule_excluded")
+        if outcome != "applicable":
+            return done("rule_excluded")  # Not even known to be the student's: nothing to keep.
     fields = proposal(cand, subject_id)
-    if rule_priority:
-        fields_extra = {"rulePriority": {"value": rule_priority, "ruleId": matched["priority"]}}
-    else:
-        fields_extra = {}
+    fields_extra = {}
     review_data = {
         **context,
         "proposal": fields,
         "extra": fields_extra,
         "subjectChoices": cand.subject_choices,
     }
-    if outcome != "applicable":
+    if outcome != "applicable" and not hidden:
         open_review(
             db,
             uid,
@@ -2627,7 +2697,7 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
         changes, _ = update_task(db, same, cand, event, False, cand.method)
         settle_reviews(db, same, ("possible_duplicate",), "same_work_linked")
         return done("updated" if changes else "evidence_recorded")
-    similar = similar_task(db, uid, cand, subject_id)
+    similar = None if hidden else similar_task(db, uid, cand, subject_id)
     if similar:
         open_review(
             db,
@@ -2642,8 +2712,7 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
         )
         return done("review")
     created = create_task(db, uid, ctx, record, event, cand, subject_id, cand.method)
-    if fields_extra:
-        created.data = {**created.data, **fields_extra}
+    apply_rules_to(db, created, ctx["rules"])  # Hidden work is kept, out of sight, while its rule stands.
     return done("created")
 
 

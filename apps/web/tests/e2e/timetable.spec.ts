@@ -61,9 +61,7 @@ test("timetable upload keeps the student's batch, links subjects, and saves afte
   await dialog.getByRole("button", { name: "Review save" }).click();
   await expect(dialog.getByText("Will add (4)")).toBeVisible();
   await expect(
-    dialog.getByText(
-      /Database Management Systems Lab Mon 14:00–16:00 · B116A/,
-    ),
+    dialog.getByText(/Database Management Systems Lab Mon 14:00–16:00 · B116A/),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/timetable-summary.png" });
   await dialog.getByRole("button", { name: "Confirm timetable" }).click();
@@ -81,8 +79,13 @@ test("timetable upload keeps the student's batch, links subjects, and saves afte
   const editor = page.getByRole("dialog", {
     name: "Database Management Systems Lab timetable",
   });
-  await expect(editor.getByLabel("Starts (IST)")).toHaveValue(/^14:00/);
-  await expect(editor.getByLabel("Ends (IST)")).toHaveValue(/^16:00/);
+  await expect(editor.getByLabel("Starts hour")).toHaveValue("2");
+  await expect(editor.getByLabel("Ends hour")).toHaveValue("4");
+  await expect(
+    editor
+      .getByRole("group", { name: "Starts morning or afternoon" })
+      .getByRole("button", { name: "pm" }),
+  ).toHaveAttribute("aria-pressed", "true");
   await expect(editor.getByLabel("Room / location")).toHaveValue("B116A");
 });
 test("scheduler screenshots are read and linked without AI", async ({

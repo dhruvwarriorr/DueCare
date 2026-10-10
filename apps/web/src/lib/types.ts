@@ -86,6 +86,8 @@ export type Task = {
   mergedInto: string | null;
   timingProvenance?: Record<string, { basis?: string; phrase?: string }>;
   timingTentative?: { question?: string } | null;
+  /** Set when a rule keeps this imported task out of the student's lists. */
+  hiddenByRule?: { ruleId: string; name: string | null } | null;
   /** The student's own Classroom turn-in, when this is Classroom coursework. */
   classroom?: {
     state: string | null;
@@ -248,6 +250,8 @@ export type Rule = {
   enabled: boolean;
   position: number;
   revision: number;
+  /** How many tasks this rule currently prioritises or hides. */
+  affects: number;
   instruction?: string | null;
   match: "all" | "any";
   conditions: RuleCondition[];

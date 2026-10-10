@@ -180,17 +180,7 @@ test("imported-data deletion preserves student edits and restoration does not si
   ).json();
   expect(retained.sources).toEqual(["manual"]);
   expect(retained.notes).toBe("My note");
-  await page.getByText("Restore deleted imports", { exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Restore import", exact: true }),
-  ).toHaveCount(2);
-  await page
-    .getByRole("button", { name: "Restore import", exact: true })
-    .first()
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Restore import", exact: true }),
-  ).toHaveCount(1);
+  await expect(page.getByText("Restore deleted imports")).toHaveCount(0);
   expect(
     (await page.request.get("/api/v1/tasks/" + data.removedTask)).status(),
   ).toBe(404);

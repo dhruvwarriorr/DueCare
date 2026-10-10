@@ -6,7 +6,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { api, formatTime } from "@/lib/api";
+import { api } from "@/lib/api";
 import type { Connection, Page } from "@/lib/types";
 import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
@@ -20,7 +20,6 @@ export type PrivacyJob = {
   progress: Record<string, number>;
   errorCode: string | null;
 };
-type Suppression = { id: string; createdAt: string; revision: number };
 export function PrivacyControls() {
   const client = useQueryClient();
   const connections = useQuery({
@@ -44,16 +43,6 @@ export function PrivacyControls() {
         : false,
     refetchIntervalInBackground: true,
   });
-  const suppressed = useInfiniteQuery({
-    queryKey: ["suppressions"],
-    initialPageParam: "",
-    queryFn: ({ pageParam }) =>
-      api<Page<Suppression>>(
-        "/suppression-records?" +
-          new URLSearchParams(pageParam ? { cursor: pageParam } : {}),
-      ),
-    getNextPageParam: (p) => p.nextCursor || undefined,
-  });
   const [confirm, setConfirm] = useState<Connection | "account" | null>(null);
   const [word, setWord] = useState("");
   const [notice, setNotice] = useState("");
@@ -68,16 +57,6 @@ export function PrivacyControls() {
       }),
     onSuccess: async () => {
       setConfirm(null);
-      await refresh();
-    },
-  });
-  const restore = useMutation({
-    mutationFn: (id: string) =>
-      api("/suppression-records/" + id + "/restore", "POST"),
-    onSuccess: async () => {
-      setNotice(
-        "Import restored. Choose Reimport on the matching source to fetch it again.",
-      );
       await refresh();
     },
   });
@@ -129,9 +108,7 @@ export function PrivacyControls() {
         error={
           connections.error ||
           jobs.error ||
-          suppressed.error ||
           remove.error ||
-          restore.error ||
           reimport.error ||
           account.error
         }
@@ -174,9 +151,9 @@ export function PrivacyControls() {
         ))
       )}
       <p className="text-secondary text-sm">
-        Deleted activities stay suppressed during future syncs. Restoring an
-        import makes it eligible again; reimport fetches the normal source
-        history window. It does not restore deleted data from a backup.
+        Deleted imports stay deleted during future syncs. Reimport fetches the
+        normal source history window again; it does not restore deleted data
+        from a backup.
       </p>
       {jobs.data?.pages
         .flatMap((p) => p.items)
@@ -211,41 +188,6 @@ export function PrivacyControls() {
           Load more privacy operations
         </Button>
       )}
-      <details>
-        <summary>Restore deleted imports</summary>
-        <p className="text-secondary text-sm">
-          Only hashed source identifiers and deletion times remain. Each row
-          represents a suppressed activity; source content is not retained.
-        </p>
-        {suppressed.isPending ? (
-          <p role="status">Loading deleted imports…</p>
-        ) : suppressed.data?.pages.some((p) => p.items.length) ? (
-          suppressed.data.pages
-            .flatMap((p) => p.items)
-            .map((s) => (
-              <div className="privacy-row" key={s.id}>
-                <div>
-                  <strong>Deleted import {s.id.slice(0, 8)}</strong>
-                  <p className="text-secondary">{formatTime(s.createdAt)}</p>
-                </div>
-                <Button
-                  disabled={restore.isPending || !!busy}
-                  variant="outline"
-                  onClick={() => restore.mutate(s.id)}
-                >
-                  Restore import
-                </Button>
-              </div>
-            ))
-        ) : (
-          <p>No deleted imports to restore.</p>
-        )}
-        {suppressed.hasNextPage && (
-          <Button variant="ghost" onClick={() => suppressed.fetchNextPage()}>
-            Load more deleted imports
-          </Button>
-        )}
-      </details>
       <div className="privacy-row">
         <div>
           <h3>Delete your account</h3>
@@ -278,7 +220,7 @@ export function PrivacyControls() {
         description={
           confirm === "account"
             ? "This cannot be undone. Processing stops immediately. Deletion continues in saved steps and can be resumed if interrupted."
-            : "Source-only tasks are removed. Student-created and edited work, and tasks with another source, stay. Removed imports remain suppressed until you restore them."
+            : "Source-only tasks are removed. Student-created and edited work, and tasks with another source, stay. Removed imports stay deleted during future syncs."
         }
       >
         {confirm === "account" && (

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, Request
 from pydantic import Field
 from sqlalchemy import func, select
 
-from . import ai, faculty, interpret, mail, merging, rules, targeting
+from . import ai, faculty, interpret, mail, merging, rules, subject_link, targeting
 from .common import User, finish, owned, page, replay, revision, work
 from .domain import effective_status
 from .errors import ApiError
@@ -236,6 +236,7 @@ def resolve_review(id: uuid.UUID, body: Resolution, request: Request, user=User)
                     k: {"recordedAt": now().isoformat(), "via": "review"} for k in edits
                 },
             }
+            interpret.apply_rules_to(db, created, interpret.rule_rows(db, user["id"]))
             event.outcome = "accepted"
             if body.remember_alias and item.data.get("courseLabel") and fields.get("subjectId"):
                 # A confirmed LMS course label becomes a subject alias for future matching.
@@ -334,15 +335,29 @@ def resolve_review(id: uuid.UUID, body: Resolution, request: Request, user=User)
 # --- Rules -------------------------------------------------------------------------------------
 
 
-def rule_out(r):
+def rule_out(r, affects=0):
     return {
         "id": str(r.id),
         "name": r.name,
         "enabled": r.enabled,
         "position": r.position,
         "revision": r.revision,
+        "affects": affects,
         **r.data,
     }
+
+
+def rule_effects(db, uid):
+    """How many tasks each rule currently sets the priority of, or hides."""
+    counts = {}
+    for data in db.scalars(
+        select(Task.data).where(Task.user_id == uid, Task.data["mergedInto"].astext.is_(None))
+    ):
+        for key in ("rulePriority", "hiddenByRule"):
+            rid = (data.get(key) or {}).get("ruleId")
+            if rid:
+                counts[rid] = counts.get(rid, 0) + 1
+    return counts
 
 
 def validate_rule(db, uid, body: rules.RuleBody):
@@ -364,7 +379,8 @@ def list_rules(user=User):
         rows = db.scalars(
             select(Rule).where(Rule.user_id == user["id"]).order_by(Rule.position, Rule.created_at)
         )
-        return {"items": [rule_out(r) for r in rows]}
+        effects = rule_effects(db, user["id"])
+        return {"items": [rule_out(r, effects.get(str(r.id), 0)) for r in rows]}
 
 
 @router.post("/rules", status_code=201)
@@ -382,7 +398,8 @@ def add_rule(body: RuleInput, user=User):
         )
         db.add(r)
         db.flush()
-        return rule_out(r)
+        interpret.reapply_rules(db, user["id"])
+        return rule_out(r, rule_effects(db, user["id"]).get(str(r.id), 0))
 
 
 @router.patch("/rules/{id}")
@@ -395,7 +412,9 @@ def edit_rule(id: uuid.UUID, body: RuleInput, user=User):
             db, user["id"], rules.RuleBody.model_validate(body.model_dump(exclude={"revision"}))
         )
         r.revision += 1
-        return rule_out(r)
+        db.flush()
+        interpret.reapply_rules(db, user["id"])
+        return rule_out(r, rule_effects(db, user["id"]).get(str(r.id), 0))
 
 
 @router.delete("/rules/{id}")
@@ -404,6 +423,8 @@ def delete_rule(id: uuid.UUID, revision_value: int = Query(alias="revision"), us
         r = owned(db, Rule, id, user["id"], True)
         revision(r, revision_value)
         db.delete(r)
+        db.flush()
+        interpret.reapply_rules(db, user["id"])  # Its hidden work returns; its priority lifts.
         return {"ok": True}
 
 
@@ -419,24 +440,56 @@ def order_rules(body: RuleOrder, user=User):
             raise ApiError(409, "RULES_CHANGED", "Your rules changed. Refresh and reorder again")
         for i, rid in enumerate(body.ids, 1):
             rows[rid].position = i
-        return {"items": [rule_out(rows[rid]) for rid in body.ids]}
+        db.flush()
+        interpret.reapply_rules(db, user["id"])
+        effects = rule_effects(db, user["id"])
+        return {"items": [rule_out(rows[rid], effects.get(str(rid), 0)) for rid in body.ids]}
 
 
 class Instruction(Input):
     instruction: str = Field(min_length=3, max_length=2000)
 
 
+def named_subjects(instruction, subjects):
+    """The subjects a sentence names. A course named without theory/lab/tutorial ("make itvc high
+    priority") means all of that course's subjects; naming the kind narrows it to that one."""
+    named = subject_link.deterministic([instruction], subjects)
+    if not named:
+        return []
+    if subject_link.component_of(instruction):
+        return [named]
+    base = subject_link.course(next(s["name"] for s in subjects if s["id"] == named))
+    return [s["id"] for s in subjects if subject_link.course(s["name"]) == base]
+
+
 @router.post("/rules/interpret")
 def interpret_rule(body: Instruction, user=User):
     with work(user) as db:
         subjects = [
-            {"id": str(s.id), "name": s.name, "kind": s.kind}
+            {"id": str(s.id), "name": s.name, "kind": s.kind, "code": s.data.get("code"),
+             "aliases": s.data.get("aliases", [])}
             for s in db.scalars(select(Subject).where(Subject.user_id == user["id"]))
-        ]
+        ]  # fmt: skip
+    # A subject the instruction names by name, code or short form ("itvc") is that subject, not a
+    # subject kind or a keyword a model falls back on.
+    named = named_subjects(body.instruction, subjects)
+    # Most rules are plain sentences: read them without spending AI credits.
+    plain = rules.parse(body.instruction, subjects, named)
+    if plain is not None:
+        with work(user) as db:
+            validate_rule(db, user["id"], plain)
+        return {"rule": plain.model_dump(mode="json"), "unsupported": None, "model": {"provider": "none"}}
     try:
         preview, meta = ai.interpret_rule(body.instruction, subjects)
     except ai.AIUnavailable as exc:
         raise ApiError(503, "AI_UNAVAILABLE", f"{exc}. Use the simple rule editor instead")
+    if named and not any(c.field == "subjectId" for c in preview.conditions):
+        kept = [c for c in preview.conditions if c.field not in ("subjectKind", "keyword")]
+        value = named if len(named) > 1 else named[0]
+        preview.conditions = [
+            ai.RuleCondition(field="subjectId", op="in" if len(named) > 1 else "equals", value=value),
+            *kept,
+        ]
     try:
         rule = rules.RuleBody.model_validate(
             {**preview.model_dump(exclude={"unsupported"}), "instruction": body.instruction, "enabled": True}

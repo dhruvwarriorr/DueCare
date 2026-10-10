@@ -738,9 +738,14 @@ def test_rules_validation_order_and_natural_language_preview(client, headers, mo
     ]
     assert [r["name"] for r in ordered] == ["B", "A"]
     assert client.put("/api/v1/rules/order", headers=headers, json={"ids": [a["id"]]}).status_code == 409
+    # A plain sentence needs no AI; only an instruction its words do not settle asks the model.
+    plain = client.post(
+        "/api/v1/rules/interpret", headers=headers, json={"instruction": "ignore hackathons"}
+    ).json()
+    assert plain["model"] == {"provider": "none"} and plain["rule"]["conditions"][0]["value"] == "hackathons"
     assert (
         client.post(
-            "/api/v1/rules/interpret", headers=headers, json={"instruction": "ignore hackathons"}
+            "/api/v1/rules/interpret", headers=headers, json={"instruction": "sort out my week please"}
         ).status_code
         == 503
     )
@@ -2271,3 +2276,112 @@ def test_classroom_shows_a_returned_grade_and_a_late_turn_in(client, headers, st
     assert {k: task["classroom"][k] for k in ("state", "late", "grade", "maxPoints")} == {
         "state": "RETURNED", "late": True, "grade": 18, "maxPoints": 20
     }  # fmt: skip
+
+
+def test_a_rule_naming_a_subject_by_short_form_targets_that_subject(client, headers, student, monkeypatch):
+    subjects = setup_student(client, headers)
+    itvc = subjects["Integral Transforms and Vector Calculus"]["id"]
+
+    def misread(instruction, subjects_):
+        # A model that missed the short form and reached for a subject kind instead.
+        return ai.RulePreview.model_validate({"name": "ITVC high", "conditions": [{"field": "subjectKind", "value": "tutorial"}],
+                                              "action": {"type": "priority", "priority": "high"}}), {"provider": "fake"}  # fmt: skip
+
+    monkeypatch.setattr(ai, "interpret_rule", misread)
+    out = client.post(
+        "/api/v1/rules/interpret", headers=headers, json={"instruction": "make itvc high priority"}
+    ).json()
+    assert out["rule"]["conditions"] == [{"field": "subjectId", "op": "equals", "value": itvc}]
+    assert out["rule"]["action"]["priority"] == "high"
+
+
+def test_rules_apply_to_existing_and_new_work_and_undo_cleanly(client, headers, student, fake, model):
+    subjects = setup_student(client, headers)
+    itvc = subjects["Integral Transforms and Vector Calculus"]["id"]
+    div = {"divisions": ["B"]}
+
+    def work(title, subject=None):
+        return [{"intent": "new_work", "taskType": "assignment", "title": title, "subjectId": subject,
+                 "targeting": div, "timing": {"dateOnly": "2026-12-20"}}]  # fmt: skip
+
+    model.items = {
+        "ITVC assignment 4": work("ITVC assignment 4", itvc),
+        "Seminar report": work("Seminar report"),
+        "Second seminar report": work("Second seminar report"),
+    }
+    t0 = now() - timedelta(days=2)
+    for n, subject in enumerate(["ITVC assignment 4", "Seminar report"]):
+        send(fake, f"r{n}", "faculty.ds@somaiya.edu", (subject, subject + " due 20 Dec. Division B."), t0)
+    conn = connect(client, headers, fake, "gmail")
+    run(client, headers, conn)
+    mine = client.post(
+        "/api/v1/tasks", headers=fresh(headers), json={"title": "My seminar notes", "type": "assignment"}
+    ).json()
+
+    def listed(**params):
+        query = "&".join(f"{k}={v}" for k, v in params.items())
+        return {t["title"]: t for t in client.get("/api/v1/tasks?" + query, headers=headers).json()["items"]}
+
+    def add(sentence):
+        preview = client.post(
+            "/api/v1/rules/interpret", headers=headers, json={"instruction": sentence}
+        ).json()
+        assert preview["model"] == {"provider": "none"}  # No AI credits for plain sentences.
+        return client.post("/api/v1/rules", headers=fresh(headers), json=preview["rule"]).json()
+
+    assert listed()["ITVC assignment 4"]["priority"] == "low"
+    high = add("make itvc high priority")
+    assert (
+        high["affects"] == 1 and listed()["ITVC assignment 4"]["priority"] == "high"
+    )  # Existing work, at once.
+    hide = add("hide seminar mail")
+    assert hide["affects"] == 1
+    assert set(listed()) == {"ITVC assignment 4", "My seminar notes"}  # A task the student made stays.
+    assert set(listed(hidden="true")) == {"Seminar report"}
+    assert client.get("/api/v1/overview", headers=headers).json()["hidden"] == 1
+    # New mail follows the rules too: kept, but hidden.
+    send(
+        fake,
+        "r9",
+        "faculty.ds@somaiya.edu",
+        ("Second seminar report", "Second seminar report due 20 Dec. Division B."),
+        now(),
+    )
+    run(client, headers, conn)
+    assert set(listed(hidden="true")) == {"Seminar report", "Second seminar report"}
+    # Turning a rule off, or deleting it, undoes it.
+    rules_now = {r["id"]: r for r in client.get("/api/v1/rules", headers=headers).json()["items"]}
+    r = rules_now[hide["id"]]
+    off = {k: r[k] for k in ("name", "match", "conditions", "exceptions", "action", "instruction")}
+    client.patch(
+        f"/api/v1/rules/{r['id']}",
+        headers=fresh(headers),
+        json={**off, "enabled": False, "revision": r["revision"]},
+    )
+    assert {"Seminar report", "Second seminar report"} <= set(listed())
+    r = rules_now[high["id"]]
+    client.delete(f"/api/v1/rules/{r['id']}?revision={r['revision']}", headers=fresh(headers))
+    assert listed()["ITVC assignment 4"]["priority"] == "low"
+    assert mine["id"] in {t["id"] for t in listed().values()}
+
+
+def test_a_rule_naming_a_course_covers_its_theory_and_tutorial(client, headers, student):
+    theory = client.post("/api/v1/subjects", headers=headers, json={"name": "ITVC", "kind": "theory"}).json()[
+        "id"
+    ]
+    tutorial = client.post(
+        "/api/v1/subjects", headers=fresh(headers), json={"name": "ITVC", "kind": "tutorial"}
+    ).json()["id"]
+
+    def read(sentence):
+        return client.post("/api/v1/rules/interpret", headers=headers, json={"instruction": sentence}).json()[
+            "rule"
+        ]
+
+    both = read("make itvc high priority")["conditions"][0]
+    assert both["op"] == "in" and sorted(both["value"]) == sorted([theory, tutorial])
+    assert read("make itvc tutorial high priority")["conditions"][0]["value"] == tutorial
+    client.post("/api/v1/rules", headers=fresh(headers), json=read("make itvc high priority")).json()
+    work = client.post("/api/v1/tasks", headers=fresh(headers),
+                       json={"title": "Module 5", "type": "assignment", "subjectId": tutorial}).json()  # fmt: skip
+    assert client.get(f"/api/v1/tasks/{work['id']}", headers=headers).json()["priority"] == "high"

@@ -96,6 +96,13 @@ export function TaskDetail({
         ) : (
           t && (
             <>
+              {t.hiddenByRule && (
+                <p className="sync-line warn mb-4">
+                  Hidden from your lists by the rule “
+                  {t.hiddenByRule.name || "a rule"}”. Turn the rule off in
+                  Settings → Rules to show it again.
+                </p>
+              )}
               <div className="flex flex-wrap gap-2 mb-5">
                 <span className={"status " + t.status}>{t.status}</span>
                 <span className="tag">{t.type}</span>

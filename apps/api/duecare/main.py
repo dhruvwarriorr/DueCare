@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from sqlalchemy import case, func, or_, select, text
+from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from . import academic, auth, phase3_api, privacy_api, sources_api, timetable_api
@@ -362,10 +362,16 @@ def tasks(
     source: str | None = None,
     batch: str | None = None,
     sort: Literal["date", "priority"] = "date",
+    hidden: bool = False,
     user=User,
 ):
     with work(user) as db:
-        stmt = select(Task).where(Task.user_id == user["id"], Task.data["mergedInto"].astext.is_(None))
+        stmt = select(Task).where(
+            Task.user_id == user["id"],
+            Task.data["mergedInto"].astext.is_(None),
+            # Lists show either the work rules keep visible, or (hidden=true) only what they hide.
+            Task.data["hiddenByRule"].is_not(None) if hidden else Task.data["hiddenByRule"].is_(None),
+        )
         for value in (date_from, date_to, created_after):
             if value and value.tzinfo is None:
                 raise ApiError(422, "INVALID_TIME", "Date filters must include a timezone")
@@ -455,6 +461,12 @@ def tasks(
         return {"items": [task_out(t, db, user["id"]) for t in rows[:limit]], "nextCursor": c}
 
 
+def apply_rules(db, task):
+    from . import interpret
+
+    interpret.apply_rules_to(db, task, interpret.rule_rows(db, task.user_id))
+
+
 @app.post("/api/v1/tasks", status_code=201)
 def add_task(body: TaskInput, user=User):
     with work(user) as db:
@@ -478,6 +490,7 @@ def add_task(body: TaskInput, user=User):
         db.add(t)
         db.flush()
         t.status = effective_status(t, now())
+        apply_rules(db, t)
         history(db, t, "created", d)
         return task_out(t, db, user["id"])
 
@@ -564,6 +577,7 @@ def edit_task(id: uuid.UUID, body: TaskPatch, request: Request, user=User):
             }
         t.status = effective_status(t, now())
         t.revision += 1
+        apply_rules(db, t)  # A changed subject, type or title can bring a task under a rule.
         db.flush()
         if body.status is not None or t.status != prior_status:
             accepted_changes["status"] = t.status
@@ -698,7 +712,8 @@ def overview(user=User):
             else_="due",
         )
         counts = {k: 0 for k in ("due", "completed", "missed")}
-        visible = Task.data["mergedInto"].astext.is_(None)
+        # Work a rule hides is kept but not counted.
+        visible = and_(Task.data["mergedInto"].astext.is_(None), Task.data["hiddenByRule"].is_(None))
         counts.update(
             dict(
                 db.execute(
@@ -722,6 +737,15 @@ def overview(user=User):
         return {
             "counts": counts,
             "undated": undated,
+            "hidden": db.scalar(
+                select(func.count())
+                .select_from(Task)
+                .where(
+                    Task.user_id == user["id"],
+                    Task.data["mergedInto"].astext.is_(None),
+                    Task.data["hiddenByRule"].is_not(None),
+                )
+            ),
             "tasks": [task_out(t, db, user["id"]) for t in items],
             "reviewCount": db.scalar(
                 select(func.count())

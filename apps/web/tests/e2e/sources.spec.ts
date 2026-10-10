@@ -89,17 +89,14 @@ test("sources connect, sync in the browser, honour blocks, and link Classroom co
   const gmail = page.locator(".connection-card", { hasText: "Gmail" });
   await expect(gmail).toContainText("personal.gmail@example.com");
   await expect(gmail).toContainText("Last synced", { timeout: 15000 });
-  await expect(gmail).toContainText("1 waiting for AI interpretation");
+  // Mail without a recognised template is read by AI (an offline fake in browser tests).
+  await expect(gmail).toContainText("2 interpreted");
   await expect(gmail).toContainText("1 from blocked senders");
 
   // The LMS reminder is the student's own work: it becomes a task without asking. No subject of
   // theirs matches "Data Structures", so it is kept without one.
   await page.goto("/?view=tasks");
   await expect(page.getByRole("button", { name: /^EXP3-Queue/ })).toBeVisible();
-  await page.goto("/?view=dashboard");
-  await expect(page.locator(".sync-overview")).toContainText(
-    "personal.gmail@example.com",
-  );
 
   await connect(page, "classroom", "classroom-e2e");
   const classroom = page.locator(".connection-card", {
@@ -112,7 +109,7 @@ test("sources connect, sync in the browser, honour blocks, and link Classroom co
   await expect(classroom.locator(".chip")).toContainText(
     "Databases · theory · auto",
   );
-  await expect(classroom).toContainText("1 waiting for AI interpretation", {
+  await expect(classroom).toContainText("1 not academic or not for you", {
     timeout: 15000,
   });
   await page.goto("/?view=connections");

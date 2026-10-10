@@ -19,10 +19,29 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
     },
   ]);
   await page.goto("/");
-  for (const label of ["Institution", "Programme", "Department", "Admission year", "General batch"])
+  for (const label of [
+    "Institution",
+    "Programme",
+    "Department",
+    "Admission year",
+    "General batch",
+  ])
     await expect(page.getByLabel(label, { exact: true })).toHaveCount(0);
-  await expect(page.getByLabel("Branch", { exact: true }).locator("option")).toHaveText([
-    "Choose your branch", "COMPS", "IT", "AIDS", "CSBS", "VLSI", "CCE", "EXTC", "EXCP", "MECH", "RAI", "CIVIL",
+  await expect(
+    page.getByLabel("Branch", { exact: true }).locator("option"),
+  ).toHaveText([
+    "Choose your branch",
+    "COMPS",
+    "IT",
+    "AIDS",
+    "CSBS",
+    "VLSI",
+    "CCE",
+    "EXTC",
+    "EXCP",
+    "MECH",
+    "RAI",
+    "CIVIL",
   ]);
   await page.getByLabel("Branch", { exact: true }).selectOption("COMPS");
   await page.getByRole("radio", { name: /^SY\b/ }).check();
@@ -35,15 +54,16 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
   for (const [label, value] of Object.entries(values))
     await page.getByLabel(label, { exact: true }).fill(value);
   await page.getByRole("button", { name: "Save profile", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: /This week/ }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: /This week/ })).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.reload();
   await expect(page.getByLabel("Branch", { exact: true })).toHaveValue("COMPS");
   const profile = await page.request.get("/api/v1/me");
   expect(await profile.json()).toMatchObject({
-    institution: "KJSSE", programme: "BTech", branchCode: "COMPS", branchName: "Computer Engineering",
+    institution: "KJSSE",
+    programme: "BTech",
+    branchCode: "COMPS",
+    branchName: "Computer Engineering",
   });
   await page.getByRole("button", { name: "Subjects", exact: true }).click();
   await page.getByRole("button", { name: "Add subject", exact: true }).click();
@@ -55,8 +75,18 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
   ).toBeVisible();
   await page.getByRole("button", { name: "Timetable", exact: true }).click();
   await page.getByRole("button", { name: "Add weekly slot" }).click();
-  await page.getByLabel("Starts (IST)").fill("14:00");
-  await page.getByLabel("Ends (IST)").fill("16:00");
+  await page.getByLabel("Starts hour").selectOption("2");
+  await page.getByLabel("Starts minute").selectOption("0");
+  await page
+    .getByRole("group", { name: "Starts morning or afternoon" })
+    .getByRole("button", { name: "pm" })
+    .click();
+  await page.getByLabel("Ends hour").selectOption("4");
+  await page.getByLabel("Ends minute").selectOption("0");
+  await page
+    .getByRole("group", { name: "Ends morning or afternoon" })
+    .getByRole("button", { name: "pm" })
+    .click();
   await page.getByLabel("Room / location").fill("Lab 101");
   await page.getByRole("button", { name: "Save timetable" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);

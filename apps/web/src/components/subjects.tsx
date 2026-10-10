@@ -8,6 +8,7 @@ import { Plus, CalendarDays, FileUp, Pencil, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Subject, Slot } from "@/lib/types";
 import { Button } from "./ui/button";
+import { TimePicker } from "./ui/time-picker";
 import { Dialog } from "./ui/dialog";
 import { Field, ErrorNotice } from "./ui/field";
 import { TimetableImport } from "./timetable-import";
@@ -200,13 +201,22 @@ function Timetable({
                             }[key]
                           }
                         >
-                          <input
-                            id={key + i}
-                            required={key === "startTime" || key === "endTime"}
-                            type={key.endsWith("Time") ? "time" : "text"}
-                            value={s[key] || ""}
-                            onChange={(e) => change(i, key, e.target.value)}
-                          />
+                          {key === "location" ? (
+                            <input
+                              id={key + i}
+                              type="text"
+                              value={s[key] || ""}
+                              onChange={(e) => change(i, key, e.target.value)}
+                            />
+                          ) : (
+                            <TimePicker
+                              id={key + i}
+                              quick={false}
+                              label={key === "startTime" ? "Starts" : "Ends"}
+                              value={s[key] || ""}
+                              onChange={(v) => change(i, key, v)}
+                            />
+                          )}
                         </Field>
                       ),
                     )}

@@ -785,6 +785,7 @@ def gmail_unit(snap, token):
         interpret.relink_named_subjects(db, conn.user_id)
         interpret.merge_duplicates(db, conn.user_id)
         interpret.tidy_reviews(db, conn.user_id)
+        interpret.reapply_rules(db, conn.user_id)
         return to_interpretation(job)
 
     return finished
@@ -1070,6 +1071,7 @@ def classroom_unit(snap, token):
         interpret.relink_named_subjects(db, conn.user_id)
         interpret.merge_duplicates(db, conn.user_id)
         interpret.tidy_reviews(db, conn.user_id)
+        interpret.reapply_rules(db, conn.user_id)
         return to_interpretation(job)
 
     return finished

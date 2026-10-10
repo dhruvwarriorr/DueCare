@@ -75,25 +75,18 @@ test("imported LMS work is resolved in Needs attention, completed from confirmed
   await expect(
     page.getByText("Which of your subjects is this for?"),
   ).toHaveCount(0);
-  await expect(page.locator(".nav-badge")).toHaveText(/\d+/);
+  // A verified LMS receipt completes its exact task by itself: nothing is left to confirm.
+  await expect(page.getByText("Nothing needs your attention")).toBeVisible();
   await page.screenshot({
     path: "../../.local/attention-desktop.png",
     fullPage: true,
   });
-  const receipt = page.locator(".review-card", { hasText: "Submission found" });
-  await expect(receipt).toContainText("Mark this task completed?", {
-    timeout: 15000,
-  });
-  await receipt.getByRole("button", { name: "Mark completed" }).click();
-  await expect(receipt).toHaveCount(0);
 
   await page.goto("/?view=tasks");
   await page.getByRole("radio", { name: "Completed", exact: true }).check();
   await page.getByRole("button", { name: /^EXP3-Queue/ }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText(
-    "Confirmed by you from submission evidence",
-  );
+  await expect(dialog).toContainText("LMS submission confirmation");
   await expect(dialog).toContainText("Gmail");
   await expect(dialog).toContainText("Data Structures Laboratory");
   await expect(dialog).toContainText(
@@ -105,13 +98,29 @@ test("imported LMS work is resolved in Needs attention, completed from confirmed
   await expect(
     page.getByRole("heading", { name: "No rules yet" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "New rule" }).click();
-  await page.getByLabel("Rule name", { exact: true }).fill("Skip hackathons");
-  await page.getByLabel("Value", { exact: true }).fill("hackathon");
+  // A plain sentence becomes a rule without AI; the student confirms it in plain words.
+  await page.getByLabel("Add a rule").fill("hide seminar mail");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.locator(".rule-preview")).toContainText(
+    "Hide work containing “seminar”.",
+  );
   await page.getByRole("button", { name: "Save rule" }).click();
   await expect(page.locator(".rule-list")).toContainText(
-    "When the text contains “hackathon”, don’t add the task.",
+    "Hide work containing “seminar”",
   );
+  await expect(page.locator(".rule-list")).toContainText("Applies to 0 tasks");
+  // Or built from three choices.
+  await page.getByRole("button", { name: "Or build it yourself" }).click();
+  await page.getByLabel("Do").selectOption("critical");
+  await page.getByLabel("For").selectOption("taskType");
+  await page.getByLabel("Which").selectOption("test");
+  await page.getByRole("button", { name: "Preview" }).click();
+  await page.getByRole("button", { name: "Save rule" }).click();
+  await expect(page.locator(".rule-list")).toContainText(
+    "Make tests critical priority",
+  );
+  await page.getByRole("checkbox", { name: "On" }).first().click();
+  await expect(page.locator(".rule-list li").first()).toContainText("Off");
 
   await page.setViewportSize({ width: 390, height: 844 });
   for (const view of ["attention", "rules"]) {

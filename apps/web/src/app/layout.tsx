@@ -1,14 +1,11 @@
 import type { Metadata } from "next";
-import { Sofia_Sans, Sofia_Sans_Condensed } from "next/font/google";
+import { Bricolage_Grotesque } from "next/font/google";
 import "./globals.css";
-const body = Sofia_Sans({
+// One variable family: body text at normal width, display type at its condensed width.
+const bricolage = Bricolage_Grotesque({
   subsets: ["latin"],
+  axes: ["opsz", "wdth"],
   variable: "--font-body",
-  display: "swap",
-});
-const condensed = Sofia_Sans_Condensed({
-  subsets: ["latin"],
-  variable: "--font-condensed",
   display: "swap",
 });
 export const metadata: Metadata = {
@@ -18,7 +15,7 @@ export const metadata: Metadata = {
 export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={body.variable + " " + condensed.variable}>
+      <body className={bricolage.variable}>
         <a href="#main" className="skip-link">
           Skip to content
         </a>

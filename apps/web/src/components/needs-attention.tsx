@@ -11,6 +11,7 @@ import { api, formatTime, localTime, utcTime } from "@/lib/api";
 import type { Page, ReviewItem, Subject, Task } from "@/lib/types";
 import { FacultyApproval } from "./faculty-approval";
 import { Button } from "./ui/button";
+import { TimePicker } from "./ui/time-picker";
 import { ErrorNotice, Field } from "./ui/field";
 
 const titles: Record<ReviewItem["issueType"], string> = {
@@ -256,11 +257,11 @@ function ReviewCard({
                   " (IST, optional)"
                 }
               >
-                <input
+                <ReviewDateTime
                   id={k + item.id}
-                  type="datetime-local"
-                  value={times[k] || localTime(p[k] ? String(p[k]) : null)}
-                  onChange={(e) => setTimes({ ...times, [k]: e.target.value })}
+                  deadline={k === "dueAt"}
+                  value={times[k] ?? localTime(p[k] ? String(p[k]) : null)}
+                  onChange={(v) => setTimes({ ...times, [k]: v })}
                 />
               </Field>
             ))}
@@ -514,5 +515,43 @@ export function NeedsAttention({
         </Button>
       )}
     </>
+  );
+}
+
+/** A date and a time for a review answer, as "YYYY-MM-DDTHH:MM" (IST), or "" when unset.
+ * A deadline with only a date is due by 23:59 that day; a test start needs its time. */
+function ReviewDateTime({
+  id,
+  value,
+  onChange,
+  deadline,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  deadline: boolean;
+}) {
+  const [date, setDate] = useState(value.slice(0, 10));
+  const [time, setTime] = useState(value.slice(11, 16));
+  const emit = (d: string, t: string) => {
+    setDate(d);
+    setTime(t);
+    onChange(d && t ? d + "T" + t : d && deadline ? d + "T23:59" : "");
+  };
+  return (
+    <div className="review-datetime">
+      <input
+        id={id}
+        type="date"
+        value={date}
+        onChange={(e) => emit(e.target.value, time)}
+      />
+      <TimePicker
+        label={deadline ? "Deadline" : "Test start"}
+        value={time}
+        disabled={!date}
+        onChange={(t) => emit(date, t)}
+      />
+    </div>
   );
 }

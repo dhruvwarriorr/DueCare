@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import json
 
-from duecare import academic, auth, google
+from duecare import academic, ai, auth, google
 from duecare.common import work
 from duecare.models import Connection, Subject, now
 from duecare.sources_api import link_account
@@ -29,6 +29,9 @@ source_delete_fixture = account("browser-source-delete@somaiya.edu")
 timetable_fixture = account("browser-timetable@somaiya.edu")
 scheduler_fixture = account("browser-scheduler@somaiya.edu")
 auth.provider = FixtureAuth()
+# Browser tests never reach an AI provider: mail without a recognized template yields no work.
+ai.extract = lambda payload: (ai.Extraction(), {"provider": "offline", "model": "none"})
+ai.resolve_timing = lambda payload: (ai.TimingResolution(), {"provider": "offline", "model": "none"})
 
 # Synthetic, redacted source data. No real mail, accounts, or Google requests are involved.
 source = FakeGoogle()

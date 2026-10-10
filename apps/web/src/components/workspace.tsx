@@ -285,6 +285,7 @@ function TaskList({
     initialStatus === "undated" ? "" : initialStatus,
   );
   const [undated, setUndated] = useState(initialStatus === "undated");
+  const [showHidden, setShowHidden] = useState(false);
   const [source, setSource] = useState("");
   const [batchFilter, setBatchFilter] = useState("");
   const [type, setType] = useState("");
@@ -314,6 +315,7 @@ function TaskList({
   const params = new URLSearchParams({ sort });
   if (debounced) params.set("q", debounced);
   if (undated) params.set("undated", "true");
+  if (showHidden) params.set("hidden", "true");
   if (status) params.set("status", status);
   if (source) params.set("source", source);
   if (batchFilter) params.set("batch", batchFilter);
@@ -362,6 +364,7 @@ function TaskList({
     setSearch("");
     setStatus("");
     setUndated(false);
+    setShowHidden(false);
     setSource("");
     setBatchFilter("");
     setType("");
@@ -519,6 +522,14 @@ function TaskList({
                 onChange={(e) => setUndated(e.target.checked)}
               />{" "}
               No due date yet
+            </label>
+            <label className="undated-filter">
+              <input
+                type="checkbox"
+                checked={showHidden}
+                onChange={(e) => setShowHidden(e.target.checked)}
+              />{" "}
+              Only work hidden by rules
             </label>
             <Button variant="ghost" onClick={reset}>
               Reset filters

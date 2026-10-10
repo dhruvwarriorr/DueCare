@@ -8,6 +8,7 @@ import type { Task, Subject } from "@/lib/types";
 import { Dialog } from "./ui/dialog";
 import { Field, ErrorNotice } from "./ui/field";
 import { Button } from "./ui/button";
+import { TimePicker } from "./ui/time-picker";
 const schema = z
   .object({
     title: z.string().trim().min(1, "Add a title").max(300),
@@ -48,6 +49,7 @@ export function TaskEditor({
     defaultValues: defaults,
   });
   const date = useWatch({ control: form.control, name: "deadlineDate" });
+  const time = useWatch({ control: form.control, name: "deadlineTime" }) || "";
   const save = useMutation({
     mutationFn: async (v: Values) => {
       const body: Record<string, unknown> = {
@@ -136,11 +138,13 @@ export function TaskEditor({
               />
             </Field>
             <Field id="deadline-time" label="Deadline time (optional)">
-              <input
+              <TimePicker
                 id="deadline-time"
-                type="time"
+                value={time}
                 disabled={!date}
-                {...form.register("deadlineTime")}
+                onChange={(v) =>
+                  form.setValue("deadlineTime", v, { shouldDirty: true })
+                }
               />
             </Field>
             <Field id="priority" label="Priority">

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ProfileForm } from "@/components/profile-form";
@@ -66,5 +66,32 @@ describe("manual data entry", () => {
       "Timing",
     ])
       expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+  });
+});
+describe("deadline time picker", () => {
+  it("sets a time in one tap, or by hour, minute and am/pm", async () => {
+    cleanup();
+    const { TimePicker } = await import("@/components/ui/time-picker");
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <TimePicker id="t" value="" onChange={onChange} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "1:30 pm" }));
+    expect(onChange).toHaveBeenLastCalledWith("13:30");
+    rerender(<TimePicker id="t" value="13:30" onChange={onChange} />);
+    expect(screen.getByRole("button", { name: "1:30 pm" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.change(screen.getByLabelText("Hour"), {
+      target: { value: "10" },
+    });
+    expect(onChange).toHaveBeenLastCalledWith("22:30");
+    fireEvent.click(screen.getByRole("button", { name: "am" }));
+    expect(onChange).toHaveBeenLastCalledWith("01:30");
+    rerender(<TimePicker id="t" value="23:59" onChange={onChange} />);
+    expect(screen.getByLabelText("Minute")).toHaveValue("59"); // An exact minute set elsewhere stays.
+    fireEvent.click(screen.getByRole("button", { name: "No time" }));
+    expect(onChange).toHaveBeenLastCalledWith("");
   });
 });

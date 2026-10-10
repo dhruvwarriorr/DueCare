@@ -21,6 +21,7 @@ import type {
   TimetableReading,
 } from "@/lib/types";
 import { Button } from "./ui/button";
+import { TimePicker } from "./ui/time-picker";
 import { Dialog } from "./ui/dialog";
 import { ErrorNotice } from "./ui/field";
 
@@ -1318,19 +1319,17 @@ function SlotEditor({
             </option>
           ))}
         </select>
-        <input
-          type="time"
-          required
-          aria-label={"Starts for " + name}
+        <TimePicker
+          quick={false}
+          label={"Starts for " + name}
           value={r.startTime}
-          onChange={(e) => update(r.id, { startTime: e.target.value })}
+          onChange={(v) => update(r.id, { startTime: v })}
         />
-        <input
-          type="time"
-          required
-          aria-label={"Ends for " + name}
+        <TimePicker
+          quick={false}
+          label={"Ends for " + name}
           value={r.endTime}
-          onChange={(e) => update(r.id, { endTime: e.target.value })}
+          onChange={(v) => update(r.id, { endTime: v })}
         />
         <input
           aria-label={"Room for " + name}

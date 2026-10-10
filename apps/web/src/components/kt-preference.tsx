@@ -11,11 +11,15 @@ export function KtPreference({ profile }: { profile: Profile }) {
   // The choice shows at once and reverts if saving fails.
   const [ignore, setIgnore] = useState(profile.ignoreKtNotices);
   const save = useMutation({
-    mutationFn: (value: boolean) =>
-      api<Profile>("/me", "PATCH", {
-        revision: profile.revision,
+    // Save against the profile as it is now, not as it was when the page loaded: another change
+    // to the profile in between would otherwise make this one-click choice fail.
+    mutationFn: async (value: boolean) => {
+      const current = await api<Profile>("/me");
+      return api<Profile>("/me", "PATCH", {
+        revision: current.revision,
         ignoreKtNotices: value,
-      }),
+      });
+    },
     onSuccess: (p) => client.setQueryData(["me"], p),
     onError: () => setIgnore(profile.ignoreKtNotices),
   });
