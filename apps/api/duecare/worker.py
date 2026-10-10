@@ -16,6 +16,25 @@ from .models import Connection, PrivacyJob
 log = logging.getLogger("duecare.worker")
 
 
+def run_batch():
+    """Advance one bounded batch during an authenticated serverless invocation.
+
+    Durable checkpoints, leases and owner locks remain the source of truth. The
+    scheduler invokes another batch if work remains; no thread outlives the request.
+    """
+    with transaction() as db:
+        db.execute(text("set local statement_timeout = '10s'"))
+        rows = db.execute(text("select * from duecare_internal.pending_background_jobs()")).all()[:4]
+    worker = Worker()
+    try:
+        futures = [worker.pool.submit(worker.execute, kind, uid, job_id) for kind, uid, job_id in rows]
+        advanced = sum(bool(future.result()) for future in futures)
+        return {"attempted": len(rows), "advanced": advanced}
+    finally:
+        worker.stop.set()
+        worker.pool.shutdown(wait=True, cancel_futures=True)
+
+
 class Worker:
     def __init__(self):
         self.stop = Event()

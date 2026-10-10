@@ -1097,6 +1097,22 @@ button.avatar[aria-expanded="true"] {
 .time-custom :disabled {
   opacity: 0.5;
 }
+.deletion-steps {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0;
+  padding-left: 22px;
+}
+.deletion-steps li {
+  color: var(--graphite-2);
+}
+.deletion-steps li.current {
+  font-weight: 700;
+  color: inherit;
+}
+.deletion-steps li.done {
+  color: var(--good);
+}
 .offline-banner {
   margin: 0 0 14px;
   padding: 10px 14px;
@@ -3513,6 +3529,8 @@ button.avatar[aria-expanded="true"] {
 }
 .import-draft {
   padding: 20px 22px 30px;
+  min-width: 0;
+  container-type: inline-size;
 }
 .import-counts {
   font-weight: 650;
@@ -3575,6 +3593,7 @@ button.avatar[aria-expanded="true"] {
   border: 1px solid var(--ink-line);
   padding: 10px 12px 12px;
   margin: 0 0 10px;
+  min-width: 0;
 }
 .import-row.needs {
   border-color: var(--ink);
@@ -3637,20 +3656,113 @@ button.avatar[aria-expanded="true"] {
 .slot-lines {
   list-style: none;
   padding: 0;
-  margin: 10px 0 0;
+  margin: 16px 0 0;
   display: grid;
-  gap: 6px;
+  gap: 16px;
 }
 .slot-lines > li {
-  border-top: 1px solid var(--ink-rule);
-  padding-top: 6px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--graphite) 24%, var(--paper));
+  border-left: 3px solid var(--ink-line);
+  background: var(--paper);
+  transition: border-color 150ms ease;
+}
+.slot-lines > li:focus-within,
+.slot-lines > li:hover {
+  border-color: var(--ink);
+}
+.import-slot-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -12px -12px 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ink-rule);
+  background: var(--ink-wash);
+}
+.import-slot-number {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 1px solid var(--ink-line);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.import-slot-summary {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.import-slot-summary strong {
+  font-size: 14px;
+}
+.import-slot-summary span {
+  color: var(--graphite-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .slot-fields {
   display: grid;
-  /* Day, start, end, room, remove: the time pickers need room for hour, minute and am/pm. */
-  grid-template-columns: minmax(80px, 0.8fr) minmax(190px, 1.3fr) minmax(190px, 1.3fr) minmax(90px, 1fr) auto;
-  gap: 6px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas: "day room" "start end";
+  gap: 10px 12px;
+  align-items: end;
+}
+.slot-fields > label,
+.slot-start,
+.slot-end {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.slot-fields > label > span,
+.slot-start > span,
+.slot-end > span {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--graphite-2);
+}
+.slot-day { grid-area: day; }
+.slot-room { grid-area: room; }
+.slot-start { grid-area: start; }
+.slot-end { grid-area: end; }
+.slot-fields .time-custom select {
+  min-width: 3.6rem;
+  font-variant-numeric: tabular-nums;
+}
+.slot-fields .time-custom .seg {
+  flex-shrink: 0;
+}
+@container (max-width: 560px) {
+  .slot-fields {
+    grid-template-areas: "day room" "start start" "end end";
+  }
+}
+.onboarding-timetable {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  margin-top: 20px;
+  background: var(--ink-wash);
+  border: 1px solid var(--ink-rule);
+  cursor: pointer;
+}
+.onboarding-timetable input {
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+.onboarding-timetable small {
+  display: block;
+  margin-top: 4px;
+  color: var(--graphite-2);
+  font-weight: 400;
 }
 .slot-fields input,
 .slot-fields select {
@@ -4431,9 +4543,6 @@ button.avatar[aria-expanded="true"] {
   .source-page {
     width: 720px;
     max-width: none;
-  }
-  .slot-fields {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .import-draft {
     padding: 16px;

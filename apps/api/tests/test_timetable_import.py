@@ -108,6 +108,53 @@ def test_cell_text_parsing():
     assert (p["label"], p["baseLabel"], p["group"], p["instructor"]) == ("E-Dev_10", "E-Dev", 10, "CO2")
     p = timetable_draft.parse_cell("ASCT B102 SAM / JRS")
     assert (p["component"], p["instructor"]) == ("theory", "SAM, JRS")
+
+
+@pytest.mark.parametrize("name", ["Maths", "Mathematics", "Engineering Mathematics", "AM-II", "EM3", "ITVC"])
+def test_maths_batch_defaults_to_tutorial(name):
+    assert timetable_draft.parse_cell(f"B2 {name} B102 SAM")["component"] == "tutorial"
+    assert timetable_draft.parse_cell(f"{name} B102 SAM")["component"] == "theory"
+
+
+def test_bulk_subjects_reuse_existing_and_keep_components_separate(client, headers):
+    setup(client, headers, [("Maths", "theory")])
+    body = {
+        "subjects": [
+            {"name": "maths", "kind": "theory"},
+            {"name": "Maths", "kind": "tutorial"},
+            {"name": "MATHS", "kind": "tutorial"},
+            {"name": "DS", "kind": "lab"},
+        ]
+    }
+    response = client.post("/api/v1/subjects/bulk", headers=headers.fresh(), json=body)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["created"] == 2
+    assert result["items"][1]["id"] == result["items"][2]["id"]
+    assert result["items"][0]["id"] != result["items"][1]["id"]
+    retry = client.post("/api/v1/subjects/bulk", headers=headers.fresh(), json=body).json()
+    assert retry["created"] == 0
+    assert [s["id"] for s in retry["items"]] == [s["id"] for s in result["items"]]
+    # Another student's equally named subject must never be returned.
+    other = account("bulk-other@somaiya.edu")
+    separate = client.post("/api/v1/subjects/bulk", headers=other.headers, json=body).json()
+    assert separate["created"] == 3
+    assert not {s["id"] for s in separate["items"]} & {s["id"] for s in result["items"]}
+
+
+def test_bulk_subject_validation_leaves_no_partial_creates(client, headers):
+    response = client.post(
+        "/api/v1/subjects/bulk",
+        headers=headers.fresh(),
+        json={
+            "subjects": [
+                {"name": "DS", "kind": "theory"},
+                {"name": " ", "kind": "lab"},
+            ]
+        },
+    )
+    assert response.status_code == 422
+    assert client.get("/api/v1/subjects", headers=headers).json()["items"] == []
     assert timetable_draft.parse_cell("H-CSFTUT_1 B217A CO2")["component"] == "tutorial"
     assert timetable_draft.parse_cell("DLD-LAB B414 NDM")["component"] == "lab"
     assert timetable_draft.parse_cell("MDM -- --")["label"] == "MDM"

@@ -263,15 +263,19 @@ function Timetable({
 export function Subjects({
   subjects,
   batch,
+  initialImport = false,
+  onImportClose,
 }: {
   subjects: Subject[];
   batch?: string;
+  initialImport?: boolean;
+  onImportClose?: () => void;
 }) {
   const client = useQueryClient();
   const [editing, setEditing] = useState<Subject | null | undefined>(undefined);
   const [timetable, setTimetable] = useState<Subject | null>(null);
   const [deleting, setDeleting] = useState<Subject | null>(null);
-  const [importing, setImporting] = useState(false);
+  const [importing, setImporting] = useState(initialImport);
   const remove = useMutation({
     mutationFn: (s: Subject) =>
       api("/subjects/" + s.id + "?revision=" + s.revision, "DELETE"),
@@ -307,8 +311,8 @@ export function Subjects({
           <CalendarDays size={30} />
           <h3>A place for every subject</h3>
           <p>
-            Add theory, lab, and tutorial subjects separately, then upload your
-            timetable to fill in their weekly slots.
+            Upload your timetable to create all your subjects in one click and
+            fill in their weekly slots, or add subjects yourself.
           </p>
         </div>
       ) : (
@@ -369,7 +373,10 @@ export function Subjects({
         <TimetableImport
           subjects={subjects}
           onAddSubject={() => setEditing(null)}
-          onClose={() => setImporting(false)}
+          onClose={() => {
+            setImporting(false);
+            onImportClose?.();
+          }}
         />
       )}
       {editing !== undefined && (

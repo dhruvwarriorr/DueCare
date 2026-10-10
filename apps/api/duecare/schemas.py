@@ -44,6 +44,10 @@ class SubjectInput(Input):
     revision: int | None = Field(None, ge=1)
 
 
+class BulkSubjectInput(Input):
+    subjects: list[SubjectInput] = Field(min_length=1, max_length=100)
+
+
 class SlotInput(Input):
     id: UUID | None = None
     weekday: int = Field(ge=1, le=7)

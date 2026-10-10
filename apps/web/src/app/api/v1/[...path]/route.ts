@@ -100,9 +100,11 @@ async function proxy(
       : // Reading allows 45 seconds (pictures use a vision model); organizing allows 60.
         uploading
         ? 60000
-        : route === "timetable-imports/interpret"
-          ? 75000
-          : 25000,
+        : route === "timetable-imports/extract-uploaded"
+          ? 140000
+          : route === "timetable-imports/interpret"
+            ? 75000
+            : 25000,
   );
   let payload = await response.text();
   let resumeToken: string | undefined;

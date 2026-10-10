@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { importSubjectKind } from "@/lib/import-subject";
 import type {
   DraftRow,
   ImportSlotBrief,
@@ -35,6 +36,11 @@ const days = [
   "Sunday",
 ];
 const short = (weekday: number) => days[weekday - 1]?.slice(0, 3) || "?";
+const slotTime = (value: string) => {
+  if (!value) return "Set time";
+  const [hour, minute] = value.slice(0, 5).split(":");
+  return `${Number(hour) % 12 || 12}:${minute} ${Number(hour) >= 12 ? "pm" : "am"}`;
+};
 const MB = 1024 * 1024;
 const issueText: Record<string, string> = {
   check_text: "Check this entry against the original",
@@ -218,6 +224,7 @@ export function TimetableImport({
     subjects: number;
   } | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const [instantStatus, setInstantStatus] = useState("");
   const confirmKey = useRef<{ payload: string; key: string } | null>(null);
   const added = useRef(0);
 
@@ -285,13 +292,49 @@ export function TimetableImport({
       setChoices({});
       setTaken(Object.fromEntries(d.families.map((f) => [f.key, f.selected])));
       setSummary(null);
+      setInstantStatus("");
     },
   });
   const extract = useMutation({
-    mutationFn: () => {
-      const form = new FormData();
-      files.forEach((f) => form.append("files", f, f.name));
-      return api<TimetableReading>("/timetable-imports/extract", "POST", form);
+    mutationFn: async () => {
+      const { uploads } = await api<{
+        uploads: { path: string; url: string }[];
+      }>("/timetable-imports/uploads", "POST", {
+        files: files.map((f) => ({
+          filename: f.name.slice(0, 120),
+          contentType: f.type,
+          size: f.size,
+        })),
+      });
+      const uploaded = {
+        files: uploads.map((u, i) => ({
+          path: u.path,
+          filename: files[i].name.slice(0, 120),
+        })),
+      };
+      try {
+        // Files go directly to private temporary storage, avoiding the host's request limit.
+        for (const [i, upload] of uploads.entries()) {
+          const response = await fetch(upload.url, {
+            method: "PUT",
+            body: files[i],
+            headers: { "Content-Type": files[i].type },
+            signal: AbortSignal.timeout(120000),
+          });
+          if (!response.ok)
+            throw new Error("Could not upload the timetable. Please try again");
+        }
+        return await api<TimetableReading>(
+          "/timetable-imports/extract-uploaded",
+          "POST",
+          uploaded,
+        );
+      } finally {
+        // Also clean up partial uploads; the scheduled cleaner covers closed tabs and outages.
+        await api("/timetable-imports/uploads", "DELETE", uploaded).catch(
+          () => undefined,
+        );
+      }
     },
     onSuccess: (r) => {
       setReading(r);
@@ -362,6 +405,47 @@ export function TimetableImport({
   );
   // Bulk exclusion never discards a course that still has a suggested link to review.
   const unmatched = unlinked.filter((c) => !suggestions.includes(c));
+  const instant = useMutation({
+    mutationFn: async () => {
+      const targets = unlinked.filter((c) => c.label.trim());
+      const missing = targets.filter(
+        (c) => !c.suggestion || !byId.has(c.suggestion),
+      );
+      const result = missing.length
+        ? await api<{ items: Subject[]; created: number }>("/subjects/bulk", "POST", {
+            subjects: missing.map((c) => ({
+              name: c.label.trim(),
+              kind: importSubjectKind(c.slots[0].row, subjects),
+              code: c.code,
+              aliases: [],
+            })),
+          })
+        : { items: [], created: 0 };
+      const links = new Map(targets.map((c) => [c.key, c.suggestion]));
+      missing.forEach((c, i) => links.set(c.key, result.items[i].id));
+      return { ...result, links };
+    },
+    onSuccess: async ({ items, created, links }) => {
+      // Populate the shared list before linking so new IDs are immediately valid in the draft.
+      client.setQueryData<Subject[]>(["subjects"], (old = []) => [
+        ...old,
+        ...items.filter(
+          (s, i) => !old.some((o) => o.id === s.id) &&
+            items.findIndex((o) => o.id === s.id) === i,
+        ),
+      ]);
+      setRows((all) => all.map((r) => {
+        const subjectId = links.get(courseKey(r));
+        // Preserve a selection the student made while the request was running.
+        return subjectId && !r.subjectId ? { ...r, subjectId, link: "manual" } : r;
+      }));
+      setSummary(null);
+      setInstantStatus(
+        `${created} ${created === 1 ? "subject" : "subjects"} created. All recognized courses are linked.`,
+      );
+      await client.invalidateQueries({ queryKey: ["subjects"] });
+    },
+  });
   const rowIds = (list: Course[]) =>
     new Set(list.flatMap((c) => c.slots.map((v) => v.row.id)));
   const choiceGroups = useMemo(() => {
@@ -506,13 +590,13 @@ export function TimetableImport({
         if (!v) close();
       }}
       title="Upload timetable"
-      description="Upload your department's timetable PDF, or screenshots of the Somaiya roster scheduler. Nothing is saved until you confirm."
+      description="Upload your department's timetable PDF, or screenshots of the Somaiya roster scheduler. Weekly slots are saved when you confirm; creating subjects saves them immediately."
     >
       {leaving && (
         <div className="import-leave" role="alert">
           <p>
-            Discard this draft? Your edits are not saved until you confirm the
-            timetable.
+            Discard this draft? Weekly slot edits will be lost. Any subjects
+            you created will stay in your subject list.
           </p>
           <Button variant="outline" size="sm" onClick={() => setLeaving(false)}>
             Keep reviewing
@@ -754,6 +838,16 @@ export function TimetableImport({
                     </div>
                   ))}
                   <div className="import-actions">
+                    {unlinked.some((c) => c.label.trim()) && (
+                      <Button
+                        size="sm"
+                        disabled={instant.isPending}
+                        onClick={() => instant.mutate()}
+                      >
+                        <Plus size={15} />
+                        {instant.isPending ? "Creating subjects…" : "Instant create subjects"}
+                      </Button>
+                    )}
                     {suggestions.length > 0 && (
                       <Button
                         size="sm"
@@ -846,6 +940,12 @@ export function TimetableImport({
                       Add a missed slot
                     </Button>
                   </div>
+                  <p className="form-help">
+                    Create and link all recognized subjects in one click, using
+                    the timetable names. Existing matches are reused. You can edit subjects later.
+                  </p>
+                  <p role="status" className="form-help">{instantStatus}</p>
+                  <ErrorNotice error={instant.error} />
                   {draft.families.length > 0 && (
                     <section className="import-section">
                       <h3>Your electives, honours and minor</h3>
@@ -1146,10 +1246,11 @@ function CourseCard({
         />
       )}
       <ul className="slot-lines">
-        {c.slots.map((v) => (
+        {c.slots.map((v, index) => (
           <SlotEditor
             key={v.row.id}
             v={v}
+            number={index + 1}
             onFocus={() => onFocus(v.row.id)}
             update={update}
           />
@@ -1179,7 +1280,9 @@ function CreateSubject({
   const first = c.slots[0].row;
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(c.label);
-  const [kind, setKind] = useState<Subject["kind"]>(first.component || "lab");
+  const [kind, setKind] = useState<Subject["kind"]>(() =>
+    importSubjectKind(first, subjects),
+  );
   // The same name and kind is never created twice; link the existing subject instead.
   const existing = subjects.find(
     (s) => s.kind === kind && normalized(s.name) === normalized(name),
@@ -1294,10 +1397,12 @@ function CreateSubject({
 
 function SlotEditor({
   v,
+  number,
   onFocus,
   update,
 }: {
   v: View;
+  number: number;
   onFocus: () => void;
   update: (id: string, patch: Partial<DraftRow>) => void;
 }) {
@@ -1307,36 +1412,14 @@ function SlotEditor({
   const name = `${days[r.weekday - 1]} ${r.startTime}`;
   return (
     <li onFocus={onFocus} onMouseEnter={onFocus} title={r.sourceText}>
-      <div className="slot-fields">
-        <select
-          aria-label={"Day for " + name}
-          value={r.weekday}
-          onChange={(e) => update(r.id, { weekday: Number(e.target.value) })}
-        >
-          {days.map((d, n) => (
-            <option key={d} value={n + 1}>
-              {d}
-            </option>
-          ))}
-        </select>
-        <TimePicker
-          quick={false}
-          label={"Starts for " + name}
-          value={r.startTime}
-          onChange={(v) => update(r.id, { startTime: v })}
-        />
-        <TimePicker
-          quick={false}
-          label={"Ends for " + name}
-          value={r.endTime}
-          onChange={(v) => update(r.id, { endTime: v })}
-        />
-        <input
-          aria-label={"Room for " + name}
-          placeholder="Room"
-          value={r.location || ""}
-          onChange={(e) => update(r.id, { location: e.target.value })}
-        />
+      <div className="import-slot-heading">
+        <span className="import-slot-number" aria-label={`Slot ${number}`}>
+          {String(number).padStart(2, "0")}
+        </span>
+        <div className="import-slot-summary">
+          <strong>{days[r.weekday - 1]}</strong>
+          <span>{slotTime(r.startTime)} – {slotTime(r.endTime)}</span>
+        </div>
         <Button
           variant="ghost"
           size="icon"
@@ -1348,6 +1431,49 @@ function SlotEditor({
         >
           <Trash2 size={15} />
         </Button>
+      </div>
+      <div className="slot-fields">
+        <label className="slot-day">
+          <span>Day</span>
+          <select
+            aria-label={"Day for " + name}
+            value={r.weekday}
+            onChange={(e) => update(r.id, { weekday: Number(e.target.value) })}
+          >
+            {days.map((d, n) => (
+              <option key={d} value={n + 1}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="slot-start">
+          <span>Starts</span>
+          <TimePicker
+            quick={false}
+            label={"Starts for " + name}
+            value={r.startTime}
+            onChange={(v) => update(r.id, { startTime: v })}
+          />
+        </div>
+        <div className="slot-end">
+          <span>Ends</span>
+          <TimePicker
+            quick={false}
+            label={"Ends for " + name}
+            value={r.endTime}
+            onChange={(v) => update(r.id, { endTime: v })}
+          />
+        </div>
+        <label className="slot-room">
+          <span>Room</span>
+          <input
+            aria-label={"Room for " + name}
+            placeholder="Room"
+            value={r.location || ""}
+            onChange={(e) => update(r.id, { location: e.target.value })}
+          />
+        </label>
       </div>
       {(tag || problems.length > 0) && (
         <p className="slot-meta">

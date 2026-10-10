@@ -1,5 +1,6 @@
 from datetime import timedelta
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,6 +17,8 @@ class Settings(BaseSettings):
     gateway_secret: str = ""
     session_encryption_key: str = ""
     web_origin: str = "http://localhost:3000"
+    background_worker_mode: Literal["embedded", "external"] = "embedded"
+    worker_dispatch_secret: str = ""
     # Source authorization: one Google OAuth web client, separate from Supabase login.
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""

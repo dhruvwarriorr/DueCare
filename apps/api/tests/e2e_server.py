@@ -28,6 +28,7 @@ delete_fixture = account("browser-delete@somaiya.edu")
 source_delete_fixture = account("browser-source-delete@somaiya.edu")
 timetable_fixture = account("browser-timetable@somaiya.edu")
 scheduler_fixture = account("browser-scheduler@somaiya.edu")
+instant_fixture = account("browser-instant@somaiya.edu")
 auth.provider = FixtureAuth()
 # Browser tests never reach an AI provider: mail without a recognized template yields no work.
 ai.extract = lambda payload: (ai.Extraction(), {"provider": "offline", "model": "none"})
@@ -177,6 +178,7 @@ for n, (start, end) in enumerate([(420, 715), (690, 985)], start=1):
             "sourceDeleteHandle": source_delete_fixture.handle,
             "timetableHandle": timetable_fixture.handle,
             "schedulerHandle": scheduler_fixture.handle,
+            "instantHandle": instant_fixture.handle,
             "removedTask": removed_task,
             "retainedTask": retained_task,
         }

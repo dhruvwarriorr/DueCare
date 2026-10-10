@@ -616,6 +616,7 @@ function App() {
     enabled: ready,
   });
   const [view, setView] = useState<View>("week");
+  const [onboardingImport, setOnboardingImport] = useState(false);
   const [sheetMode, setSheetMode] = useState<"week" | "month">("week");
   const overview = useQuery({
     queryKey: ["overview"],
@@ -888,7 +889,15 @@ function App() {
                       to you.
                     </p>
                   </div>
-                  <ProfileForm profile={p} />
+                  <ProfileForm
+                    profile={p}
+                    onSaved={(addTimetable) => {
+                      if (addTimetable) {
+                        setOnboardingImport(true);
+                        navigate("subjects");
+                      }
+                    }}
+                  />
                   <PrivacyControls />
                 </div>
               ) : (
@@ -932,6 +941,8 @@ function App() {
                     <Subjects
                       subjects={subjects.data || []}
                       batch={p.generalBatch}
+                      initialImport={onboardingImport}
+                      onImportClose={() => setOnboardingImport(false)}
                     />
                   )}
                   {view === "attention" && (

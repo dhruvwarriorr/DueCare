@@ -209,6 +209,7 @@ def current_user(request: Request):
         if identity["id"] != str(entry.user_id):
             raise ApiError(401, "SESSION_REVOKED", "Please sign in again")
         db.commit()
+        request.state.supabase_access_token = tokens["access_token"]
         return identity
 
 

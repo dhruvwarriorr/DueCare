@@ -1,0 +1,8 @@
+*
+!Dockerfile.vercel
+!pyproject.toml
+!uv.lock
+!duecare/
+!duecare/**
+duecare/**/__pycache__/
+duecare/**/*.pyc

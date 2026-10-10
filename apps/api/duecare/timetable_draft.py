@@ -26,6 +26,7 @@ GROUP = re.compile(r"^(.*?[A-Za-z])[_-](\d{1,2})$")
 ELECTIVE = re.compile(r"^[EHM][-_](?=[A-Za-z])")
 TUTORIAL = re.compile(r"tut", re.I)
 LAB = re.compile(r"lab|prac|\(p\)|(?:^|[^a-z])pr(?:$|[^a-z])", re.I)
+MATHS = re.compile(r"\b(math(s|ematics)?|am|em|itvc|calculus)(?:\b|(?=[1-4]))|integral transforms", re.I)
 STOP = {"and", "of", "the", "in", "for", "to", "with", "&"}
 
 
@@ -89,7 +90,8 @@ def parse_cell(text):
     elif LAB.search(label):
         component, basis = "lab", "label"
     elif batches or group is not None:
-        component, basis = None, "batch"  # Batch sessions are labs or tutorials; the subject decides.
+        # Maths has tutorials rather than labs, even when the sheet only prints a batch.
+        component, basis = ("tutorial" if MATHS.search(base) else None), "batch"
     else:
         component, basis = "theory", "class"
     return {
@@ -183,6 +185,8 @@ def link(rows, subjects):
     for row in rows:
         keys = keys_for_label(row)
         found = set().union(*(exact.get(k, set()) for k in keys))
+        if row["component"] is None and any(MATHS.search(by_id[i]["name"]) for i in found):
+            row["component"] = "tutorial"
         fitting = fit(found, row)
         if len(fitting) == 1:
             row.update(subjectId=fitting[0], link="exact")

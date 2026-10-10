@@ -1,6 +1,7 @@
 """Timetable upload: read the document, draft weekly slots, then save the student's confirmed slots.
 
-Nothing is written before confirmation. Uploaded files, extracted text and drafts are not stored;
+No slots are written before confirmation. Cloud uploads use temporary private storage;
+extracted text and drafts are not stored.
 confirmed slots go into the existing per-subject timetable with minimal import provenance.
 """
 
@@ -13,7 +14,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import Field, field_validator, model_validator
 from sqlalchemy import select
 
-from . import timetable_draft, timetable_extract
+from . import timetable_draft, timetable_extract, timetable_storage
 from .common import User, finish, replay, work
 from .errors import ApiError
 from .models import Slot, Subject, now
@@ -22,6 +23,25 @@ from .views import profile
 
 router = APIRouter(prefix="/api/v1/timetable-imports")
 MAX_BODY = timetable_extract.MAX_TOTAL_BYTES + 512 * 1024
+
+
+@router.post("/uploads")
+def upload_urls(body: timetable_storage.UploadRequest, request: Request, user=User):
+    _ready(user)
+    return timetable_storage.sign(body, user, request.state.supabase_access_token)
+
+
+@router.delete("/uploads")
+def discard_uploads(body: timetable_storage.UploadedRequest, request: Request, user=User):
+    timetable_storage.remove(body, user, request.state.supabase_access_token)
+    return {"ok": True}
+
+
+@router.post("/extract-uploaded")
+def extract_uploaded(body: timetable_storage.UploadedRequest, request: Request, user=User):
+    _ready(user)
+    files = timetable_storage.download(body, user, request.state.supabase_access_token)
+    return timetable_extract.extract(files)
 
 
 def slot_data(item, p, s, origin=None):

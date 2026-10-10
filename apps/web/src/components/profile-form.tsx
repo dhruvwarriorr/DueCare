@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -18,7 +19,14 @@ const schema = z.object({
   theme: z.enum(["system", "light", "dark"]),
 });
 type Values = z.infer<typeof schema>;
-export function ProfileForm({ profile }: { profile: Profile }) {
+export function ProfileForm({
+  profile,
+  onSaved,
+}: {
+  profile: Profile;
+  onSaved?: (addTimetable: boolean) => void;
+}) {
+  const [addTimetable, setAddTimetable] = useState(false);
   const query = useQueryClient();
   const form = useForm<Values>({
     resolver: zodResolver(schema),
@@ -37,6 +45,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
       api<Profile>("/me", "PATCH", { ...values, revision: profile.revision }),
     onSuccess: async (p) => {
       query.setQueryData(["me"], p);
+      onSaved?.(addTimetable);
       await query.invalidateQueries({ queryKey: ["overview"] });
       await query.invalidateQueries({ queryKey: ["tasks"] });
     },
@@ -152,11 +161,27 @@ export function ProfileForm({ profile }: { profile: Profile }) {
         Enter your batch once. It applies to every theory, lab, and tutorial
         subject. Roll numbers retain leading zeros.
       </p>
+      {!profile.onboardingComplete && (
+        <label className="onboarding-timetable">
+          <input
+            type="checkbox"
+            checked={addTimetable}
+            onChange={(e) => setAddTimetable(e.target.checked)}
+          />
+          <span>
+            <strong>Add your timetable for better accuracy</strong>
+            <small>
+              Helps DueCare understand your subjects and class timings. Upload
+              it after saving your profile, or add it later from Subjects.
+            </small>
+          </span>
+        </label>
+      )}
       <ErrorNotice error={save.error} />
       <div className="form-footer">
         <span role="status">{save.isSuccess ? "Profile saved" : ""}</span>
         <Button disabled={save.isPending}>
-          {save.isPending ? "Saving…" : "Save profile"}
+          {save.isPending ? "Saving…" : addTimetable ? "Save and add timetable" : "Save profile"}
         </Button>
       </div>
     </form>

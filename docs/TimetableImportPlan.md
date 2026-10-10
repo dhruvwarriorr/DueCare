@@ -228,3 +228,11 @@ Evaluated against the department's SY/TY/LY division timetables (ten generated P
 | Confirmation summary | `POST /timetable-imports/confirm` with `dryRun: true` computes the same summary the save uses: added, already saved, updated (replace), removed (replace), overlaps, repeated rows | One server-side source of truth for the preview and the write |
 
 Known limits: `HH:MM:SS` is the stored slot time format for both editors. Alternate-week schedules are not detected. Scheduler screenshots must be the Week view at normal zoom. A class never fully visible in any screenshot keeps a flagged, checkable time. Two different courses with nearly identical block colours that touch in time and are cut off across screenshots could be joined; their course codes are compared when readable. Live AI suggestions were not exercised because the configured Groq key was rejected (`401`) during implementation; the import shows "suggestions unavailable" and remains fully usable with exact, sibling and initials matching.
+
+### Subject setup and onboarding (11 October 2026)
+
+The optional onboarding choice **Add your timetable for better accuracy** saves the academic profile first, then opens the upload flow from Subjects. It can be skipped and opened later.
+
+**Instant create subjects** links all currently included, named courses in one action. It accepts available subject suggestions and creates the remaining subjects from their timetable labels and component defaults. `POST /subjects/bulk` creates them atomically, reuses normalized name-and-kind matches, and returns results in request order; repeated requests do not duplicate subjects. Maths batch sessions, including ITVC, default to tutorials while class-wide Maths stays theory. Existing explicit component labels remain editable through the per-course creation form.
+
+Creating subjects saves them immediately, independently of confirming weekly slots. Canceling a draft retains those subjects. Group choices and invalid times still need resolving before weekly slots can be saved. Time controls now use labeled rows that adapt to the review pane's available width.

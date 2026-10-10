@@ -8,7 +8,6 @@ import {
   useQuery,
 } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { Button } from "./ui/button";
 import { ErrorNotice } from "./ui/field";
 type Result = { status: string; stage: string; errorCode: string | null };
 export function AccountDeletion() {
@@ -22,6 +21,13 @@ export function AccountDeletion() {
   );
 }
 
+// The server deletes the account in these steps; this page only shows how far it has got.
+const steps: [string, string][] = [
+  ["revoke", "Disconnect Google access"],
+  ["data", "Erase your tasks and imported data"],
+  ["auth", "Remove your DueCare login"],
+];
+
 function DeletionProgress() {
   const query = useQuery({
     queryKey: ["account-deletion"],
@@ -31,37 +37,47 @@ function DeletionProgress() {
     refetchIntervalInBackground: true,
   });
   const job = query.data;
+  const done = job?.status === "completed";
+  const current = done
+    ? steps.length
+    : steps.findIndex(([s]) => s === job?.stage);
   return (
     <main id="main" className="deletion-page">
       <Link href="/sign-in" className="brand">
         DueCare
       </Link>
       <h1>
-        {job?.status === "completed"
-          ? "Your account has been deleted"
-          : "Deleting your account"}
+        {done ? "Your account has been deleted" : "Deleting your account"}
       </h1>
       <p>
-        {job?.status === "completed"
+        {done
           ? "Your workspace, source credentials, and DueCare login were removed. Your Google mail and Classroom work remain in Google."
-          : "Your workspace is frozen while deletion runs in the background. You can switch tabs, use another app, or close this page. Return here to see progress."}
+          : "This runs on DueCare’s servers, not in your browser. You can close this page: deletion finishes without it. Come back any time to see that it is done."}
       </p>
+      <ol className="deletion-steps" aria-label="Deletion steps">
+        {steps.map(([key, label], i) => (
+          <li
+            key={key}
+            className={i < current ? "done" : i === current ? "current" : ""}
+          >
+            {label}
+            {i < current
+              ? " · done"
+              : i === current && !done
+                ? job?.errorCode
+                  ? " · Google is busy, retrying automatically"
+                  : " · in progress"
+                : ""}
+          </li>
+        ))}
+      </ol>
       <ErrorNotice error={query.error} retry={() => query.refetch()} />
-      {job?.status !== "completed" && (
-        <>
-          <p role="status">
-            {job?.errorCode
-              ? "Google is temporarily unavailable. Deletion will retry automatically."
-              : "Working on: " + (job?.stage || "saved progress")}
-          </p>
-          <Button disabled={query.isFetching} onClick={() => query.refetch()}>
-            {query.isFetching ? "Refreshing…" : "Refresh progress"}
-          </Button>
-        </>
+      {!done && (
+        <p className="text-secondary text-sm" role="status">
+          This page updates by itself.
+        </p>
       )}
-      {job?.status === "completed" && (
-        <Link href="/sign-in">Back to sign in</Link>
-      )}
+      {done && <Link href="/sign-in">Back to sign in</Link>}
     </main>
   );
 }

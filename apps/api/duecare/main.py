@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import logging
+import secrets
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -22,7 +23,15 @@ from .domain import effective_status, task_data, window_derived
 from .errors import ApiError
 from .models import History, ReviewItem, Slot, Subject, Task, now
 from .safe_logs import configure
-from .schemas import BulkTaskInput, ProfilePatch, SubjectInput, TaskInput, TaskPatch, TimetableInput
+from .schemas import (
+    BulkSubjectInput,
+    BulkTaskInput,
+    ProfilePatch,
+    SubjectInput,
+    TaskInput,
+    TaskPatch,
+    TimetableInput,
+)
 from .views import profile, task_out
 
 
@@ -30,7 +39,7 @@ from .views import profile, task_out
 async def lifespan(app):
     from .worker import Worker
 
-    worker = Worker() if settings().database_url else None
+    worker = Worker() if settings().database_url and settings().background_worker_mode == "embedded" else None
     app.state.worker = worker
     if worker:
         worker.start()
@@ -120,6 +129,8 @@ def health():
 
 @app.get("/ready")
 def ready():
+    if settings().background_worker_mode == "external" and not settings().worker_dispatch_secret:
+        raise ApiError(503, "WORKER_CONFIGURATION", "Background processing is not configured")
     worker = getattr(app.state, "worker", None)
     if worker and not worker.thread.is_alive():
         raise ApiError(503, "WORKER_UNAVAILABLE", "Background processing is temporarily unavailable")
@@ -136,6 +147,18 @@ def ready():
         if not db.scalar(text("select to_regprocedure('duecare_internal.pending_background_jobs()')")):
             raise ApiError(503, "DATABASE_CONFIGURATION", "Background job migration is required")
     return {"status": "ok"}
+
+
+@app.post("/internal/jobs/advance")
+def advance_background_jobs(request: Request):
+    from .worker import run_batch
+
+    configured = settings().worker_dispatch_secret
+    if not configured or not secrets.compare_digest(
+        request.headers.get("authorization", ""), "Bearer " + configured
+    ):
+        raise ApiError(401, "WORKER_REQUIRED", "Background dispatcher authorization is required")
+    return run_batch()
 
 
 @app.post("/internal/auth/start", dependencies=[Depends(auth.gateway)])
@@ -252,6 +275,33 @@ def add_subject(body: SubjectInput, user=User):
         db.add(s)
         db.flush()
         return subject_out(s)
+
+
+@app.post("/api/v1/subjects/bulk")
+def add_subjects(body: BulkSubjectInput, user=User):
+    # One transaction and owner lock: retries and repeated entries reuse existing subjects.
+    with work(user) as db:
+        existing = {
+            (academic.normalized(s.name), s.kind): s
+            for s in db.scalars(select(Subject).where(Subject.user_id == user["id"]))
+        }
+        items, created = [], 0
+        for item in body.subjects:
+            key = (academic.normalized(item.name), item.kind)
+            s = existing.get(key)
+            if s is None:
+                s = Subject(
+                    user_id=uuid.UUID(user["id"]),
+                    name=item.name,
+                    kind=item.kind,
+                    data=item.model_dump(mode="json", by_alias=True, exclude={"name", "kind", "revision"}),
+                )
+                db.add(s)
+                db.flush()
+                existing[key] = s
+                created += 1
+            items.append(subject_out(s))
+        return {"items": items, "created": created}
 
 
 @app.get("/api/v1/subjects/{id}")
