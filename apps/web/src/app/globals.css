@@ -1097,6 +1097,14 @@ button.avatar[aria-expanded="true"] {
 .time-custom :disabled {
   opacity: 0.5;
 }
+.offline-banner {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--due-line);
+  background: var(--due-tint);
+  color: var(--due-text);
+  font-size: 14px;
+}
 .week-digest {
   margin-bottom: 14px;
   padding: 12px 14px;

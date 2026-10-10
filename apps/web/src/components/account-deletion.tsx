@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { clearSavedData } from "@/lib/offline";
 import {
   QueryClient,
   QueryClientProvider,
@@ -11,6 +12,8 @@ import { Button } from "./ui/button";
 import { ErrorNotice } from "./ui/field";
 type Result = { status: string; stage: string; errorCode: string | null };
 export function AccountDeletion() {
+  // Tasks saved in this browser belong to a signed-in session; none survive it.
+  useEffect(() => clearSavedData(), []);
   const [client] = useState(() => new QueryClient());
   return (
     <QueryClientProvider client={client}>

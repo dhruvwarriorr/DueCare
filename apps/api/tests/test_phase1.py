@@ -639,3 +639,23 @@ def test_tasks_added_since_a_time_can_be_listed(client, headers):
         )
         == 2
     )
+
+
+def test_the_change_stamp_moves_only_when_something_changes(client, headers):
+    def stamp():
+        return client.get("/api/v1/changes", headers=headers).json()["version"]
+
+    first = stamp()
+    assert stamp() == first  # Nothing changed: nothing to reload.
+    t = client.post(
+        "/api/v1/tasks", headers=headers.fresh(), json={"title": "Work", "type": "assignment"}
+    ).json()
+    added = stamp()
+    assert added != first
+    client.patch(
+        "/api/v1/tasks/" + t["id"], headers=headers.fresh(), json={"revision": t["revision"], "notes": "x"}
+    )
+    edited = stamp()
+    assert edited != added
+    client.delete(f"/api/v1/tasks/{t['id']}?revision={t['revision'] + 1}", headers=headers.fresh())
+    assert stamp() not in (edited, added)

@@ -13,6 +13,13 @@ import {
 import { Plus, LogOut, Bell, Search, ListTodo } from "lucide-react";
 import { api, classroomNote, deadline } from "@/lib/api";
 import { useCutoffRefresh } from "@/lib/use-cutoff-refresh";
+import {
+  clearSavedData,
+  OfflineBanner,
+  restoreSaved,
+  useChangeWatch,
+  useSaveData,
+} from "@/lib/offline";
 import type { Profile, Page, Task, Subject } from "@/lib/types";
 import { Button } from "./ui/button";
 import { Logo } from "./ui/logo";
@@ -348,7 +355,6 @@ function TaskList({
           (pageParam ? "&cursor=" + encodeURIComponent(pageParam) : ""),
       ),
     getNextPageParam: (p) => p.nextCursor || undefined,
-    refetchInterval: 60000,
   });
   const items = query.data?.pages.flatMap((p) => p.items) || [];
   const [selected, setSelected] = useState<Set<string> | null>(null);
@@ -590,12 +596,20 @@ function TaskList({
 }
 function App() {
   const client = useQueryClient();
+  // The last saved tasks show at once; fresh data replaces them as it arrives.
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  useEffect(() => {
+    const at = restoreSaved(client);
+    void Promise.resolve().then(() => setSavedAt(at));
+  }, [client]);
   const profile = useQuery({
     queryKey: ["me"],
     queryFn: () => api<Profile>("/me"),
     retry: false,
   });
   const ready = Boolean(profile.data?.onboardingComplete);
+  useSaveData(client, ready);
+  const { reachable } = useChangeWatch(ready);
   const subjects = useQuery({
     queryKey: ["subjects"],
     queryFn: allSubjects,
@@ -613,7 +627,6 @@ function App() {
     queryKey: ["activity", "count"],
     queryFn: () => api<{ unreadCount: number }>("/activity?limit=1"),
     enabled: ready,
-    refetchInterval: 30000,
   });
   const unread = activity.data?.unreadCount || 0;
   const [tray, setTray] = useState(false);
@@ -705,6 +718,7 @@ function App() {
     try {
       await api("/auth/logout", "POST");
       client.clear();
+      clearSavedData();
       router.replace("/sign-in");
       router.refresh();
     } catch (e) {
@@ -863,6 +877,7 @@ function App() {
           )}
           <div className="main-wrap">
             <main id="main" className="main-content">
+              <OfflineBanner reachable={reachable} savedAt={savedAt} />
               <ErrorNotice error={logoutError} />
               {!ready ? (
                 <div className="page-pad">

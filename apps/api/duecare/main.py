@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -697,6 +698,27 @@ def task_history(id: uuid.UUID, limit: int = Query(50, ge=1, le=100), cursor: st
             ],
             "nextCursor": c,
         }
+
+
+@app.get("/api/v1/changes")
+def changes(user=User):
+    """A stamp that changes whenever anything the student sees changes (a task added, edited or
+    deleted, a review, a notification, a rule, a subject, the profile). The browser polls this
+    cheaply and reloads its data only when the stamp moves."""
+    from .models import Activity, Profile, Rule
+
+    uid = user["id"]
+    with work(user) as db:
+        parts = [
+            db.execute(select(func.count(), func.max(model.updated_at)).where(model.user_id == uid)).one()
+            for model in (Task, ReviewItem, Activity, Rule, Subject)
+        ]
+        parts.append(
+            db.scalar(select(func.count()).where(Activity.user_id == uid, Activity.read_at.is_(None)))
+        )
+        parts.append(db.scalar(select(Profile.updated_at).where(Profile.user_id == uid)))
+    version = hashlib.sha256(repr(parts).encode()).hexdigest()[:16]
+    return {"version": version, "at": now().isoformat()}
 
 
 @app.get("/api/v1/overview")

@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { clearSavedData } from "@/lib/offline";
 import { ArrowRight, Check } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "./ui/button";
@@ -31,6 +32,8 @@ const kinds: Record<string, string> = {
 };
 
 export function SignIn({ callbackError = false }: { callbackError?: boolean }) {
+  // Tasks saved in this browser belong to a signed-in session; none survive it.
+  useEffect(() => clearSavedData(), []);
   const [error, setError] = useState<Error | null>(
     callbackError
       ? new Error(

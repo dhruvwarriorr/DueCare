@@ -214,6 +214,9 @@ test("manual workspace persists onboarding, subjects, timetable, tasks, completi
   await page.reload();
   await page.getByRole("button", { name: "Open navigation" }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  // Online, the saved-data banner never shows.
+  expect((await page.request.get("/api/v1/changes")).status()).toBe(200);
+  await expect(page.locator(".offline-banner")).toHaveCount(0);
   await page.getByRole("radio", { name: "Dark", exact: true }).check();
   await page.getByRole("button", { name: "Save profile", exact: true }).click();
   await expect(page.locator("html")).toHaveClass("dark");

@@ -12,6 +12,7 @@ export const maxDuration = 150;
 const routes = [
   "me",
   "overview",
+  "changes",
   "tasks",
   "subjects",
   "connections",
