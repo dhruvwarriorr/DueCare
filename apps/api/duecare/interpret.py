@@ -18,12 +18,24 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta, timezone
-from types import SimpleNamespace
 
 from pydantic import ValidationError
 from sqlalchemy import case, func, or_, select
 
-from . import academic, ai, dates, faculty, google, lms, mail, naming, rules, subject_link, targeting
+from . import (
+    academic,
+    ai,
+    dates,
+    faculty,
+    google,
+    lms,
+    mail,
+    matching,
+    naming,
+    rules,
+    subject_link,
+    targeting,
+)
 from .classroom_time import due_at
 from .common import work
 from .config import GMAIL_LOOKBACK, settings
@@ -233,7 +245,7 @@ def load_context(db, uid, record):
             select(Task)
             .where(Task.user_id == uid, Task.data["mergedInto"].astext.is_(None))
             .order_by(Task.updated_at.desc())
-            .limit(60)
+            .limit(200)
         )
     ]
     rule_rows = [
@@ -458,6 +470,25 @@ def compact(d):
     return {k: v for k, v in d.items() if v not in (None, "", [], {})}
 
 
+def relevant_tasks(ctx, source, sections, limit=40):
+    """The tracked tasks a source most likely repeats or follows up, for extraction to match against:
+    those sharing its words (course, kind, number, topic) first, open work before completed, then the
+    most recently updated."""
+    text = " ".join(filter(None, [source.get("subject"), source.get("title"), source.get("courseLabel"),
+                                  *(s.get("text", "")[:2000] for s in sections)]))  # fmt: skip
+    words = tokens(text)
+    names = {s["id"]: tokens(" ".join(filter(None, [s["name"], s.get("code"), *(s.get("aliases") or [])])))
+             for s in ctx["subjects"]}  # fmt: skip
+
+    def score(item):
+        n, t = item
+        mine = tokens(" ".join(filter(None, [t["title"], t["assessmentLabel"], t["deliverableLabel"]])))
+        mine |= names.get(t["subjectId"], set())
+        return (-len(mine & words), bool(t["completed"]), n)
+
+    return [t for _, t in sorted(enumerate(ctx["tasks"]), key=score)[:limit]]
+
+
 def ai_payload(ctx, source, sections, allowed_subjects=None):
     """Extraction context. It is sent with every source, so only fields extraction uses are kept:
     a full timetable and task list once made even a short reply exceed provider request limits."""
@@ -490,7 +521,7 @@ def ai_payload(ctx, source, sections, allowed_subjects=None):
                 "completed": t["completed"] or None,
             }
         )  # fmt: skip
-        for t in ctx["tasks"][:40]
+        for t in relevant_tasks(ctx, source, sections)
     ]
     return {
         "now": now().isoformat(),
@@ -1332,6 +1363,9 @@ def verified_lms_receipt(cand):
 
 
 CUTOFF_FIELDS = ("dueAt", "startsAt", "availabilityClosesAt")
+# Targeting that is only missing (not conflicting): a tracked work's copy may settle it.
+UNSTATED_AUDIENCE = ("audience not stated", "lab batch not stated")
+TRACKED_COPY = "same work already tracked"
 
 
 def cand_day(cand):
@@ -1362,41 +1396,139 @@ def curated(task):
     return bool({"title", "dueAt", "dueDate", "startsAt"} & set(task.data.get("manualFieldOverrides") or {}))
 
 
-def safe_duplicate(probe, task, day, ctx, at=None):
-    """Same subject, same type, the same work by name (identifiers equal), no conflicting day, and
-    no conflicting stated time: sources that disagree on when are left for the student to judge."""
-    if not probe.subject_id or str(task.subject_id) != probe.subject_id or probe.task_type != task.type:
-        return False
-    if curated(task) or not same_work(probe, task, ctx):
-        return False
-    other = task_day(task)
-    if day is not None and other is not None and day != other:
-        return False
-    theirs = exact_time(task)
-    return at is None or theirs is None or at == theirs
+# A notice of one piece of work never moves it further than this; beyond it, it is other work.
+MAX_DAY_GAP = 60
 
 
-def duplicate_of(db, uid, cand, subject_id, ctx):
-    if not subject_id or not cand.task_type or not cand.title:
-        return None
-    probe = SimpleNamespace(task_type=cand.task_type, subject_id=subject_id, title=cand.title)
-    day = cand_day(cand)
+def notice_signature(ctx, subject_id, title, *labels):
+    subject = next((s for s in ctx["subjects"] if s["id"] == subject_id), None) if subject_id else None
+    return matching.signature(title, *labels, subject=subject)
+
+
+def task_signature(ctx, task):
+    data = task.data
+    subject_id = str(task.subject_id) if task.subject_id else None
+    return notice_signature(
+        ctx, subject_id, task.title, data.get("assessmentLabel"), data.get("deliverableLabel")
+    )
+
+
+def cand_signature(ctx, cand, subject_id):
+    return notice_signature(ctx, subject_id, cand.title, cand.assessment_label, cand.deliverable_label)
+
+
+def stated_time(cand):
     stated = next((cand.timing[n] for n in CUTOFF_FIELDS if cand.timing.get(n)), None)
-    at = parse_dt(stated) if stated else None
+    return parse_dt(stated) if stated else None
+
+
+def same_notice(level, theirs, day, at, task_at, moved_ok, hinted=False, strict=False):
+    """Whether a notice at this match level (see matching.compare) is the task's work, given the
+    days both state. A changed date is an update of the same work, never a second task; update_task
+    then lets only the newest source's timing stand."""
+    if level == matching.DIFFERENT:
+        return False
+    moved = day is not None and theirs is not None and day != theirs
+    if moved and abs((day - theirs).days) > MAX_DAY_GAP:
+        return False
+    if strict:
+        return level == matching.SAME and not moved
+    if level == matching.SAME or hinted:
+        return True
+    if level == matching.LIKELY:
+        return not moved or moved_ok
+    if level == matching.GENERIC:
+        same_time = at is None or task_at is None or at == task_at
+        return day is not None and theirs is not None and not moved and same_time
+    return False
+
+
+def notice_matches(cand, task, level, hinted=False, strict=False):
+    rescheduled = cand.intent == "revision" or matching.says_rescheduled(
+        cand.title, cand.excerpt, cand.instructions
+    )
+    return same_notice(
+        level,
+        task_day(task),
+        cand_day(cand),
+        stated_time(cand),
+        exact_time(task),
+        rescheduled,
+        hinted,
+        strict,
+    )
+
+
+def own_coursework(cand):
+    key = cand.identity_key or ""
+    return key if ":coursework:" in key and not re.search(r":\d+$", key) else None
+
+
+def precision(db, task):
+    """The most precise of several tasks for one work: a Classroom assignment, a stated time, the oldest."""
+    return (not coursework_identity(db, task), exact_time(task) is None, task.created_at)
+
+
+def find_same_work(db, uid, cand, subject_id, ctx, strict=False):
+    """The tracked task this notice announces again, or None.
+
+    Two or three faculty mailing the same notice, a resend, a reminder, a follow-up or a moved
+    deadline all name the same work: same subject, same task type, the same kind, identifiers and
+    topic (see matching). The sender and the wording never matter. A task the extraction suggested
+    (matchTaskId) is accepted when nothing contradicts it. strict (the notice's audience is not
+    confirmed): only an identical work with no date change counts."""
+    if not cand.task_type or not cand.title:
+        return None
+    subjects = {subject_id} if subject_id else set(cand.subject_choices or [])
+    hint = cand.match_task_id
+    scope = [Task.subject_id.is_(None)]
+    if subjects:
+        scope.append(Task.subject_id.in_([uuid.UUID(s) for s in subjects]))
+    else:
+        scope.append(Task.subject_id.is_not(None))  # No subject named: see the guard below.
+    if hint:
+        scope.append(Task.id == uuid.UUID(hint))
+    own = own_coursework(cand)
+    day = cand_day(cand)
+    found = []
     for task in db.scalars(
         select(Task)
         .where(
             Task.user_id == uid,
             Task.type == cand.task_type,
-            Task.subject_id == uuid.UUID(subject_id),
             Task.data["mergedInto"].astext.is_(None),
+            or_(*scope),
         )
         .order_by(Task.created_at)
         .with_for_update()
     ):
-        if safe_duplicate(probe, task, day, ctx, at):
-            return task
-    return None
+        theirs = str(task.subject_id) if task.subject_id else None
+        if subject_id and theirs and theirs != subject_id:
+            continue  # A suggested task of another subject is other work.
+        hinted = str(task.id) == hint and not strict
+        level = matching.compare(cand_signature(ctx, cand, subject_id or theirs), task_signature(ctx, task))
+        if not (subject_id and theirs) and level != matching.SAME and not hinted:
+            continue  # Across an unknown subject, only identical work counts.
+        if theirs and theirs not in subjects and not hinted and (day is None or day != task_day(task)):
+            continue  # Naming no subject, "Exp 5" is another lab's too unless the same day is stated.
+        if curated(task) and level != matching.SAME and not hinted:
+            continue  # The student renamed or retimed it: its title no longer speaks for the source.
+        if own and (coursework_identity(db, task) - {own}):
+            continue  # Two Classroom assignments that happen to share a name.
+        if notice_matches(cand, task, level, hinted, strict):
+            found.append((not hinted, matching.RANK[level], task))
+    if not found:
+        return None
+    found.sort(key=lambda f: (f[0], f[1]))
+    unhinted, rank, best = found[0]
+    if not unhinted:
+        return best
+    ties = [task for _, r, task in found if r == rank]
+    if len({t.subject_id for t in ties}) > 1:
+        return None  # The same name in two subjects: the notice does not say which.
+    if rank == matching.RANK[matching.SAME]:
+        return min(ties, key=lambda t: precision(db, t))  # Already listed twice; the sweep joins them.
+    return best if len(ties) == 1 else None
 
 
 def coursework_identity(db, task):
@@ -1453,7 +1585,8 @@ def relink_named_subjects(db, uid):
 
 
 def merge_duplicates(db, uid):
-    """Join tasks already listed twice for the same work (one notice by mail, one on Classroom).
+    """Join tasks already listed twice for the same work: a notice by mail and one on Classroom, or
+    copies of one notice from several faculty. The survivor takes the newest source's details.
     Each merge can be undone."""
     from . import merging
 
@@ -1470,8 +1603,14 @@ def merge_duplicates(db, uid):
             groups.setdefault((task.subject_id, task.type), []).append(task)
     merged = 0
     for group in groups.values():
-        # The most precise task survives: a Classroom assignment, then a stated time, then the oldest.
-        group.sort(key=lambda t: (not coursework_identity(db, t), exact_time(t) is None, t.created_at))
+        if len(group) < 2:
+            continue
+        if ctx is None:
+            ctx = {"subjects": [{"id": str(s.id), "name": s.name, "code": s.data.get("code"),
+                                 "aliases": s.data.get("aliases", [])}
+                                for s in db.scalars(select(Subject).where(Subject.user_id == uid))]}  # fmt: skip
+        group.sort(key=lambda t: precision(db, t))
+        signatures = {t.id: task_signature(ctx, t) for t in group}
         gone = set()
         for i, keep in enumerate(group):
             if keep.id in gone:
@@ -1479,19 +1618,17 @@ def merge_duplicates(db, uid):
             for other in group[i + 1 :]:
                 if other.id in gone:
                     continue
-                if ctx is None:
-                    ctx = {"subjects": [{"id": str(s.id), "name": s.name, "code": s.data.get("code"),
-                                         "aliases": s.data.get("aliases", [])}
-                                        for s in db.scalars(select(Subject).where(Subject.user_id == uid))]}  # fmt: skip
-                probe = SimpleNamespace(
-                    task_type=keep.type, subject_id=str(keep.subject_id), title=keep.title
-                )
-                if not safe_duplicate(probe, other, task_day(keep), ctx, exact_time(keep)):
+                level = matching.compare(signatures[keep.id], signatures[other.id])
+                # Two tasks carry no "this notice says the date moved"; differing days join only
+                # when the work is identical by name.
+                if not same_notice(
+                    level, task_day(other), task_day(keep), exact_time(keep), exact_time(other), False
+                ):
                     continue
                 mine, theirs = coursework_identity(db, keep), coursework_identity(db, other)
                 if mine and theirs and mine != theirs:
                     continue  # Two Classroom assignments that happen to share a name.
-                merging.merge(
+                operation = merging.merge(
                     db,
                     keep,
                     other,
@@ -1499,11 +1636,57 @@ def merge_duplicates(db, uid):
                         db, task, action, {**changes, "reason": "same work"}
                     ),
                 )
+                adopted = adopt_newer(db, keep, operation.data["movedEvents"])
+                if adopted:
+                    operation.data = {**operation.data, "adopted": adopted}
                 settle_reviews(db, keep, ("possible_duplicate",), "same_work_merged")
                 settle_reviews(db, other, ("possible_duplicate",), "same_work_merged")
                 gone.add(other.id)
                 merged += 1
     return merged
+
+
+ADOPTED_FIELDS = (*sorted(TASK_FIELDS), "timingProvenance", "displayTitle", "naming", "timingTentative")
+
+
+def adopt_newer(db, keep, event_ids):
+    """Replay a merged-in task's notices on the survivor. Field clocks let only values newer than the
+    survivor's own stand (a moved deadline, a renamed title); manual edits and completion are kept.
+    Returns {"before", "after"} for the fields it changed, so undoing the merge can restore them."""
+    if not event_ids:
+        return None
+    before = {k: keep.data.get(k) for k in ADOPTED_FIELDS}
+    events = db.scalars(
+        select(SourceEvent).where(
+            SourceEvent.user_id == keep.user_id,
+            SourceEvent.id.in_([uuid.UUID(e) for e in event_ids]),
+            SourceEvent.event_type.in_(WORK_INTENTS),
+            SourceEvent.outcome.in_(("created", "updated", "evidence_recorded", "accepted", "linked")),
+        )
+    ).all()
+    for event in sorted(events, key=lambda e: source_order(db, e)):
+        record = db.get(SourceRecord, event.source_record_id)
+        if not record:
+            continue
+        cand = candidate_from_event(event, record)
+        cand.subject_id = str(keep.subject_id) if keep.subject_id else None
+        owner = event.task_id
+        update_task(db, keep, cand, event, True, cand.method, retitle=False)
+        event.task_id = owner  # The evidence moved with the merge; undoing it moves it back.
+    changed = [k for k in ADOPTED_FIELDS if keep.data.get(k) != before[k]]
+    if not changed:
+        return None
+    return {"before": {k: before[k] for k in changed}, "after": {k: keep.data.get(k) for k in changed}}
+
+
+def restore_fields(task, adopted):
+    """Undo adopt_newer when the survivor still holds exactly what the merge gave it."""
+    if not adopted or any(task.data.get(k) != v for k, v in adopted["after"].items()):
+        return False
+    task.data = {**task.data, **adopted["before"]}
+    task.due_at = parse_dt(task.data["dueAt"]) if task.data.get("dueAt") else None
+    task.title, task.type = task.data.get("title") or task.title, task.data.get("type") or task.type
+    return True
 
 
 ANSWERED_BY_TRACKING = ("possible_duplicate", "confirm_applicability", "association")
@@ -1545,12 +1728,15 @@ def tidy_reviews(db, uid):
                 subject_id = cand.subject_id or (str(task.subject_id) if task.subject_id else None)
                 if ctx is None:
                     ctx = load_context(db, uid, record)
-                stated = next((cand.timing[n] for n in CUTOFF_FIELDS if cand.timing.get(n)), None)
-                probe = SimpleNamespace(task_type=cand.task_type, subject_id=subject_id, title=cand.title)
-                if subject_id and safe_duplicate(
-                    probe, task, cand_day(cand), ctx, parse_dt(stated) if stated else None
+                level = matching.compare(cand_signature(ctx, cand, subject_id), task_signature(ctx, task))
+                if (
+                    subject_id
+                    and subject_id == (str(task.subject_id) if task.subject_id else None)
+                    and cand.task_type == task.type
+                    and not curated(task)
+                    and notice_matches(cand, task, level)
                 ):
-                    changes, _ = update_task(db, task, cand, event, False, cand.method)
+                    changes, _ = update_task(db, task, cand, event, False, cand.method, retitle=False)
                     event.outcome = "updated" if changes else "evidence_recorded"
                     reason = "same_work_linked"
         if reason:
@@ -1635,26 +1821,30 @@ def reapply_rules(db, uid):
     return sum(apply_rules_to(db, task, rows) for task in tasks)
 
 
-def similar_task(db, uid, cand, subject_id):
-    """Similarity never merges; it only asks the student (different kinds/labels stay separate)."""
+def similar_task(db, uid, cand, subject_id, ctx):
+    """Similarity never merges; it only asks the student. Contradicting identifiers, kinds or a
+    re-test against the regular sitting stay separate without a question."""
     if not cand.title:
         return None
-    mine = tokens(cand.title)
+    mine = cand_signature(ctx, cand, subject_id)
+    generic = []
     for t in db.scalars(
-        select(Task).where(
+        select(Task)
+        .where(
             Task.user_id == uid,
             Task.type == cand.task_type,
             Task.subject_id == (uuid.UUID(subject_id) if subject_id else None),
             Task.data["mergedInto"].astext.is_(None),
         )
+        .order_by(Task.created_at)
     ):
-        theirs = tokens(t.title)
-        label_same = cand.assessment_label and norm(cand.assessment_label) == norm(
-            t.data.get("assessmentLabel")
-        )
-        if label_same or (mine and len(mine & theirs) / len(mine | theirs) >= 0.6):
+        level = matching.compare(mine, task_signature(ctx, t))
+        if level in (matching.SAME, matching.LIKELY, matching.POSSIBLE):
             return t
-    return None
+        if level == matching.GENERIC and not t.completed_at:
+            generic.append(t)
+    # "Submit your DBMS assignment" on another day: ask only when one open task could be meant.
+    return generic[0] if len(generic) == 1 else None
 
 
 def open_review(db, uid, record, event, issue, question, data, task=None, identity=None):
@@ -2118,11 +2308,13 @@ def stale_omission(db, prov):
     return bool(old) and old.processing_version != VERSION
 
 
-def update_task(db, task, cand, event, explicit, method, schedule_only=False, restore=()):
+def update_task(db, task, cand, event, explicit, method, schedule_only=False, restore=(), retitle=True):
     """Reconcile role-specific fields. Never touches completion.
 
     restore names fields that wrongly attached work had set: they take this (the task's own) source's
-    value, or none, whatever newer time the wrong source carried."""
+    value, or none, whatever newer time the wrong source carried. retitle is False for another
+    notice of the same work (a copy, reminder or follow-up): its wording ("Submit your DBMS
+    assignment", "IA 1 postponed") never replaces the work's name."""
     changes, conflicts = {}, {}
     incoming = proposal(cand, cand.subject_id)
     for name in restore:
@@ -2132,7 +2324,7 @@ def update_task(db, task, cand, event, explicit, method, schedule_only=False, re
         incoming = {**undated_fields(incoming), **{k: None for k in SCHEDULE_FIELDS if k != "timingMode"}}
     if schedule_only:
         incoming = {k: v for k, v in incoming.items() if k in SCHEDULE_FIELDS}
-    if not cand.title:
+    if not cand.title or not retitle:
         incoming.pop("title", None)
     mode = task.data.get("timingMode")
     keep_session = (
@@ -2493,6 +2685,23 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
         subject_kind=kind,
         trusted=cand.trusted or bool(task) or faculty.approved(db, uid, record.sender_email),
     )
+    if (
+        not task
+        and outcome == "review"
+        and reason in UNSTATED_AUDIENCE
+        and cand.intent in WORK_INTENTS
+        and not cand.section.startswith("quoted")
+    ):
+        # A copy of work already tracked as the student's, from a faculty member not yet known,
+        # that names no audience: it is the same work, not a new question. Only an identical name
+        # and an unchanged date count, so another division's schedule never moves the task.
+        tracked = find_same_work(db, uid, cand, subject_id, ctx, strict=True)
+        if tracked:
+            task, subject_id = (
+                tracked,
+                subject_id or (str(tracked.subject_id) if tracked.subject_id else None),
+            )
+            outcome, reason, question = "applicable", TRACKED_COPY, None
     event.data = {**event.data, "targeting": {"outcome": outcome, "reason": reason}}
     if outcome == "mismatch":
         return done("ignored_mismatch")  # No task, review, completion change, or activity.
@@ -2643,10 +2852,13 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
         return done("ignored_unclassified")
     if task:
         requeue_receipts(db, uid, cand.identity_key)
-        explicit = cand.intent == "revision" or task_by_identity(db, uid, cand.identity_key) is not None
-        changes, conflicts = update_task(db, task, cand, event, explicit, cand.method)
+        tracked = task_by_identity(db, uid, cand.identity_key)
+        explicit = cand.intent == "revision" or tracked is not None
+        own = tracked is not None and tracked.id == task.id  # This task's own source may rename it.
+        changes, conflicts = update_task(db, task, cand, event, explicit, cand.method, retitle=own)
         reconcile_lms_receipts(db, uid, ctx, task)
-        if record.kind == "gmail_message" and outcome == "applicable":
+        if record.kind == "gmail_message" and outcome == "applicable" and reason != TRACKED_COPY:
+            # A copy matched only by name does not vouch for its sender's other mail.
             faculty.approve(db, uid, record.sender_email)
         if task.completed_at and cand.intent == "due_notice":
             history(db, task, "evidence_added", {"reason": "reminder did not change completion"}, event)
@@ -2690,14 +2902,17 @@ def apply_candidate(db, uid, ctx, record, index, cand, run):
         return done("review")
     # Subjects are linked automatically (see resolve_subjects); work matching none of the student's
     # subjects is kept without one rather than asking.
-    same = duplicate_of(db, uid, cand, subject_id, ctx)
+    same = find_same_work(db, uid, cand, subject_id, ctx)
     if same:
-        # The same work announced again (another source, or a reworded notice): one task, not a
-        # question. It is updated like any later notice; completion is never touched.
-        changes, _ = update_task(db, same, cand, event, False, cand.method)
+        # The same work announced again (another faculty member, a resend, a reminder, a follow-up
+        # or a moved deadline): one task, not a question. It is updated like any later notice; older
+        # notices never roll back newer values, manual edits stay, completion is never touched.
+        if subject_id and not same.subject_id and not cand.subject_id:
+            cand.subject_id = subject_id
+        changes, _ = update_task(db, same, cand, event, False, cand.method, retitle=False)
         settle_reviews(db, same, ("possible_duplicate",), "same_work_linked")
         return done("updated" if changes else "evidence_recorded")
-    similar = None if hidden else similar_task(db, uid, cand, subject_id)
+    similar = None if hidden else similar_task(db, uid, cand, subject_id, ctx)
     if similar:
         open_review(
             db,

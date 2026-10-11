@@ -576,6 +576,8 @@ def undo_merge(id: uuid.UUID, request: Request, user=User):
             # Restore the survivor's own completion unless the student decided again after merging.
             keep.completed_at = datetime_or_none(before.get("completedAt"))
             keep.data = {**keep.data, "completion": before.get("completion")}
+        # Details the survivor took from the absorbed task's newer notices go back, unless changed since.
+        interpret.restore_fields(keep, merge.data.get("adopted"))
         keep.status = effective_status(keep, now())
         gone.data = {k: v for k, v in gone.data.items() if k != "mergedInto"}
         keep.revision += 1

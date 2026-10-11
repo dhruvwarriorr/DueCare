@@ -671,7 +671,13 @@ def interpretation_unit(snap, token):
         return apply
 
     def finished(db, job, conn):
-        return not wait_for_interpretation(db, job, conn)
+        if wait_for_interpretation(db, job, conn):
+            return False
+        # Notices read in this sync can repeat each other (several faculty mailing one notice, a
+        # resend, a reminder), or repeat work interpreted concurrently: join work now listed twice.
+        interpret.merge_duplicates(db, conn.user_id)
+        interpret.tidy_reviews(db, conn.user_id)
+        return True
 
     return finished
 

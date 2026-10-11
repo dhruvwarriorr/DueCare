@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .config import settings
 
-PROMPT_VERSION = "branch-extract-6"
+PROMPT_VERSION = "branch-extract-7"
 TIMING_PROMPT_VERSION = "timing-resolve-1"
 log = logging.getLogger("duecare.ai")
 _deadline = ContextVar("ai_deadline", default=None)
@@ -185,6 +185,13 @@ Rules:
 - Extract only obligations supported by the current source sections or its title. candidateTasks
   are lookup context for matching, never source evidence. Never repeat their tasks as extracted
   items. Every item's evidence must be an exact excerpt from its stated source section or title.
+- The same work is often mailed by two or three faculty members, resent, forwarded, followed up,
+  reminded about, or rescheduled. When the source is such a copy, reminder, follow-up or change of
+  a candidateTask (same subject, same work: same kind and number such as "Assignment 2", "Exp 5",
+  "IA 1", same topic), still extract it and set matchTaskId to that task's id, whoever sent it and
+  however it is worded. Use intent "revision" when it changes the date, time, venue or details,
+  else "due_notice" (or "new_work" for a plain repeat). Never match different work: another
+  assignment/experiment number, another IA, another module, or a re-test, make-up or KT sitting.
 - Only two task types exist: assignment (work to submit) and test (quiz, internal assessment test,
   exam, practical exam, viva). Classify the real obligation, not a keyword. Events, clubs,
   registrations, forms, placements, results, and general announcements are intent "unknown".
