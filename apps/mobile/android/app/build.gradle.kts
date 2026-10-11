@@ -1,9 +1,14 @@
 import java.util.Properties
 
 // Release signing reads android/key.properties (never committed): storeFile, storePassword,
-// keyAlias, keyPassword. Without it, release builds fall back to the debug key for local runs.
+// keyAlias, keyPassword. Release builds require a permanent signing key.
 val keystore = Properties().apply {
     rootProject.file("key.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+if (gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }) {
+    require(listOf("storeFile", "storePassword", "keyAlias", "keyPassword").all {
+        !keystore.getProperty(it).isNullOrBlank()
+    }) { "Release signing requires android/key.properties; see apps/mobile/README.md." }
 }
 
 plugins {
@@ -51,7 +56,7 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 }

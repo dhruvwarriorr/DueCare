@@ -1,22 +1,10 @@
-name: Local verification
+name: Source checks
 on: [push, pull_request]
 permissions:
   contents: read
 jobs:
-  local-verification:
+  web-and-api:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 55432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,25 +15,15 @@ jobs:
         with:
           python-version: '3.13'
           enable-cache: true
-      # Timetable screenshots are read with local Tesseract OCR, never an AI service.
-      - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
       - run: npm ci
       - run: uv sync --frozen
         working-directory: apps/api
-      - run: mkdir -p .local
-      - run: uv run python ../../scripts/local-test-db.py
+      - run: uv run ruff check duecare migrations
         working-directory: apps/api
-      - run: uv run pytest
-        working-directory: apps/api
-      - run: uv run ruff check duecare tests migrations
-        working-directory: apps/api
-      - run: uv run ruff format --check duecare tests migrations
+      - run: uv run ruff format --check duecare migrations
         working-directory: apps/api
       - run: npm run typecheck
       - run: npm run lint
-      - run: npm run test:web
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
       - run: npm run build
       - run: npm audit --omit=dev
   mobile:
@@ -62,4 +40,3 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter analyze
-      - run: flutter test

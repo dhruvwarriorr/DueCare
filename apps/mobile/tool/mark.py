@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw, ImageChops
 
 GRAPHITE, ROSE, WHITE, PAPER = "#18171B", "#C21C58", "#FFFFFF", "#F4F5F8"
 S = 8  # supersampling
+PENCIL_POINTS = [(-10, -10), (64.2, -10), (39.8, 110), (-10, 110)]
 
 def stadium(d, box, fill=None, outline=None, width=0, scale=1):
     x0, y0, x1, y1 = [v * scale for v in box]
@@ -38,7 +39,7 @@ def mark(size, bg=None, ring=WHITE, fill=ROSE, d_out=WHITE, d_in=WHITE, extent=1
     inner = Image.new("L", (big, big), 0)
     ImageDraw.Draw(inner).rounded_rectangle(box((11.5, 27.5, 88.5, 72.5)), radius=22.5 * scale, fill=255)
     poly = Image.new("L", (big, big), 0)
-    ImageDraw.Draw(poly).polygon([(off[0] + x * scale, off[1] + y * scale) for x, y in [(0, 0), (62, 0), (40, 100), (0, 100)]], fill=255)
+    ImageDraw.Draw(poly).polygon([(off[0] + x * scale, off[1] + y * scale) for x, y in PENCIL_POINTS], fill=255)
     marked = ImageChops.multiply(inner, poly)
     img.paste(Image.new("RGBA", (big, big), fill), (0, 0), marked)
     # The printed D: one tone outside the mark, another inside it.
@@ -46,7 +47,8 @@ def mark(size, bg=None, ring=WHITE, fill=ROSE, d_out=WHITE, d_in=WHITE, extent=1
     img.paste(Image.new("RGBA", (big, big), d_out), (0, 0), ImageChops.subtract(D, marked))
     img.paste(Image.new("RGBA", (big, big), d_in), (0, 0), ImageChops.multiply(D, marked))
     # The bubble's printed outline.
-    d.rounded_rectangle(box((8, 24, 92, 76)), radius=26 * scale, outline=ring, width=int(7 * scale))
+    # SVG centres its 7-unit stroke on the path; Pillow draws it inside the box.
+    d.rounded_rectangle(box((4.5, 20.5, 95.5, 79.5)), radius=29.5 * scale, outline=ring, width=int(7 * scale))
     return img.resize((size, size), Image.LANCZOS)
 
 if __name__ == "__main__" and len(sys.argv) == 2:
@@ -63,7 +65,7 @@ if __name__ == "__main__" and len(sys.argv) == 2:
 
 RING = "M34,24 H66 A26,26 0 0 1 66,76 H34 A26,26 0 0 1 34,24 Z"
 INNER = "M34,27.5 H66 A22.5,22.5 0 0 1 66,72.5 H34 A22.5,22.5 0 0 1 34,27.5 Z"
-PENCIL = "M-10,-10 H64.2 L39.8,110 H-10 Z"
+PENCIL = "M" + " L".join(f"{x},{y}" for x, y in PENCIL_POINTS) + " Z"
 D = "M34,37 H53 A13,13 0 0 1 53,63 H34 Z M44,45 V55 H53 A5,5 0 0 0 53,45 Z"
 
 
@@ -133,5 +135,28 @@ def android(res):
     mark(288, bg=GRAPHITE, extent=0.74, rounded=True).save(res / "drawable/splash_mark.png")
 
 
-if __name__ == "__main__" and len(sys.argv) > 2 and sys.argv[2] == "android":
-    android(sys.argv[1])
+def web(app):
+    """Generate Next.js metadata icons: python tool/mark.py <app-dir> web."""
+    app = Path(app)
+    app.mkdir(parents=True, exist_ok=True)
+    (app / "icon.svg").write_text(f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <clipPath id="in"><path d="{INNER}"/></clipPath>
+  </defs>
+  <rect width="100" height="100" rx="23" fill="{GRAPHITE}"/>
+  <g transform="translate(13 13) scale(0.74)">
+    <path clip-path="url(#in)" d="{PENCIL}" fill="{ROSE}"/>
+    <path fill-rule="evenodd" fill="{WHITE}" d="{D}"/>
+    <path d="{RING}" fill="none" stroke="{WHITE}" stroke-width="7"/>
+  </g>
+</svg>
+''')
+    # iOS applies its own corner mask; supply an opaque, square image.
+    mark(180, bg=GRAPHITE, extent=0.74).convert("RGB").save(app / "apple-icon.png")
+
+
+if __name__ == "__main__" and len(sys.argv) > 2:
+    if sys.argv[2] == "android":
+        android(sys.argv[1])
+    elif sys.argv[2] == "web":
+        web(sys.argv[1])

@@ -16,3 +16,15 @@ playwright-report/
 test-results/
 .local/
 .vercel
+dist/
+*.apk
+*.aab
+*.jks
+*.keystore
+**/key.properties
+
+# Local project documentation; keep public READMEs and agent instructions tracked.
+/docs/
+/apps/web/DESIGN.md
+/apps/web/PRODUCT.md
+/apps/web/.impeccable/

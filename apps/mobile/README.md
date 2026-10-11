@@ -1,6 +1,6 @@
 # DueCare mobile
 
-The DueCare app for Android, built with Flutter (iOS is out of scope for now). It is a second client for the same FastAPI API and account as the web app: the same Somaiya Google sign-in, tasks, reviews, rules, sources and timetable, with DueCare's colours and status rules (`apps/web/DESIGN.md`) laid out as a native phone app: a bottom navigation bar, large collapsing titles, rounded cards and sheets, swipe actions and long-press selection.
+The DueCare app for Android, built with Flutter (iOS is out of scope for now). It is a second client for the same FastAPI API and account as the web app: the same Somaiya Google sign-in, tasks, reviews, rules, sources and timetable, with DueCare's colours and status rules  laid out as a native phone app: a bottom navigation bar, large collapsing titles, rounded cards and sheets, swipe actions and long-press selection.
 
 ## What it covers
 
@@ -36,8 +36,6 @@ To turn push on:
 
 Without these, the app still schedules reminders and the daily summary, and shows updates when it is opened. The Notifications screen says when instant updates are not set up.
 
-The configured DueCare Firebase project is `duecare-mobile-31712` (sender ID `407819843148`), with Android app `1:407819843148:android:29483290e339db73f4e6e9`. This checkout's ignored `firebase.json` contains the build values. The API uses the dedicated `duecare-fcm` service account with the Firebase Cloud Messaging API Admin role; its private key is kept outside source control, and `FCM_SERVICE_ACCOUNT` is a production Secret in Vercel. Builds must still include `--dart-define-from-file=firebase.json`; an older APK built without it cannot register for push.
-
 ## How it talks to the API
 
 The phone calls the API directly, not through the Next.js gateway:
@@ -61,7 +59,6 @@ lib/
   ui/                     theme tokens (Palette), DueCare icons, shared widgets, task rows and due items
   screens/                one file per screen
 tool/mark.py              renders the launcher, splash and notification icons from the mark's geometry
-test/                     unit tests (time, deadlines, rules, timetable draft, API, cache) and widget tests
 ```
 
 `core/query.dart` is a small query cache modelled on the web's TanStack Query. It provides keyed queries, invalidation by root key, paging and persistence, so screens follow the same reload rules as their web counterparts.
@@ -74,7 +71,7 @@ The app's mark is an answer bubble with a printed D, half filled in rose the way
 uv run --with pillow python tool/mark.py android/app/src/main/res android
 ```
 
-In-app icons come from `lib/ui/icons.dart`: one family on a 24-unit grid with a 1.7 rounded stroke, built from the answer sheet (bubbles, ruled lines, pencil, eraser). `filled: true` gives the selected state used in the navigation bar. System controls such as back, close, chevrons and the overflow menu stay Material, so Android behaves as people expect. The web app's logo is unchanged.
+In-app icons come from `lib/ui/icons.dart`: one family on a 24-unit grid with a 1.7 rounded stroke, built from the answer sheet (bubbles, ruled lines, pencil, eraser). `filled: true` gives the selected state used in the navigation bar. System controls such as back, close, chevrons and the overflow menu stay Material, so Android behaves as people expect. The web logo and favicon use the same bubble geometry.
 
 ## Setup
 
@@ -98,65 +95,17 @@ Debug builds use `http://10.0.2.2:8000`, the host computer as the Android emulat
 
 ### Release builds
 
+For a signed GitHub APK and checksum, run `scripts/build-android-release.sh` from the repository root. Signing requires the private `android/key.properties` file described below. Upload the APK and checksum from `dist/android/` to a GitHub draft release after reviewing the source.
+
 ```bash
 cd apps/mobile && flutter build appbundle --dart-define=API_URL=https://duecare-xi.vercel.app --dart-define-from-file=firebase.json
 ```
 
 Before publishing:
 
-- Android release signing reads `android/key.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`). Without this ignored file, local release builds use the debug key. Configure your upload key before publishing.
+- Android release signing reads `android/key.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`). Release builds require this ignored file and do not fall back to the debug key. Keep an encrypted backup of the key and passwords for future updates.
 - The application ID is `app.duecare.mobile`.
 - Google Play requires a privacy policy URL and data-safety answers. The app reads Gmail and Classroom through the API, and the restricted `gmail.readonly` scope needs Google verification before a public release (see the root README).
-
-## Tests
-
-### Real Google sign-in (interactive)
-
-With the production mobile callback configured, run this from `apps/mobile`:
-
-```bash
-flutter drive --no-dds --keep-app-running --driver=test_driver/mobile.dart \
-  --target=integration_test/real_sign_in_test.dart -d emulator-5554 \
-  --dart-define=API_URL=https://duecare-xi.vercel.app
-```
-
-Do not pass `DEV_SESSION`. To exercise a fresh Google login, sign out in the normal app first. A person completes Chrome setup, Google sign-in and consent in the emulator. The test waits up to 12 minutes, then checks the returned session with authenticated `/api/v1/me`, reloads secure storage, and confirms that the sign-in screen closes. If a session is already saved, it verifies session restoration after restarting instead. It calls the real backend and can connect Gmail/Classroom sources; it is separate from the synthetic suite below.
-
-After a successful login, add `--dart-define=REQUIRE_SAVED_SESSION=true` to require the saved session on the next app launch. This fails immediately if restoration is missing, without opening Google again. Keep `--keep-app-running`: without it Flutter's driver stops and uninstalls the test app, deleting its session and invalidating a subsequent persistence check. Install the normal APK with `adb install -r` afterward for manual use without deleting app data.
-
-```bash
-cd apps/mobile && flutter analyze && flutter test
-```
-
-The tests run without a network or device. Widget tests drive the app against a fake API on a phone-sized screen and turn off font downloads (`fetchFonts = false`).
-
-### Android emulator integration tests
-
-The device tests use the synthetic API on port 8001 and the isolated test database on port 55432. Start that database and provision it using the root README's test setup, then start the fixture API from `apps/api`:
-
-```bash
-uv run uvicorn tests.e2e_server:app --host 127.0.0.1 --port 8001 --no-access-log
-```
-
-From the repository root, seed the disposable account and generate an ignored debug configuration:
-
-```bash
-uv run --project apps/api python scripts/seed-mobile-test.py
-```
-
-Start an Android emulator, then run from `apps/mobile`:
-
-```bash
-flutter drive --no-dds --driver=test_driver/mobile.dart \
-  --target=integration_test/workspace_test.dart -d emulator-5554 \
-  --dart-define-from-file=../../.local/mobile-debug-defines.json
-```
-
-The seed script refuses databases outside the local test database and accounts outside the synthetic fixture. Rerun it before each device test to reopen the review question. Run the API suite before seeding; those tests share the isolated database. Keep the fixture API running throughout the device tests. The offline phase injects a transport failure, then restores real HTTP against that API.
-
-Screenshots are saved under `.local/mobile-qa/`. The session in the debug configuration is only for the synthetic account; never commit that file or use it for a release build. The emulator's notification permission can be granted in advance with `adb shell pm grant app.duecare.mobile android.permission.POST_NOTIFICATIONS` after the app is installed.
-
-See [the Android test report](../../docs/MobileTesting.md) for the verified flows and remaining device checks.
 
 ## Known limits
 

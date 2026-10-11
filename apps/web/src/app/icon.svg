@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <defs>
-    <clipPath id="in"><rect x="11.5" y="27.5" width="77" height="45" rx="22.5"/></clipPath>
+    <clipPath id="in"><path d="M34,27.5 H66 A22.5,22.5 0 0 1 66,72.5 H34 A22.5,22.5 0 0 1 34,27.5 Z"/></clipPath>
   </defs>
-  <rect width="100" height="100" rx="23" fill="#18171b"/>
+  <rect width="100" height="100" rx="23" fill="#18171B"/>
   <g transform="translate(13 13) scale(0.74)">
-    <polygon clip-path="url(#in)" points="-10,-10 64.2,-10 39.8,110 -10,110" fill="#c21c58"/>
-    <path fill-rule="evenodd" fill="#ffffff" d="M34,37 H53 A13,13 0 0 1 53,63 H34 Z M44,45 V55 H53 A5,5 0 0 0 53,45 Z"/>
-    <rect x="8" y="24" width="84" height="52" rx="26" fill="none" stroke="#ffffff" stroke-width="7"/>
+    <path clip-path="url(#in)" d="M-10,-10 L64.2,-10 L39.8,110 L-10,110 Z" fill="#C21C58"/>
+    <path fill-rule="evenodd" fill="#FFFFFF" d="M34,37 H53 A13,13 0 0 1 53,63 H34 Z M44,45 V55 H53 A5,5 0 0 0 53,45 Z"/>
+    <path d="M34,24 H66 A26,26 0 0 1 66,76 H34 A26,26 0 0 1 34,24 Z" fill="none" stroke="#FFFFFF" stroke-width="7"/>
   </g>
 </svg>
