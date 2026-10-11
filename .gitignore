@@ -24,7 +24,8 @@ dist/
 **/key.properties
 
 # Local project documentation; keep public READMEs and agent instructions tracked.
-/docs/
+/docs/*
+!/docs/screenshots/
 /apps/web/DESIGN.md
 /apps/web/PRODUCT.md
 /apps/web/.impeccable/
