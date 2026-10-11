@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     # Where Supabase returns the mobile app after Google sign-in (an app deep link). Empty turns
     # mobile sign-in off. It must also be on Supabase's Auth redirect allowlist.
     mobile_redirect_url: str = ""
+    # Firebase service account JSON (or its base64) for mobile push. Empty turns push off.
+    fcm_service_account: str = ""
     background_worker_mode: Literal["embedded", "external"] = "embedded"
     worker_dispatch_secret: str = ""
     # Source authorization: one Google OAuth web client, separate from Supabase login.

@@ -11,7 +11,16 @@ import 'review.dart';
 import 'sources.dart';
 import 'workspace.dart';
 
-/// New work, changes, and sync issues (apps/web activity.tsx).
+const _icons = {
+  'new_task': Icons.add_task_rounded,
+  'revision': Icons.edit_calendar_outlined,
+  'reopened': Icons.replay_rounded,
+  'review': Icons.inbox_outlined,
+  'auto_completed': Icons.task_alt_rounded,
+  'sync_issue': Icons.sync_problem_rounded,
+};
+
+/// New work, changes and sync issues, newest first.
 class ActivityScreen extends StatefulWidget {
   const ActivityScreen({super.key});
 
@@ -21,31 +30,27 @@ class ActivityScreen extends StatefulWidget {
 
 class _ActivityScreenState extends State<ActivityScreen> {
   String filter = '';
-  Object? error;
 
   Future<void> _run(Future<dynamic> Function() action) async {
     final services = AppScope.of(context);
     try {
       await action();
       await services.queries.invalidate(['activity']);
-      if (mounted) setState(() => error = null);
     } on ApiError catch (e) {
-      if (mounted) setState(() => error = e);
+      if (mounted) toast(context, e.message);
     }
   }
 
   void _open(ActivityItem item) {
     final api = AppScope.of(context).api;
     if (item.readAt == null) _run(() => api.send('PATCH', '/activity/${item.id}', body: {'read': true, 'revision': item.revision}));
-    final Widget? target = switch (item.targetType) {
-      'task' => null,
-      'review' => ReviewScreen(targetId: item.targetId),
-      _ => const SourcesScreen(),
-    };
-    if (item.targetType == 'task') {
-      openTask(context, item.targetId);
-    } else {
-      Navigator.push(context, MaterialPageRoute(builder: (_) => target!));
+    switch (item.targetType) {
+      case 'task':
+        openTask(context, item.targetId);
+      case 'review':
+        Navigator.push(context, MaterialPageRoute(builder: (_) => ReviewScreen(targetId: item.targetId)));
+      default:
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const SourcesScreen()));
     }
   }
 
@@ -53,112 +58,96 @@ class _ActivityScreenState extends State<ActivityScreen> {
   Widget build(BuildContext context) {
     final c = Palette.of(context);
     final api = AppScope.of(context).api;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Activity')),
-      body: QueryView(
-        queryKey: ['activity', filter],
-        poll: const Duration(seconds: 30),
-        pager: (cursor) => api.get('/activity?${Uri(queryParameters: {
-              if (filter.isNotEmpty) 'read': filter,
-              'cursor': ?cursor,
-            }).query}'),
-        builder: (context, q) {
-          final items = pageOf(q.data).items.map(ActivityItem.new).toList();
-          final unread = q.data is Map ? ((q.data as Map)['unreadCount'] as num? ?? 0).toInt() : 0;
-          return RefreshIndicator(
-            onRefresh: q.refetch,
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-              children: [
-                const SectionHeader(title: 'Activity', subtitle: 'New work, changes, and items that need your attention.'),
-                Row(
-                  children: [
-                    Expanded(
-                      child: SelectField<String>(
-                        value: filter,
-                        title: 'Show',
-                        options: const [('', 'All activity'), ('false', 'Unread'), ('true', 'Read')],
-                        onChanged: (v) => setState(() => filter = v),
-                      ),
+    return QueryView(
+      queryKey: ['activity', filter],
+      poll: const Duration(seconds: 30),
+      pager: (cursor) => api.get('/activity?${Uri(queryParameters: {
+            if (filter.isNotEmpty) 'read': filter,
+            'cursor': ?cursor,
+          }).query}'),
+      builder: (context, q) {
+        final items = pageOf(q.data).items.map(ActivityItem.new).toList();
+        final unread = q.data is Map ? ((q.data as Map)['unreadCount'] as num? ?? 0).toInt() : 0;
+        return PageScaffold(
+          title: 'Activity',
+          onRefresh: q.refetch,
+          actions: [
+            if (unread > 0)
+              IconButton(tooltip: 'Mark all as read', icon: const Icon(Icons.done_all_rounded), onPressed: () => _run(() => api.send('POST', '/activity/read-all'))),
+          ],
+          children: [
+            Wrap(spacing: 8, children: [
+              for (final (value, label) in [('', 'All'), ('false', 'Unread${unread > 0 ? ' ($unread)' : ''}'), ('true', 'Read')])
+                ChoiceChip(label: Text(label), selected: filter == value, onSelected: (_) => setState(() => filter = value)),
+            ]),
+            const SizedBox(height: 12),
+            ErrorNotice(q.error, retry: q.refetch),
+            if (q.isPending)
+              const Loading('Loading activity…')
+            else if (items.isEmpty)
+              const EmptyState(icon: Icons.notifications_none_rounded, title: 'Nothing here yet', body: 'Updates appear as you add work and sources sync.')
+            else
+              for (final item in items)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Dismissible(
+                    key: ValueKey('activity-${item.id}-${item.readAt}'),
+                    direction: DismissDirection.horizontal,
+                    background: Container(
+                      decoration: BoxDecoration(color: c.inkTint, borderRadius: BorderRadius.circular(Radii.card)),
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.symmetric(horizontal: 22),
+                      child: Text(item.readAt == null ? 'Mark read' : 'Mark unread', style: const TextStyle(fontWeight: FontWeight.w800)),
                     ),
-                    if (unread > 0) ...[
-                      const SizedBox(width: 8),
-                      DueButton(
-                        label: 'Mark all read',
-                        icon: Icons.done_all,
-                        variant: Variant.outline,
-                        onPressed: () => _run(() => api.send('POST', '/activity/read-all')),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 12),
-                ErrorNotice(q.error ?? error, retry: q.refetch),
-                if (q.isPending)
-                  const Loading('Loading activity…')
-                else if (items.isEmpty)
-                  const EmptyState(
-                    icon: Icons.notifications_none,
-                    title: 'No activity here yet',
-                    body: 'Updates will appear as you add work and sync sources.',
-                  )
-                else
-                  Container(
-                    decoration: BoxDecoration(border: Border.all(color: c.inkLine), color: c.sheet),
-                    child: Column(
-                      children: [
-                        for (final item in items)
-                          Container(
-                            decoration: BoxDecoration(
-                              color: item.readAt == null ? c.inkWash : null,
-                              border: Border(bottom: BorderSide(color: c.inkRule)),
-                            ),
-                            padding: const EdgeInsets.fromLTRB(12, 12, 8, 6),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Icon(Icons.notifications_none, size: 18, color: item.readAt == null ? c.ink : c.graphite2),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(item.message, style: TextStyle(fontWeight: item.readAt == null ? FontWeight.w600 : FontWeight.w400)),
-                                      Text(
-                                        '${formatTime(item.createdAt)} · ${item.readAt != null ? 'Read' : 'Unread'}',
-                                        style: TextStyle(fontSize: 12.5, color: c.graphite2),
-                                      ),
-                                      Row(
-                                        children: [
-                                          DueButton(label: 'Open ↗', small: true, variant: Variant.ghost, onPressed: () => _open(item)),
-                                          DueButton(
-                                            label: item.readAt != null ? 'Mark unread' : 'Mark read',
-                                            small: true,
-                                            variant: Variant.ghost,
-                                            onPressed: () => _run(() => api.send('PATCH', '/activity/${item.id}',
-                                                body: {'read': item.readAt == null, 'revision': item.revision})),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
+                    confirmDismiss: (_) async {
+                      await _run(() => api.send('PATCH', '/activity/${item.id}', body: {'read': item.readAt == null, 'revision': item.revision}));
+                      return false;
+                    },
+                    child: Material(
+                      color: item.readAt == null ? c.sheet : c.sheet.withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(Radii.card),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: () => _open(item),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(color: item.readAt == null ? c.inkTint : c.inkWash, borderRadius: BorderRadius.circular(12)),
+                                child: Icon(_icons[item.json['eventType']] ?? Icons.notifications_none_rounded, color: c.ink, size: 21),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      item.message,
+                                      style: TextStyle(fontWeight: item.readAt == null ? FontWeight.w700 : FontWeight.w500, height: 1.35),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(formatTime(item.createdAt), style: TextStyle(fontSize: 12.5, color: c.graphite2)),
+                                  ],
                                 ),
-                              ],
-                            ),
+                              ),
+                              if (item.readAt == null)
+                                Container(width: 9, height: 9, margin: const EdgeInsets.only(top: 6, left: 8), decoration: BoxDecoration(color: c.ink, shape: BoxShape.circle)),
+                            ],
                           ),
-                      ],
+                        ),
+                      ),
                     ),
                   ),
-                if (q.hasMore)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: DueButton(label: 'Load more activity', variant: Variant.outline, onPressed: q.fetchingMore ? null : q.loadMore),
-                  ),
-              ],
-            ),
-          );
-        },
-      ),
+                ),
+            if (q.hasMore)
+              Center(child: TextButton(onPressed: q.fetchingMore ? null : q.loadMore, child: const Text('Show older'))),
+          ],
+        );
+      },
     );
   }
 }

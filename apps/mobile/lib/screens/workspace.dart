@@ -1,11 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app.dart';
 import '../core/api.dart';
 import '../core/models.dart';
 import '../core/query.dart';
+import '../notifications/planner.dart' as planner;
+import '../notifications/prefs.dart';
 import '../state/data.dart';
 import '../state/services.dart';
 import '../ui/theme.dart';
@@ -14,6 +17,7 @@ import 'activity.dart';
 import 'more.dart';
 import 'review.dart';
 import 'settings.dart';
+import 'sources.dart';
 import 'task_detail.dart';
 import 'task_editor.dart';
 import 'tasks.dart';
@@ -37,18 +41,16 @@ class Workspace extends StatelessWidget {
         if (p != null) WidgetsBinding.instance.addPostFrameCallback((_) => onTheme(p.theme));
         if (p == null) {
           return Scaffold(
-            body: SafeArea(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Logo(size: 34),
-                      const SizedBox(height: 24),
-                      if (q.error == null) const Loading('Opening your workspace…') else ErrorNotice(q.error, retry: q.refetch),
-                    ],
-                  ),
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Logo(size: 40),
+                    const SizedBox(height: 28),
+                    if (q.error == null) const Loading('Opening your workspace…') else ErrorNotice(q.error, retry: q.refetch),
+                  ],
                 ),
               ),
             ),
@@ -68,10 +70,10 @@ class Shell extends StatefulWidget {
   final DateTime? savedAt;
 
   @override
-  State<Shell> createState() => _ShellState();
+  State<Shell> createState() => ShellState();
 }
 
-class _ShellState extends State<Shell> with WidgetsBindingObserver {
+class ShellState extends State<Shell> with WidgetsBindingObserver {
   int tab = 0;
   // Tabs build when first opened, then keep their state.
   final Set<int> opened = {0};
@@ -92,14 +94,54 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
 
   Future<void> _start() async {
     final s = services;
-    s.reminders.onOpenTask = (id) => openTask(navigatorKey.currentContext ?? context, id);
-    final launch = s.reminders.takeLaunchTask();
-    if (launch != null && mounted) openTask(context, launch);
+    s.notifier.onTap = (payload) => openPayload(payload);
+    final launch = s.notifier.takeLaunch();
+    if (launch != null && mounted) openPayload(launch);
     unawaited(s.sync.start());
     _watch = Timer.periodic(const Duration(seconds: 20), (_) => _checkChanges());
     await _checkChanges();
-    await s.reminders.askOnce();
-    await s.reminders.refresh(s.api);
+    await _notifications();
+  }
+
+  /// Start notifying for this account: its choices, permission (asked once), push and reminders.
+  Future<void> _notifications() async {
+    final s = services;
+    try {
+      await s.notifier.begin(widget.profile.id);
+      NotifyPrefs prefs;
+      try {
+        prefs = await s.loadNotifyPrefs();
+      } on ApiError {
+        prefs = await NotifyPrefs.load();
+      }
+      final store = await SharedPreferences.getInstance();
+      if (!(store.getBool('duecare.notify.asked') ?? false)) {
+        await store.setBool('duecare.notify.asked', true);
+        if (!s.push.available) await s.notifier.requestPermission();
+      }
+      await s.push.register(s.api, onPush: () => s.queries.invalidate(reloadRoots));
+      await s.notifier.refresh(s.api, prefs: prefs);
+    } catch (e) {
+      debugPrint('Notifications unavailable: ${e.runtimeType}');
+    }
+  }
+
+  /// Open what a notification is about.
+  void openPayload(String? payload) {
+    final nav = navigatorKey.currentState;
+    if (nav == null || !mounted) return;
+    final r = planner.route(payload);
+    switch (r.kind) {
+      case 'task' when r.id != null:
+        nav.push(MaterialPageRoute(builder: (_) => TaskDetailScreen(id: r.id!)));
+      case 'review' when r.id != null:
+        nav.push(MaterialPageRoute(builder: (_) => ReviewScreen(targetId: r.id)));
+      case 'sources':
+        nav.push(MaterialPageRoute(builder: (_) => const SourcesScreen()));
+      default:
+        nav.popUntil((route) => route.isFirst);
+        go(0);
+    }
   }
 
   /// Poll a tiny change stamp; reload data only when it moves (apps/web/src/lib/offline.tsx).
@@ -110,7 +152,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       final version = stamp['version'] as String;
       if (_version != null && _version != version) {
         await s.queries.invalidate(reloadRoots);
-        unawaited(s.reminders.refresh(s.api));
+        unawaited(s.notifier.refresh(s.api));
       }
       _version = version;
       if (!reachable && mounted) setState(() => reachable = true);
@@ -136,11 +178,11 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  void go(int index, {String status = ''}) {
+  void go(int index, {String? status}) {
     setState(() {
       tab = index;
       opened.add(index);
-      if (index == 1) {
+      if (index == 1 && status != null) {
         taskStatus = status;
         taskListGeneration++;
       }
@@ -153,137 +195,69 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     final api = services.api;
     final p = widget.profile;
     final pages = [
-      WeekScreen(onTasks: (s) => go(1, status: s), onReview: () => go(2)),
+      WeekScreen(profile: p, onTasks: (s) => go(1, status: s), onReview: () => go(2)),
       TasksScreen(key: ValueKey(taskListGeneration), initialStatus: taskStatus, batch: p.generalBatch),
       const ReviewScreen(),
       MoreScreen(profile: p),
     ];
     return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 16,
-        title: const Logo(size: 26),
-        actions: [
-          QueryView(
-            queryKey: Keys.activityCount,
-            fetch: () => api.get('/activity?limit=1'),
-            builder: (context, q) {
-              final unread = q.data is Map ? ((q.data as Map)['unreadCount'] as num? ?? 0).toInt() : 0;
-              return IconButton(
-                tooltip: 'Activity${unread > 0 ? ', $unread unread' : ''}',
-                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ActivityScreen())),
-                icon: Badge(
-                  isLabelVisible: unread > 0,
-                  backgroundColor: c.bad,
-                  textColor: c.onBad,
-                  label: Text(unread > 99 ? '99+' : '$unread'),
-                  child: const Icon(Icons.notifications_none),
-                ),
-              );
-            },
-          ),
-          const SizedBox(width: 6),
-        ],
-      ),
       body: Column(
         children: [
-          if (!reachable) OfflineBanner(savedAt: widget.savedAt),
           Expanded(
             child: IndexedStack(
               index: tab,
               children: [for (final (i, page) in pages.indexed) opened.contains(i) ? page : const SizedBox.shrink()],
             ),
           ),
+          if (!reachable) OfflineBanner(savedAt: widget.savedAt),
         ],
       ),
-      bottomNavigationBar: _BottomBar(
-        tab: tab,
-        onTab: go,
-        onAdd: () => openEditor(context),
+      bottomNavigationBar: QueryView(
+        queryKey: Keys.overview,
+        fetch: () => api.get('/overview'),
+        builder: (context, q) {
+          final review = q.data is Map ? ((q.data as Map)['reviewCount'] as num? ?? 0).toInt() : 0;
+          return DecoratedBox(
+            decoration: BoxDecoration(border: Border(top: BorderSide(color: c.inkRule))),
+            child: NavigationBar(
+              selectedIndex: tab,
+              onDestinationSelected: go,
+              destinations: [
+                const NavigationDestination(icon: Icon(Icons.view_week_outlined), selectedIcon: Icon(Icons.view_week), label: 'Week'),
+                const NavigationDestination(icon: Icon(Icons.checklist_rounded), selectedIcon: Icon(Icons.checklist_rounded), label: 'Tasks'),
+                NavigationDestination(
+                  icon: Badge(isLabelVisible: review > 0, label: Text('$review'), child: const Icon(Icons.inbox_outlined)),
+                  selectedIcon: Badge(isLabelVisible: review > 0, label: Text('$review'), child: const Icon(Icons.inbox)),
+                  label: 'Review',
+                ),
+                const NavigationDestination(icon: Icon(Icons.grid_view_outlined), selectedIcon: Icon(Icons.grid_view_rounded), label: 'More'),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
 }
 
-/// The fixed bottom bar: Week, Tasks, a graphite add button, Review, More.
-class _BottomBar extends StatelessWidget {
-  const _BottomBar({required this.tab, required this.onTab, required this.onAdd});
-
-  final int tab;
-  final ValueChanged<int> onTab;
-  final VoidCallback onAdd;
+/// The bell in a page's app bar, with the unread count.
+class ActivityBell extends StatelessWidget {
+  const ActivityBell({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final c = Palette.of(context);
     final api = AppScope.of(context).api;
-    Widget item(int index, String label, {Widget? badge}) => Expanded(
-          child: InkWell(
-            onTap: () => onTab(index),
-            child: Container(
-              height: 60,
-              decoration: BoxDecoration(
-                border: Border(top: BorderSide(color: tab == index ? c.graphite : Colors.transparent, width: 4)),
-              ),
-              alignment: Alignment.center,
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              // Large text settings shrink the label rather than clip it.
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(label, style: TextStyle(fontSize: 15, fontWeight: tab == index ? FontWeight.w700 : FontWeight.w500)),
-                    ?badge,
-                  ],
-                ),
-              ),
-            ),
-          ),
+    return QueryView(
+      queryKey: Keys.activityCount,
+      fetch: () => api.get('/activity?limit=1'),
+      builder: (context, q) {
+        final unread = q.data is Map ? ((q.data as Map)['unreadCount'] as num? ?? 0).toInt() : 0;
+        return IconButton(
+          tooltip: 'Activity${unread > 0 ? ', $unread unread' : ''}',
+          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ActivityScreen())),
+          icon: Badge(isLabelVisible: unread > 0, label: Text(unread > 99 ? '99+' : '$unread'), child: const Icon(Icons.notifications_none_rounded)),
         );
-    return Container(
-      decoration: BoxDecoration(color: c.sheet, border: Border(top: BorderSide(color: c.graphite))),
-      child: SafeArea(
-        top: false,
-        child: Row(
-          children: [
-            item(0, 'Week'),
-            item(1, 'Tasks'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Semantics(
-                button: true,
-                label: 'Add task',
-                child: Material(
-                  color: c.graphite,
-                  child: InkWell(
-                    onTap: onAdd,
-                    child: SizedBox(width: 52, height: 44, child: Icon(Icons.add, color: c.onGraphite)),
-                  ),
-                ),
-              ),
-            ),
-            item(
-              2,
-              'Review',
-              badge: QueryView(
-                queryKey: Keys.overview,
-                fetch: () => api.get('/overview'),
-                builder: (context, q) {
-                  final count = q.data is Map ? ((q.data as Map)['reviewCount'] as num? ?? 0).toInt() : 0;
-                  if (count == 0) return const SizedBox.shrink();
-                  return Container(
-                    margin: const EdgeInsets.only(left: 6),
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                    color: c.bad,
-                    child: Text('$count', style: display(context, 12, color: c.onBad)),
-                  );
-                },
-              ),
-            ),
-            item(3, 'More'),
-          ],
-        ),
-      ),
+      },
     );
   }
 }

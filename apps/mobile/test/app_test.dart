@@ -56,9 +56,17 @@ final missed = task('t2', 'OS write-up', status: 'missed', dueAt: now.subtract(c
 
 http.Response json(Object body, [int status = 200]) => http.Response(jsonEncode(body), status, headers: {'content-type': 'application/json'});
 
+/// Every request the fake server received, newest last.
+final requests = <http.Request>[];
+Map<String, dynamic> notifySettings = {};
+
 Future<http.Response> fakeApi(http.Request r) async {
+  requests.add(r);
   final path = r.url.path.replaceFirst('/api/v1', '');
   final page = {'items': <Object>[], 'nextCursor': null};
+  if (path == '/notification-settings' && r.method == 'PUT') {
+    notifySettings = (jsonDecode(r.body) as Map)['settings'] as Map<String, dynamic>;
+  }
   return switch (path) {
     '/me' => json(profile),
     '/changes' => json({'version': 'v1', 'at': now.toIso8601String()}),
@@ -87,6 +95,11 @@ Future<http.Response> fakeApi(http.Request r) async {
         ],
       }),
     '/connections' => json(page),
+    '/notification-settings' => json({
+        'revision': 1,
+        'settings': {'reminderLeads': [1440, 60], ...notifySettings},
+        'push': {'configured': false, 'devices': 0},
+      }),
     _ => json(page),
   };
 }
@@ -119,6 +132,11 @@ Future<void> settle(WidgetTester tester) =>
 void main() {
   setUpAll(() => fetchFonts = false);
 
+  setUp(() {
+    requests.clear();
+    notifySettings = {};
+  });
+
   testWidgets('signed out, the app offers Google sign-in', (tester) async {
     FlutterSecureStorage.setMockInitialValues({});
     SharedPreferences.setMockInitialValues({});
@@ -127,8 +145,8 @@ void main() {
     phone(tester);
     await tester.pumpWidget(DueCareApp(services: services));
     await settle(tester);
-    expect(find.text('Everything due, on one week.', findRichText: true), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Continue with Google'), 200);
+    expect(find.text('Everything due,\nin one place.', findRichText: true), findsOneWidget);
+    expect(find.text('Continue with Google'), findsOneWidget);
     expect(find.textContaining('@somaiya.edu'), findsOneWidget);
     await finish(tester);
   });
@@ -139,43 +157,85 @@ void main() {
     await tester.pumpWidget(DueCareApp(services: services));
     await settle(tester);
 
-    expect(find.text('NEXT DUE'), findsOneWidget);
+    expect(find.text('Next due'), findsOneWidget);
     expect(find.text('DBMS ER diagram'), findsWidgets);
     expect(find.text('This week'), findsOneWidget);
-    expect(find.text('to review'), findsOneWidget);
-    expect(find.text('Classes'.toUpperCase()), findsOneWidget);
+    expect(find.text('To review'), findsOneWidget);
+    expect(find.text('Classes'), findsOneWidget);
     expect(find.text('09:00'), findsOneWidget);
     expect(find.text('Theory · 601'), findsOneWidget);
+    // Notification choices are fetched and kept for the background.
+    expect(requests.any((r) => r.url.path.endsWith('/notification-settings')), isTrue);
 
     await tester.tap(find.text('Tasks').last);
     await settle(tester);
-    expect(find.text('All tasks'), findsOneWidget);
     expect(find.text('OS write-up'), findsOneWidget);
-    expect(find.text('MISSED'), findsWidgets);
+    expect(find.text('missed'), findsWidgets);
 
-    // The row title carries the HIGH priority flag beside it.
-    await tester.tap(find.textContaining('DBMS ER diagram').last);
+    await tester.tap(find.text('DBMS ER diagram').last);
     await settle(tester);
-    expect(find.text('Task details'), findsOneWidget);
+    expect(find.text('Mark as done'), findsOneWidget);
     final instructions = find.byWidgetPredicate((w) => w is SelectableText && w.data == 'Draw the ER diagram for the library system.');
     await tester.scrollUntilVisible(instructions, 200, scrollable: find.byType(Scrollable).last);
     expect(instructions, findsOneWidget);
-    expect(find.text('Mark completed'), findsOneWidget);
+    await tester.tap(find.text('Mark as done'));
+    await settle(tester);
+    final patch = requests.lastWhere((r) => r.method == 'PATCH');
+    expect(jsonDecode(patch.body), {'revision': 1, 'status': 'completed'});
     await finish(tester);
   });
 
-  testWidgets('More lists every other part of the app and the account', (tester) async {
+  testWidgets('tasks swipe to done, and long-press selects for bulk actions', (tester) async {
+    final services = await signedIn();
+    phone(tester);
+    await tester.pumpWidget(DueCareApp(services: services));
+    await settle(tester);
+    await tester.tap(find.text('Tasks').last);
+    await settle(tester);
+
+    await tester.drag(find.text('DBMS ER diagram').last, const Offset(500, 0));
+    await settle(tester);
+    final patch = requests.lastWhere((r) => r.method == 'PATCH');
+    expect(patch.url.path, '/api/v1/tasks/t1');
+    expect(jsonDecode(patch.body)['status'], 'completed');
+    expect(find.text('Marked done: DBMS ER diagram'), findsOneWidget);
+
+    await tester.longPress(find.text('OS write-up'));
+    await settle(tester);
+    expect(find.text('1 selected'), findsOneWidget);
+    await tester.tap(find.text('Done').last);
+    await settle(tester);
+    final bulk = requests.lastWhere((r) => r.url.path.endsWith('/tasks/bulk'));
+    expect(jsonDecode(bulk.body), {'taskIds': ['t2'], 'action': 'complete'});
+    await finish(tester);
+  });
+
+  testWidgets('More lists every part of the app; notification choices save', (tester) async {
     final services = await signedIn();
     phone(tester);
     await tester.pumpWidget(DueCareApp(services: services));
     await settle(tester);
     await tester.tap(find.text('More'));
     await settle(tester);
-    for (final label in ['Subjects', 'Activity', 'Profile & privacy', 'Sources', 'Rules', 'Sign out']) {
+    for (final label in ['Subjects', 'Activity', 'Notifications', 'Profile', 'Sources', 'Rules', 'Privacy & data', 'Sign out']) {
       expect(find.text(label), findsWidgets);
     }
     expect(find.text('Asha Rao'), findsOneWidget);
     expect(find.text('SY · COMPS · Div A · Batch A1'), findsOneWidget);
+
+    await tester.tap(find.text('Notifications'));
+    await settle(tester);
+    expect(find.text('Remind me before deadlines'), findsOneWidget);
+    expect(find.text('Instant updates'), findsOneWidget);
+    await tester.tap(find.text('30 minutes before'));
+    await tester.tap(find.text('Morning summary'));
+    await tester.pump(const Duration(seconds: 1));
+    await settle(tester);
+    final put = requests.lastWhere((r) => r.method == 'PUT');
+    final saved = (jsonDecode(put.body) as Map)['settings'] as Map;
+    expect(saved['reminderLeads'], [1440, 60, 30]);
+    expect(saved['digest'], isTrue);
+    expect(find.text('At 08:00'), findsOneWidget);
     await finish(tester);
   });
 }

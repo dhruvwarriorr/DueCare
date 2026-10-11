@@ -47,6 +47,8 @@ def activity_out(item):
         "createdAt": item.created_at.isoformat(),
         "readAt": item.read_at.isoformat() if item.read_at else None,
         "revision": item.revision,
+        # The student's own change on another device; not announced by push.
+        "byStudent": item.event_key.startswith("student:"),
     }
 
 

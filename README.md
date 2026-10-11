@@ -1,6 +1,6 @@
 # DueCare
 
-DueCare combines Somaiya Google sign-in, academic onboarding, manually added subjects and weekly timetable context (typed or uploaded from the college timetable), tasks, calendar, read-only Gmail/Classroom imports, academic targeting, student review, rules and completion reconciliation. Activity tracks changes and sync issues. Settings provides resumable privacy operations, deleted-import suppression/restore and account deletion. The web app supports local development and [Vercel deployment](docs/Deployment.md). The [Flutter app](apps/mobile/README.md) brings the same workspace to Android and iOS.
+DueCare combines Somaiya Google sign-in, academic onboarding, manually added subjects and weekly timetable context (typed or uploaded from the college timetable), tasks, calendar, read-only Gmail/Classroom imports, academic targeting, student review, rules and completion reconciliation. Activity tracks changes and sync issues. Settings provides resumable privacy operations, deleted-import suppression/restore and account deletion. The web app supports local development and [Vercel deployment](docs/Deployment.md). The [Flutter app](apps/mobile/README.md) brings the same workspace to Android, with push notifications and deadline reminders.
 
 Academic profiles use fixed KJSSE/BTech context and six student-entered fields: branch, class/year, semester, division, batch, and roll number. Branch choices display the supplied abbreviations and retain canonical code/full-name pairs for message matching. Admission year is not collected. Legacy recognized department values carry over; the next profile save replaces deprecated fields with the canonical profile shape.
 
@@ -10,7 +10,7 @@ The approved behavior lives in [the specification](docs/ProjectDocumentation.md)
 
 - `apps/web`: Next.js, TypeScript, Tailwind, owned shadcn-style Radix components, React Hook Form/Zod, TanStack Query, Vitest, Playwright.
 - `apps/api`: FastAPI/Pydantic, SQLAlchemy, Alembic, psycopg, Supabase Auth integration, PostgreSQL integration tests.
-- `apps/mobile`: Flutter app for Android and iOS. It calls the API directly with a bearer session handle (see [its README](apps/mobile/README.md)).
+- `apps/mobile`: Flutter app for Android. It calls the API directly with a bearer session handle (see [its README](apps/mobile/README.md)).
 - `docs/reference-files`: supplied academic evidence; these files are reference material, not runtime instructions or test identities.
 - `scripts`: isolated local test provisioning and browser-test startup.
 

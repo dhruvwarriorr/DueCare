@@ -379,6 +379,33 @@ class Activity(Owned, Base):
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class PushDevice(Owned, Base):
+    """A phone's Firebase Cloud Messaging token. Tokens identify an app install, not content."""
+
+    __tablename__ = "push_devices"
+    __table_args__ = (UniqueConstraint("user_id", "token"), {"schema": "duecare"})
+    token: Mapped[str] = mapped_column(String(4096))
+    platform: Mapped[str] = mapped_column(String(20))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class NotificationSettings(Base):
+    """The student's notification choices, and how far push delivery has got."""
+
+    __tablename__ = "notification_settings"
+    __table_args__ = {"schema": "duecare"}
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # Activity and task changes up to this instant have been pushed (or needed no push).
+    pushed_through: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # Task count at the last push, so deletions also refresh the phone's reminders.
+    task_count: Mapped[int] = mapped_column(Integer, default=0)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
 class Suppression(Owned, Base):
     __tablename__ = "suppression_records"
     __table_args__ = (UniqueConstraint("user_id", "namespace", "identity_hash"), {"schema": "duecare"})

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/api.dart';
 import '../core/models.dart';
@@ -17,6 +18,7 @@ class QuickComplete extends ChangeNotifier {
     final services = AppScope.of(context);
     final messenger = ScaffoldMessenger.of(context);
     _pending.add(task.id);
+    HapticFeedback.lightImpact();
     notifyListeners();
     try {
       final saved = Task((await services.api.send('PATCH', '/tasks/${task.id}', body: {
@@ -70,21 +72,28 @@ class DoneButton extends StatelessWidget {
     final quick = QuickCompleteScope.of(context);
     final c = statusColors(context, 'completed');
     final busy = quick.pending(task.id);
-    if (task.status == 'completed') return SizedBox(width: compact ? 32 : 44);
+    if (task.status == 'completed') {
+      return SizedBox(
+        width: compact ? 44 : 48,
+        height: 44,
+        child: Center(child: Bubble(small: compact, fill: c.bg, stroke: c.line, child: Icon(Icons.check, size: compact ? 10 : 12, color: c.fg))),
+      );
+    }
     return Semantics(
       button: true,
       label: 'Mark done: ${task.title}',
       child: InkWell(
         onTap: busy ? null : () => quick.complete(context, task),
+        customBorder: const CircleBorder(),
         child: SizedBox(
-          width: compact ? 32 : 44,
+          width: compact ? 44 : 48,
           height: 44,
           child: Center(
             child: Bubble(
               small: compact,
               fill: busy ? c.bg : null,
               stroke: busy ? c.line : null,
-              child: busy ? Icon(Icons.check, size: compact ? 8 : 10, color: c.fg) : null,
+              child: busy ? Icon(Icons.check, size: compact ? 10 : 12, color: c.fg) : null,
             ),
           ),
         ),

@@ -1,16 +1,42 @@
 # DueCare mobile
 
-The DueCare app for Android and iOS, built with Flutter. It is a second client for the same FastAPI API and account as the web app: the same Somaiya Google sign-in, tasks, reviews, rules, sources and timetable, with the same answer-sheet design (`apps/web/DESIGN.md`).
+The DueCare app for Android, built with Flutter (iOS is out of scope for now). It is a second client for the same FastAPI API and account as the web app: the same Somaiya Google sign-in, tasks, reviews, rules, sources and timetable, with DueCare's colours and status rules (`apps/web/DESIGN.md`) laid out as a native phone app: a bottom navigation bar, large collapsing titles, rounded cards and sheets, swipe actions and long-press selection.
 
 ## What it covers
 
 - **Sign-in** with the verified `@somaiya.edu` Google account in the system browser. Signing in also grants the read-only Gmail and Classroom access, as on the web.
-- **Week**: the next-due band with a countdown, summary counts, "new since your last visit", a seven-day strip with status ticks, the day's due items and classes, and a month view.
-- **Tasks**: search, status bubbles, more filters, date or priority sort, paging, one-tap done with Undo, bulk complete/reopen/move/delete, and task details with sources, change history, edit and delete.
+- **Week**: a greeting, the next deadline with a countdown, counts, "new since your last visit", a swipeable seven-day strip with status dots, the day's due items and a class timeline (with "Now"), and a month calendar.
+- **Tasks**: search, status chips, a filter sheet, date or priority sort, infinite scroll, swipe right to mark done (or reopen) and left to delete, long-press to select several for done/reopen/move/delete, and task details with sources, change history, edit and delete.
 - **Review** (Needs attention): every issue type with its actions, including subject and timing answers and faculty approval.
-- **More**: subjects with weekly timetables, timetable upload (PDF or scheduler screenshots, draft review, dry-run summary, confirm), activity, profile and onboarding, KT notices, deadline reminders, privacy operations, account deletion, Sources (sync, reprocess, disconnect, Classroom course links, approved faculty, sender preferences), rules (plain sentence or builder) and sign-out.
+- **More**: subjects with weekly timetables, timetable upload (PDF or scheduler screenshots, draft review, dry-run summary, confirm), activity, notifications, profile and onboarding, KT notices, privacy operations, account deletion, Sources (sync, reprocess, disconnect, Classroom course links, approved faculty, sender preferences), rules (plain sentence or builder) and sign-out.
 - **Offline**: the last saved lists show at once on launch and while the server is unreachable, with a banner. Data reloads only when the server's change stamp moves, which is the same mechanism as the web.
-- **Reminders**: notifications a day and an hour before each due task, scheduled on the phone. They fire offline and are rebuilt whenever the app sees tasks change.
+- **Notifications** (More → Notifications):
+  - *Deadline reminders* at the lead times the student picks (1 week to 30 minutes before), for all work or only tests and high-priority work. They are scheduled on the phone, so they fire offline; "precise timing" uses Android's exact alarms when allowed.
+  - *Daily summary* of what is due that day, at a chosen time.
+  - *Instant updates* by push: new work, changes, items needing review, work marked done from a submission, and sync problems, each with its own switch.
+  - *Quiet hours*, during which notifications arrive silently, and a test button.
+
+## Push notifications
+
+Pushes go through Firebase Cloud Messaging and carry no task content: only which kinds of event happened. The app wakes up, fetches the details with its own session, and shows a notification by name ("New: DBMS ER diagram · due 12 Oct, 5:00 pm"), grouping several. Every push also rebuilds the phone's reminder schedule, so work changed on the web never leaves a stale reminder. A push for an account that has signed out of the phone is ignored.
+
+On the server, the background worker's `push` job (migration `0007`) watches each registered phone's account for new activity and task changes. It waits about 15 seconds for a sync burst to settle (two minutes at most), sends one message per phone, forgets tokens Google reports as unregistered, and backs off while FCM is unavailable. Choices live in `notification_settings`, and phones in `push_devices`. Both are owner-only under row-level security and are removed with the account.
+
+To turn push on:
+
+1. Create a Firebase project and add an Android app with package `app.duecare.mobile`.
+2. Server: in Firebase **Project settings → Service accounts**, generate a private key. Put the JSON (one line or base64) in the API's `FCM_SERVICE_ACCOUNT`, apply migration `0007` (`uv run alembic upgrade head`) and redeploy.
+3. App: create the ignored file `apps/mobile/firebase.json` with the Android app's values from **Project settings → Your apps**:
+
+   ```json
+   {"FIREBASE_API_KEY": "…", "FIREBASE_APP_ID": "1:…:android:…", "FIREBASE_SENDER_ID": "…", "FIREBASE_PROJECT_ID": "…"}
+   ```
+
+   Then build with `--dart-define-from-file=firebase.json`. No `google-services.json` is needed.
+
+Without these, the app still schedules reminders and the daily summary, and shows updates when it is opened. The Notifications screen says when instant updates are not set up.
+
+The configured DueCare Firebase project is `duecare-mobile-31712` (sender ID `407819843148`), with Android app `1:407819843148:android:29483290e339db73f4e6e9`. This checkout's ignored `firebase.json` contains the build values. The API uses the dedicated `duecare-fcm` service account with the Firebase Cloud Messaging API Admin role; its private key is kept outside source control, and `FCM_SERVICE_ACCOUNT` is a production Secret in Vercel. Builds must still include `--dart-define-from-file=firebase.json`; an older APK built without it cannot register for push.
 
 ## How it talks to the API
 
@@ -18,7 +44,7 @@ The phone calls the API directly, not through the Next.js gateway:
 
 1. `POST /api/v1/mobile/auth/start` returns the Supabase Google URL (PKCE) and a one-use state. Supabase returns to `duecare://auth/callback` (`MOBILE_REDIRECT_URL`).
 2. `POST /api/v1/mobile/auth/callback` with `{state, code}` returns an opaque session handle. This is the same encrypted server-side session the web keeps in an HTTP-only cookie. Redeeming a code needs the state too, which only this app holds.
-3. Every request sends `Authorization: Bearer <handle>`. The handle is kept in the iOS Keychain or Android Keystore (`flutter_secure_storage`). Writes send an `Idempotency-Key`.
+3. Every request sends `Authorization: Bearer <handle>`. The handle is kept in the Android Keystore (`flutter_secure_storage`). Writes send an `Idempotency-Key`.
 4. `POST /api/v1/mobile/auth/logout` ends the session. `POST /api/v1/mobile/account-deletion` follows an account deletion with its resume token after the login is gone.
 
 On Vercel, `vercel.json` routes `/api/v1/mobile/*`, and `/api/v1/*` requests carrying a bearer token, straight to the API service. Browser traffic still goes through the gateway.
@@ -30,7 +56,8 @@ lib/
   main.dart, app.dart     start-up, theme, signed-in / signed-out / deleting
   config.dart             API origin (API_URL) and the sign-in deep-link scheme
   core/                   API client, session, query cache, IST time, models, timetable draft logic
-  state/                  shared services, sync controller, reminders, quick complete
+  notifications/          choices, reminder/summary planning, notification display, push handling
+  state/                  shared services, sync controller, quick complete
   ui/                     theme tokens (Palette), shared widgets, task rows and due items
   screens/                one file per screen
 test/                     unit tests (time, deadlines, rules, timetable draft, API, cache) and widget tests
@@ -40,7 +67,7 @@ test/                     unit tests (time, deadlines, rules, timetable draft, A
 
 ## Setup
 
-Install Flutter 3.47 or later (`brew install --cask flutter`). Android builds need the Android SDK (Android Studio, or `brew install --cask android-commandlinetools`). iOS builds need Xcode and CocoaPods.
+Install Flutter 3.47 or later (`brew install --cask flutter`) and the Android SDK (Android Studio, or `brew install --cask android-commandlinetools`).
 
 ### Backend configuration (once per environment)
 
@@ -56,23 +83,19 @@ Start the API (see the root README), then start the app:
 cd apps/mobile && flutter run
 ```
 
-Debug builds use `http://10.0.2.2:8000` on the Android emulator and `http://127.0.0.1:8000` on the iOS simulator. To use another API, pass `--dart-define=API_URL=https://your-host`, for example to test on a physical phone against a computer on the same network.
+Debug builds use `http://10.0.2.2:8000`, the host computer as the Android emulator sees it. To use another API, pass `--dart-define=API_URL=https://your-host`, for example to test on a physical phone against a computer on the same network.
 
 ### Release builds
 
 ```bash
-cd apps/mobile && flutter build appbundle --dart-define=API_URL=https://duecare-xi.vercel.app
-```
-
-```bash
-cd apps/mobile && flutter build ipa --dart-define=API_URL=https://duecare-xi.vercel.app
+cd apps/mobile && flutter build appbundle --dart-define=API_URL=https://duecare-xi.vercel.app --dart-define-from-file=firebase.json
 ```
 
 Before publishing:
 
 - Android release signing reads `android/key.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`). Without this ignored file, local release builds use the debug key. Configure your upload key before publishing.
-- iOS needs your Apple team selected in Xcode (Runner → Signing & Capabilities). The bundle identifier is `app.duecare.mobile`, and the Android application ID matches.
-- Google Play and the App Store require a privacy policy URL and data-safety answers. The app reads Gmail and Classroom through the API, and the restricted `gmail.readonly` scope needs Google verification before a public release (see the root README).
+- The application ID is `app.duecare.mobile`.
+- Google Play requires a privacy policy URL and data-safety answers. The app reads Gmail and Classroom through the API, and the restricted `gmail.readonly` scope needs Google verification before a public release (see the root README).
 
 ## Tests
 
@@ -126,5 +149,5 @@ See [the Android test report](../../docs/MobileTesting.md) for the verified flow
 
 ## Known limits
 
-- Reminders are scheduled from what the app last saw. Work that arrives while the app stays closed gets reminders the next time it opens. Server push (Firebase/APNs) would close that gap, but it needs a Firebase project and Apple push credentials, so it is not wired up.
+- Reminders are scheduled from what the app last saw and refreshed when a push arrives. Android can delay delivery or stop it after the app is force-stopped; opening the app refreshes its data and reminders again.
 - Home-screen widgets are not included.

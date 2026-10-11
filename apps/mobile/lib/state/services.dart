@@ -7,21 +7,25 @@ import '../config.dart';
 import '../core/api.dart';
 import '../core/query.dart';
 import '../core/session.dart';
-import 'reminders.dart';
+import '../notifications/notifier.dart';
+import '../notifications/prefs.dart';
+import '../notifications/push.dart';
 import 'sync.dart';
 
 /// Everything the screens share, created once at start-up.
 class Services {
   Services({required Uri base, http.Client? client})
       : session = Session(),
-        reminders = Reminders() {
+        notifier = Notifier() {
+    push = Push(notifier);
     api = Api(base: base, session: session, client: client);
     queries = QueryClient(api);
     sync = SyncController(api, queries);
   }
 
   final Session session;
-  final Reminders reminders;
+  final Notifier notifier;
+  late final Push push;
   late final Api api;
   late final QueryClient queries;
   late final SyncController sync;
@@ -66,14 +70,25 @@ class Services {
   }
 
   Future<void> signOut() async {
+    await push.unregister(api);
     await api.send('POST', '/mobile/auth/logout');
     await forget();
+  }
+
+  /// The student's notification choices from the server, kept on the phone for the background.
+  Future<NotifyPrefs> loadNotifyPrefs() async {
+    final body = (await api.get('/notification-settings')) as Map;
+    final prefs = NotifyPrefs.fromJson((body['settings'] as Map).cast<String, dynamic>());
+    await prefs.save();
+    return prefs;
   }
 
   /// Drop everything private kept on this phone.
   Future<void> forget() async {
     sync.stop();
-    await reminders.clear();
+    try {
+      await notifier.end();
+    } catch (_) {}
     await queries.clear();
     await session.clear();
   }

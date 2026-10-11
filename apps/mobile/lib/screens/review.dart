@@ -55,36 +55,30 @@ class ReviewScreen extends StatelessWidget {
         builder: (context, tq) {
           final subjects = subjectsOf(sq);
           final tasks = pageOf(tq.data).items.map(Task.new).toList();
-          final header = SectionHeader(
-            title: 'Needs attention',
-            subtitle: 'Imported work DueCare could not settle on its own. Nothing here is a task until you confirm it. '
-                'Work for another division or batch is ignored, not shown here.',
-          );
-          Widget list(List<ReviewItem> items, Query q) => RefreshIndicator(
+          Widget list(List<ReviewItem> items, Query q) => PageScaffold(
+                title: targetId == null ? 'Review' : 'Needs your review',
+                subtitle: targetId == null ? 'Imported work DueCare couldn’t settle on its own. Nothing here is a task until you confirm it.' : null,
                 onRefresh: q.refetch,
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
-                  children: [
-                    header,
-                    ErrorNotice(q.error, retry: q.refetch),
-                    if (q.isPending)
-                      const Loading('Loading items…')
-                    else if (items.isEmpty)
-                      const EmptyState(
-                        icon: Icons.inbox_outlined,
-                        title: 'Nothing needs your attention',
-                        body: 'Questions about imported work will appear here.',
-                      )
-                    else
-                      for (final item in items)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 14),
-                          child: ReviewCard(key: ValueKey('${item.id}${item.revision}'), item: item, subjects: subjects, tasks: tasks),
-                        ),
-                    if (q.hasMore) DueButton(label: 'Load more', variant: Variant.outline, onPressed: q.loadMore),
-                    if (tq.hasMore) DueButton(label: 'Load more tasks for linking', variant: Variant.ghost, onPressed: tq.loadMore),
-                  ],
-                ),
+                bottomPadding: 120,
+                children: [
+                  ErrorNotice(q.error, retry: q.refetch),
+                  if (q.isPending)
+                    const Loading('Loading items…')
+                  else if (items.isEmpty)
+                    const EmptyState(
+                      icon: Icons.inbox_outlined,
+                      title: 'All clear',
+                      body: 'Questions about imported work will appear here.',
+                    )
+                  else
+                    for (final item in items)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: ReviewCard(key: ValueKey('${item.id}${item.revision}'), item: item, subjects: subjects, tasks: tasks),
+                      ),
+                  if (q.hasMore) DueButton(label: 'Load more', variant: Variant.outline, onPressed: q.loadMore),
+                  if (tq.hasMore) DueButton(label: 'Load more tasks for linking', variant: Variant.ghost, onPressed: tq.loadMore),
+                ],
               );
           if (targetId != null) {
             return QueryView(
@@ -101,8 +95,7 @@ class ReviewScreen extends StatelessWidget {
         },
       ),
     );
-    if (targetId == null) return body;
-    return Scaffold(appBar: AppBar(title: const Text('Needs attention')), body: body);
+    return body;
   }
 }
 
@@ -173,7 +166,7 @@ class _ReviewCardState extends State<ReviewCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Printed(_titles[item.issueType] ?? item.issueType),
+          Tag(_titles[item.issueType] ?? item.issueType, icon: Icons.help_outline_rounded),
           const SizedBox(height: 4),
           Text(
             '${_sourceLabel[item.sourceKind] ?? 'Source'}${item.senderEmail != null ? ' · ${item.senderEmail}' : ''} · ${formatTime(item.createdAt)}',

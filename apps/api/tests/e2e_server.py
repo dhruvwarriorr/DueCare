@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import json
 
 from duecare import academic, ai, auth, google
-from duecare.common import work
+from duecare.common import User, work
 from duecare.models import Connection, Subject, now
 from duecare.sources_api import link_account
 from duecare.views import profile
@@ -184,3 +184,36 @@ for n, (start, end) in enumerate([(420, 715), (690, 985)], start=1):
         }
     )
 )
+
+
+# Device tests: stand in for an import that finds new work, so push handling can be checked
+# end to end. Only on this synthetic server; the runtime API has no such route.
+@app.post("/api/v1/test/synthetic-import", include_in_schema=False)
+def synthetic_import(body: dict, user=User):
+    import uuid
+
+    from duecare.activity import notify
+    from duecare.domain import task_data
+    from duecare.models import Task
+    from duecare.schemas import TaskInput
+
+    with work(user) as db:
+        data = {
+            **task_data(TaskInput(title=str(body["title"])[:300], type="assignment")),
+            "sources": ["gmail"],
+        }
+        task = Task(
+            user_id=uuid.UUID(user["id"]), title=data["title"], type="assignment", data=data, status="due"
+        )
+        db.add(task)
+        db.flush()
+        notify(
+            db,
+            task.user_id,
+            "new_task",
+            "task",
+            task.id,
+            "New work was added to your tasks.",
+            f"{uuid.uuid4()}:new_task",
+        )
+        return {"id": str(task.id), "revision": task.revision}

@@ -52,6 +52,10 @@ class Worker:
     def execute(self, kind, uid, job_id):
         user = {"id": str(uid)}
         try:
+            if kind == "push":
+                from .push import deliver
+
+                return deliver(uid)
             if kind == "account":
                 privacy.resume_account(privacy.deletion_token(job_id), True)
             elif kind == "sync":

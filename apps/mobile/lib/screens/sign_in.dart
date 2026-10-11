@@ -34,90 +34,94 @@ class _SignInScreenState extends State<SignInScreen> {
   @override
   Widget build(BuildContext context) {
     final c = Palette.of(context);
-    // Illustrative only: a sample week drawn in the workspace's own vocabulary.
+    // Illustrative only: a sample day drawn in the app's own vocabulary.
     const sample = [
-      ('Mon', 'DS Exp 3', '23:59 · done', 'completed'),
-      ('Tue', 'CN quiz', '12:15', 'due'),
-      ('Wed', 'DBMS ER diagram', '17:00 · missed', 'missed'),
-      ('Thu', 'OS write-up', '23:59', 'due'),
+      ('DS Experiment 3', '23:59', 'completed'),
+      ('CN quiz', '12:15', 'due'),
+      ('DBMS ER diagram', '17:00', 'missed'),
     ];
     return Scaffold(
-      backgroundColor: c.paper,
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+        child: Column(
           children: [
-            const Align(alignment: Alignment.centerLeft, child: Logo(size: 34)),
-            const SizedBox(height: 36),
-            Text.rich(
-              TextSpan(
-                style: display(context, 46),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
                 children: [
-                  const TextSpan(text: 'Everything due, '),
-                  TextSpan(text: 'on one week', style: TextStyle(color: c.ink)),
-                  const TextSpan(text: '.'),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              'DueCare collects assignments and tests from Gmail, Classroom, and your own notes, '
-              'and shows them next to your classes.',
-              style: TextStyle(fontSize: 17, height: 1.45, color: c.graphite2),
-            ),
-            const SizedBox(height: 18),
-            for (final benefit in [
-              'See what’s due, done, and late at a glance',
-              'Marked done when you submit',
-              'Asks you only when something is unclear',
-            ])
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Icon(Icons.check, size: 18, color: c.good),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text(benefit, style: const TextStyle(fontSize: 15))),
-                  ],
-                ),
-              ),
-            const SizedBox(height: 20),
-            Container(
-              decoration: BoxDecoration(color: c.sheet, border: Border.all(color: c.graphite)),
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final (day, title, meta, status) in sample)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Row(
-                        children: [
-                          SizedBox(width: 40, child: Printed(day)),
-                          Expanded(child: _SampleDue(title: title, meta: meta, status: status)),
-                        ],
-                      ),
+                  const Align(alignment: Alignment.centerLeft, child: Logo(size: 34)),
+                  const SizedBox(height: 40),
+                  Text.rich(
+                    TextSpan(
+                      style: display(context, 42),
+                      children: [
+                        const TextSpan(text: 'Everything due,\n'),
+                        TextSpan(text: 'in one place', style: TextStyle(color: c.ink)),
+                        const TextSpan(text: '.'),
+                      ],
                     ),
-                  const SizedBox(height: 4),
-                  Text('Sample week, for illustration · All times IST', style: TextStyle(fontSize: 12, color: c.graphite2)),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'Assignments and tests from Gmail, Classroom and your own notes, next to your classes.',
+                    style: TextStyle(fontSize: 17, height: 1.45, color: c.graphite2),
+                  ),
+                  const SizedBox(height: 26),
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+                    decoration: BoxDecoration(color: c.sheet, borderRadius: BorderRadius.circular(Radii.card + 4)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          Text('Today', style: display(context, 18)),
+                          const Spacer(),
+                          Text('Sample', style: TextStyle(fontSize: 12, color: c.graphite2)),
+                        ]),
+                        const SizedBox(height: 10),
+                        for (final (title, time, status) in sample) _SampleDue(title: title, time: time, status: status),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  for (final (icon, text) in const [
+                    (Icons.visibility_outlined, 'See what’s due, done and late at a glance'),
+                    (Icons.task_alt_rounded, 'Marked done when you submit'),
+                    (Icons.notifications_active_outlined, 'Reminded before every deadline'),
+                  ])
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(color: c.inkWash, borderRadius: BorderRadius.circular(11)),
+                          child: Icon(icon, size: 19, color: c.ink),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(child: Text(text, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
+                      ]),
+                    ),
+                  ErrorNotice(error),
                 ],
               ),
             ),
-            const SizedBox(height: 28),
-            DueButton(
-              label: pending ? 'Opening Google…' : 'Continue with Google',
-              icon: Icons.arrow_forward,
-              expand: true,
-              onPressed: pending ? null : signIn,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+              child: Column(children: [
+                DueButton(
+                  label: pending ? 'Opening Google…' : 'Continue with Google',
+                  icon: Icons.arrow_forward_rounded,
+                  expand: true,
+                  onPressed: pending ? null : signIn,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Use your @somaiya.edu account. Google also asks for read-only Gmail and Classroom access. Your password is never shared.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12.5, color: c.graphite2, height: 1.4),
+                ),
+              ]),
             ),
-            const SizedBox(height: 10),
-            Text(
-              'Use your verified @somaiya.edu Google account. Google also asks for read-only Gmail and '
-              'Classroom access, so your assignments and tests appear automatically. Your password is never '
-              'shared with DueCare.',
-              style: TextStyle(fontSize: 13, color: c.graphite2, height: 1.45),
-            ),
-            ErrorNotice(error),
           ],
         ),
       ),
@@ -126,38 +130,44 @@ class _SignInScreenState extends State<SignInScreen> {
 }
 
 class _SampleDue extends StatelessWidget {
-  const _SampleDue({required this.title, required this.meta, required this.status});
+  const _SampleDue({required this.title, required this.time, required this.status});
 
-  final String title, meta, status;
+  final String title, time, status;
 
   @override
   Widget build(BuildContext context) {
     final c = Palette.of(context);
-    final (bg, line, fill) = switch (status) {
-      'completed' => (c.goodTint, c.good, c.good),
-      'missed' => (c.badTint, c.bad, c.badTint),
-      _ => (c.dueTint, c.dueLine, c.due),
+    final (bg, line) = switch (status) {
+      'completed' => (c.goodTint, c.good),
+      'missed' => (c.badTint, c.bad),
+      _ => (c.dueTint, c.due),
     };
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(color: bg, border: Border.all(color: line)),
-      child: Row(
-        children: [
-          Bubble(small: true, fill: fill, stroke: line),
-          const SizedBox(width: 8),
+      margin: const EdgeInsets.only(bottom: 8),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(Radii.medium)),
+      child: IntrinsicHeight(
+        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Container(width: 5, color: line),
+          const SizedBox(width: 12),
+          Center(child: Bubble(small: true, fill: status == 'due' ? null : line, stroke: line)),
+          const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              title,
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-                color: status == 'missed' ? c.badText : c.graphite,
-                decoration: status == 'missed' ? TextDecoration.lineThrough : null,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: status == 'missed' ? c.badText : c.graphite,
+                  decoration: status == 'missed' ? TextDecoration.lineThrough : null,
+                ),
               ),
             ),
           ),
-          Text(meta, style: display(context, 12, weight: FontWeight.w500, color: c.graphite2)),
-        ],
+          Center(child: Text(time, style: display(context, 13, color: c.graphite2))),
+          const SizedBox(width: 12),
+        ]),
       ),
     );
   }

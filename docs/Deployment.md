@@ -32,6 +32,10 @@ Supabase Auth Site URL must be the production origin. Add the exact `https://due
 
 The Flutter app (`apps/mobile`) calls the API directly. `vercel.json` routes `/api/v1/mobile/*`, and any `/api/v1/*` request with an `Authorization: Bearer` header, to the API service. Browser requests carry no bearer token, so they still reach the Next.js gateway. Set `MOBILE_REDIRECT_URL=duecare://auth/callback` in the production environment, and add the same URL to Supabase's Auth redirect allowlist. Build the app with `--dart-define=API_URL=https://duecare-xi.vercel.app` (see `apps/mobile/README.md`). `.vercelignore` keeps the mobile project out of web deployments.
 
+Push notifications need `FCM_SERVICE_ACCOUNT` (the Firebase service account JSON, one line or base64) and migration `0007`. The existing scheduled dispatcher runs push work through `pending_background_jobs()`, so no new cron is needed. Without the variable, push is off and the app relies on its own reminders.
+
+Firebase is configured in project `duecare-mobile-31712` for Android package `app.duecare.mobile`. The dedicated `duecare-fcm` service account has the Firebase Cloud Messaging API Admin role, and the FCM HTTP v1 API is enabled. `FCM_SERVICE_ACCOUNT` is stored as a Vercel production Secret. Migration `0007` has been applied to the configured database. The mobile build configuration remains in the ignored `apps/mobile/firebase.json`; do not upload service-account keys with source code or include them in Android builds.
+
 ## Deploy updates
 
 After confirming the CLI is linked to the project above:

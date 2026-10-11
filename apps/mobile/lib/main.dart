@@ -15,10 +15,11 @@ Future<void> main() async {
   const devSession = String.fromEnvironment('DEV_SESSION');
   if (kDebugMode && devSession.isNotEmpty && !services.session.signedIn) await services.session.signIn(devSession);
   try {
-    await services.reminders.init();
+    await services.notifier.init();
   } catch (_) {
-    // Reminders are optional; the workspace works without notification support.
+    // Notifications are optional; the workspace works without them.
   }
+  await services.push.init();
   // The last saved tasks show at once; fresh data replaces them as it arrives.
   final savedAt = services.session.signedIn ? await services.queries.restore() : null;
   runApp(DueCareApp(services: services, savedAt: savedAt));

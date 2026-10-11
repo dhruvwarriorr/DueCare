@@ -44,7 +44,7 @@ def manual_history(db, task, action, changes):
     db.add(History(user_id=task.user_id, task_id=task.id, action=action, changes=changes))
     from .activity import task_changed
 
-    task_changed(db, task, action, changes)
+    task_changed(db, task, action, changes, student=True)
 
 
 # --- Needs attention ---------------------------------------------------------------------------

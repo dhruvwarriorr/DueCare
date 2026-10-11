@@ -15,7 +15,16 @@ from pydantic import ValidationError
 from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from . import academic, auth, mobile_api, phase3_api, privacy_api, sources_api, timetable_api
+from . import (
+    academic,
+    auth,
+    mobile_api,
+    notifications_api,
+    phase3_api,
+    privacy_api,
+    sources_api,
+    timetable_api,
+)
 from .common import User, finish, owned, page, replay, revision, work
 from .config import settings
 from .db import transaction
@@ -219,7 +228,7 @@ def history(db, t, action, changes):
     db.add(History(user_id=t.user_id, task_id=t.id, action=action, changes=changes))
     from .activity import task_changed
 
-    task_changed(db, t, action, changes)
+    task_changed(db, t, action, changes, student=True)
 
 
 @app.get("/api/v1/me")
@@ -834,3 +843,4 @@ app.include_router(privacy_api.router)
 app.include_router(timetable_api.router)
 app.include_router(privacy_api.internal)
 app.include_router(mobile_api.router)
+app.include_router(notifications_api.router)
