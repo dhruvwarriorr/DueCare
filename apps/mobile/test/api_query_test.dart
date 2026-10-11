@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:duecare/core/api.dart';
@@ -126,5 +127,51 @@ void main() {
 
     await next.clear();
     expect(await QueryClient(api).restore(), isNull);
+  });
+
+  test('a refused sign-in step never ends the saved session; a rejected session does', () async {
+    final api = apiWith((r) async => http.Response(jsonEncode({'code': 'LOGIN_EXPIRED', 'message': 'Sign-in expired'}), 401));
+    // Re-asking Google for access while signed in: the callback is sent without the session.
+    await expectLater(api.send('POST', '/mobile/auth/callback', body: {}, authenticated: false), throwsA(isA<ApiError>()));
+    expect(session.signedIn, isTrue);
+    // Ending a replaced, older session with its own handle leaves the current one alone.
+    await expectLater(api.send('POST', '/mobile/auth/logout', bearer: 'older-handle'), throwsA(isA<ApiError>()));
+    expect(session.signedIn, isTrue);
+    await expectLater(api.get('/me'), throwsA(isA<ApiError>()));
+    expect(session.signedIn, isFalse);
+  });
+
+  test('answers that arrive after sign-out, or after a refresh, are discarded', () async {
+    final gate = <String, Completer<http.Response>>{};
+    final api = apiWith((r) {
+      final c = Completer<http.Response>();
+      gate[r.url.toString()] = c;
+      return c.future;
+    });
+    final client = QueryClient(api);
+    final me = client.watch(['me'], () => api.get('/me'));
+    client.retain(me);
+    await pumpEventQueue();
+    await client.clear(); // Signed out while /me was loading.
+    gate['https://duecare.test/api/v1/me']!.complete(http.Response(jsonEncode({'name': 'Previous student'}), 200));
+    await pumpEventQueue();
+    expect(me.data, isNull, reason: 'The previous account’s data must never appear.');
+
+    final list = client.watchPaged(['tasks'], (cursor) => api.get('/tasks${cursor != null ? '?cursor=$cursor' : ''}'));
+    client.retain(list);
+    await pumpEventQueue();
+    gate['https://duecare.test/api/v1/tasks']!.complete(http.Response(jsonEncode({'items': ['a'], 'nextCursor': 'c2'}), 200));
+    await pumpEventQueue();
+    final more = list.loadMore();
+    await pumpEventQueue();
+    // A refresh lands while page 2 is still loading...
+    final refresh = list.refetch();
+    await pumpEventQueue();
+    gate['https://duecare.test/api/v1/tasks']!.complete(http.Response(jsonEncode({'items': ['a2'], 'nextCursor': null}), 200));
+    await refresh;
+    gate['https://duecare.test/api/v1/tasks?cursor=c2']!.complete(http.Response(jsonEncode({'items': ['b'], 'nextCursor': null}), 200));
+    await more;
+    // ...so the old second page is not appended to the refreshed list.
+    expect((list.data as Map)['items'], ['a2']);
   });
 }

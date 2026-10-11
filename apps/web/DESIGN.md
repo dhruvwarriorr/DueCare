@@ -218,7 +218,7 @@ Dark mode is a carbon sheet. The paper turns near-black, rose brightens to #ff6f
 The palette is white stock, one rose ink in five densities, graphite in two weights, and three status colours.
 
 ### Primary
-- **Drop-out Rose** (ink): the printed ink. It's used for caps labels, the "Due" row label, day names, input carets, select chevrons, the now line and its time tab, hover text on outline and ghost buttons, the wordmark's empty bubbles, and destructive buttons. In dark mode it becomes **Lit Rose**.
+- **Drop-out Rose** (ink): the printed ink. It's used for caps labels, the "Due" row label, day names, input carets, select chevrons, the now line and its time tab, hover text on outline and ghost buttons, the logo's bubble and pencil fill, and destructive buttons. In dark mode it becomes **Lit Rose**.
 - **Rose Line** (ink-line): stroke for inputs, panels, the task list frame, and timetable slot outlines.
 - **Rose Rule** (ink-rule): hairline column, row and divider rules, the hour grid, the rail's hour ticks, and the hover underline on idle nav tabs.
 - **Rose Tint** (ink-tint): the lab-slot fill, avatar ground, selection highlight and the hatch stroke.
@@ -285,7 +285,7 @@ The system is flat. Depth comes from rule weight and fill. Frames are 1px graphi
 
 ## Shapes
 
-Every rectangle is square (0px): buttons, inputs, pills, chips, due items, panels, dialogs, drawers, menus and the avatar. The only curve is the oval bubble, a 50% radius on a wide ellipse (20 x 13px base, 14 x 10 on due items). It appears in the wordmark (2 x 2, the two diagonal ones filled), filter rows, radios, OMR fields and due items. Checkboxes are square. Dashed outlines mean a tutorial slot. Strike-through means missed.
+Every rectangle is square (0px): buttons, inputs, pills, chips, due items, panels, dialogs, drawers, menus and the avatar. The only curve is the oval bubble, a 50% radius on a wide ellipse (20 x 13px base, 14 x 10 on due items). It appears in the logo (as a stadium bubble), filter rows, radios, OMR fields and due items. Checkboxes are square. Dashed outlines mean a tutorial slot. Strike-through means missed.
 
 **The One Curve Rule.** Rounded corners are banned (owner commitment). Only the bubble curves. It is either empty with a rose stroke, filled graphite for a selection, or filled with the item's status colour on a due item.
 
@@ -341,7 +341,7 @@ A single-message strip pinned under the header on the week view. Night Band grou
 `<summary>` rows (for example "View change details", "More filters") use a drawn 7px rose chevron that turns from pointing right to pointing down over 260ms, a 36px hit area with Rose Wash on hover, and contents that unfold with an animated height (300ms) where `::details-content` is supported.
 
 ### Logo
-The mark is the "bubble heart": a compact, square heart built from the answer sheet's own shapes. A rose square turned on its point forms the base, and two bubbles form the lobes: yellow on the left (due) and green on the right (done), with a small rose diamond restoring the centre. No tick marks. The wordmark "DueCare" is Sofia Sans Condensed 800 at 25px, 9px from the mark. The component (`src/components/ui/logo.tsx`) draws with the ink, due and good tokens, so it brightens slightly in dark mode. On hover the two lobes ease apart by 1.5px. The favicon (`src/app/icon.svg`) is the mark alone on white.
+The mark is an answer bubble with a printed D, half filled in rose the way a student marks an answer: a rose stadium outline (the sheet's bubble), a slanted pencil fill over its left half, and a D that prints in graphite on the empty side and in the sheet colour through the fill. The wordmark "DueCare" is Sofia Sans Condensed 800 at 25px, 9px from the mark. The component (`src/components/ui/logo.tsx`) draws with the ink, graphite and sheet tokens, so it follows dark mode. On hover the pencil fill eases 5 units further across the bubble. The favicon (`src/app/icon.svg`) is the mark in white and rose on a graphite rounded square, matching the Android launcher icon; both come from the same 100-unit geometry as `apps/mobile/tool/mark.py`.
 
 ### Dialogs and Drawer
 A centered sheet up to 700px wide, framed in 1px graphite with a 6px graphite top rule. It rises 14px over 260ms. The right drawer is up to 460px wide and slides in 40px over 300ms. Footers are sticky with a graphite top rule.

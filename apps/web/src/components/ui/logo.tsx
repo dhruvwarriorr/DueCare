@@ -1,19 +1,36 @@
-// The mark: a heart built from the answer sheet's shapes. A rose square turned on
-// its point, with two bubbles for the lobes: yellow (due) and green (done).
+import { useId } from "react";
+
+// The mark: an answer bubble with a printed D, half filled in rose the way a student marks
+// an answer. Same 100-unit geometry as the Android icon (apps/mobile/tool/mark.py).
+const D = "M34,37 H53 A13,13 0 0 1 53,63 H34 Z M44,45 V55 H53 A5,5 0 0 0 53,45 Z";
+
 export function LogoMark({ size = 30 }: { size?: number }) {
+  const id = useId();
   return (
     <svg
       className="logo-mark"
-      width={size}
-      height={size}
-      viewBox="5 12 70 70"
+      width={size * 1.2}
+      height={size * 0.78}
+      viewBox="4 20.5 92 59"
       aria-hidden="true"
       focusable="false"
     >
-      <polygon points="40,22 68,50 40,78 12,50" fill="var(--ink)" />
-      <circle className="lobe-left" cx="26" cy="36" r="20" fill="var(--due)" />
-      <circle className="lobe-right" cx="54" cy="36" r="20" fill="var(--good)" />
-      <polygon points="40,36 54,50 40,64 26,50" fill="var(--ink)" />
+      <defs>
+        <clipPath id={`${id}-in`}>
+          <rect x="11.5" y="27.5" width="77" height="45" rx="22.5" />
+        </clipPath>
+        <clipPath id={`${id}-pencil`}>
+          <polygon className="logo-pencil" points="-10,-10 64.2,-10 39.8,110 -10,110" />
+        </clipPath>
+      </defs>
+      <path d={D} fillRule="evenodd" fill="var(--graphite)" />
+      <g clipPath={`url(#${id}-in)`}>
+        <g clipPath={`url(#${id}-pencil)`}>
+          <rect x="0" y="0" width="100" height="100" fill="var(--ink)" />
+          <path d={D} fillRule="evenodd" fill="var(--sheet)" />
+        </g>
+      </g>
+      <rect x="8" y="24" width="84" height="52" rx="26" fill="none" stroke="var(--ink)" strokeWidth="7" />
     </svg>
   );
 }

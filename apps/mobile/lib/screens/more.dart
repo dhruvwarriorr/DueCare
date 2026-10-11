@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/models.dart';
 import '../state/services.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'activity.dart';
@@ -71,7 +72,7 @@ class _MoreScreenState extends State<MoreScreen> {
                       if (p.academicLine.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 6),
-                          child: Tag(p.academicLine, icon: Icons.school_outlined),
+                          child: Tag(p.academicLine, icon: DueIcons.classroom),
                         ),
                     ],
                   ),
@@ -82,18 +83,18 @@ class _MoreScreenState extends State<MoreScreen> {
           ),
         ),
         GroupCard(label: 'Your work', children: [
-          SettingTile(icon: Icons.class_outlined, title: 'Subjects', subtitle: 'Subjects and weekly timetable', onTap: () => open(const SubjectsScreen())),
-          SettingTile(icon: Icons.notifications_none_rounded, title: 'Activity', subtitle: 'New work, changes and sync issues', onTap: () => open(const ActivityScreen())),
+          SettingTile(icon: DueIcons.subjects, title: 'Subjects', subtitle: 'Subjects and weekly timetable', onTap: () => open(const SubjectsScreen())),
+          SettingTile(icon: DueIcons.activity, title: 'Activity', subtitle: 'New work, changes and sync issues', onTap: () => open(const ActivityScreen())),
         ]),
         GroupCard(label: 'Settings', children: [
-          SettingTile(icon: Icons.notifications_active_outlined, title: 'Notifications', subtitle: 'Reminders, updates and quiet hours', onTap: () => open(const NotificationsScreen())),
-          SettingTile(icon: Icons.person_outline_rounded, title: 'Profile', subtitle: 'Academic details, appearance and KT notices', onTap: () => open(const ProfileScreen())),
-          SettingTile(icon: Icons.sync_rounded, title: 'Sources', subtitle: 'Gmail, Classroom, faculty and senders', onTap: () => open(const SourcesScreen())),
-          SettingTile(icon: Icons.tune_rounded, title: 'Rules', subtitle: 'Priorities and hidden work', onTap: () => open(const RulesScreen())),
-          SettingTile(icon: Icons.lock_outline_rounded, title: 'Privacy & data', subtitle: 'Imported data and account deletion', onTap: () => open(const PrivacyScreen())),
+          SettingTile(icon: DueIcons.notifications, title: 'Notifications', subtitle: 'Reminders, updates and quiet hours', onTap: () => open(const NotificationsScreen())),
+          SettingTile(icon: DueIcons.profile, title: 'Profile', subtitle: 'Academic details, appearance and KT notices', onTap: () => open(const ProfileScreen())),
+          SettingTile(icon: DueIcons.sources, title: 'Sources', subtitle: 'Gmail, Classroom, faculty and senders', onTap: () => open(const SourcesScreen())),
+          SettingTile(icon: DueIcons.rules, title: 'Rules', subtitle: 'Priorities and hidden work', onTap: () => open(const RulesScreen())),
+          SettingTile(icon: DueIcons.privacy, title: 'Privacy & data', subtitle: 'Imported data and account deletion', onTap: () => open(const PrivacyScreen())),
         ]),
         GroupCard(label: 'Account', children: [
-          SettingTile(icon: Icons.logout_rounded, title: signingOut ? 'Signing out…' : 'Sign out', danger: true, onTap: signingOut ? null : signOut),
+          SettingTile(icon: DueIcons.signOut, title: signingOut ? 'Signing out…' : 'Sign out', danger: true, onTap: signingOut ? null : signOut),
         ]),
         const SizedBox(height: 20),
         Center(

@@ -160,7 +160,7 @@ void main() {
     expect(find.text('Next due'), findsOneWidget);
     expect(find.text('DBMS ER diagram'), findsWidgets);
     expect(find.text('This week'), findsOneWidget);
-    expect(find.text('To review'), findsOneWidget);
+    expect(find.text('to review'), findsOneWidget);
     expect(find.text('Classes'), findsOneWidget);
     expect(find.text('09:00'), findsOneWidget);
     expect(find.text('Theory · 601'), findsOneWidget);

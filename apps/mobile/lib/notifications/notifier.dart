@@ -126,7 +126,8 @@ class Notifier {
 
   /// Rebuild every scheduled reminder and summary.
   Future<int> schedule(List<Task> tasks, NotifyPrefs prefs, {DateTime? now}) async {
-    if (!_ready) return 0;
+    // Nothing is scheduled for an account that has signed out (a refresh may finish late).
+    if (!_ready || !await _signedIn()) return 0;
     await _plugin.cancelAllPendingNotifications();
     final at = now ?? DateTime.now();
     final planned = [...planReminders(tasks, prefs, at), ...planDigests(tasks, prefs, at)];
@@ -175,6 +176,8 @@ class Notifier {
     }
   }
 
+  Future<bool> _signedIn() async => (await SharedPreferences.getInstance()).getString(_ownerKey) != null;
+
   /// Forget the account on sign-out: nothing scheduled or shown survives it.
   Future<void> end() async {
     if (_ready) await _plugin.cancelAll();
@@ -212,7 +215,7 @@ class Notifier {
   }
 
   Future<void> show(List<Notice> notices, NotifyPrefs prefs, {DateTime? now}) async {
-    if (notices.isEmpty || !_ready) return;
+    if (notices.isEmpty || !_ready || !await _signedIn()) return;
     final channel = isQuiet(prefs, now ?? DateTime.now()) ? Channel.quiet : Channel.updates;
     final grouped = notices.length > 1;
     for (final n in notices) {

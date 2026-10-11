@@ -71,7 +71,12 @@ class Services {
 
   Future<void> signOut() async {
     await push.unregister(api);
-    await api.send('POST', '/mobile/auth/logout');
+    try {
+      await api.send('POST', '/mobile/auth/logout');
+    } on ApiError catch (e) {
+      // Offline: this phone still forgets everything; the server session expires on its own.
+      if (!e.unreachable) rethrow;
+    }
     await forget();
   }
 

@@ -6,6 +6,7 @@ import '../core/models.dart';
 import '../core/query.dart';
 import '../state/data.dart';
 import '../state/services.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'timetable_import.dart';
@@ -94,13 +95,13 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
             floatingActionButton: FloatingActionButton.extended(
               heroTag: 'add-subject',
               onPressed: _edit,
-              icon: const Icon(Icons.add_rounded),
+              icon: const DueIcon(DueIcons.add),
               label: const Text('Add subject'),
             ),
             actions: [
               IconButton(
                 tooltip: 'Upload timetable',
-                icon: const Icon(Icons.upload_file_rounded),
+                icon: const DueIcon(DueIcons.upload),
                 onPressed: _import,
               ),
             ],
@@ -113,7 +114,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                   padding: const EdgeInsets.only(bottom: 12),
                   child: DueButton(
                     label: 'Upload your timetable',
-                    icon: Icons.upload_file_rounded,
+                    icon: DueIcons.upload,
                     variant: Variant.tonal,
                     expand: true,
                     onPressed: _import,
@@ -124,7 +125,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                 const Loading('Loading subjects…')
               else if (subjects.isEmpty)
                 const EmptyState(
-                  icon: Icons.calendar_month_outlined,
+                  icon: DueIcons.month,
                   title: 'A place for every subject',
                   body: 'Upload your timetable to create all your subjects in one go and fill in their weekly slots, or add subjects yourself.',
                 )
@@ -167,7 +168,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                           children: [
                             DueButton(
                               label: 'Timetable',
-                              icon: Icons.calendar_today_outlined,
+                              icon: DueIcons.event,
                               small: true,
                               variant: Variant.outline,
                               onPressed: () => Navigator.push(
@@ -181,12 +182,12 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                             const Spacer(),
                             IconButton(
                               tooltip: 'Edit ${s.name}',
-                              icon: const Icon(Icons.edit_outlined, size: 20),
+                              icon: const DueIcon(DueIcons.edit, size: 20),
                               onPressed: () => _edit(s),
                             ),
                             IconButton(
                               tooltip: 'Delete ${s.name}',
-                              icon: const Icon(Icons.delete_outline, size: 20),
+                              icon: const DueIcon(DueIcons.erase, size: 20),
                               onPressed: () => _delete(s),
                             ),
                           ],
@@ -465,7 +466,7 @@ class _TimetableEditorState extends State<TimetableEditor> {
                       ),
                       DueButton(
                         label: 'Remove slot',
-                        icon: Icons.delete_outline,
+                        icon: DueIcons.erase,
                         small: true,
                         variant: Variant.ghost,
                         onPressed: () => setState(
@@ -481,7 +482,7 @@ class _TimetableEditorState extends State<TimetableEditor> {
               if (data != null)
                 DueButton(
                   label: 'Add weekly slot',
-                  icon: Icons.add,
+                  icon: DueIcons.add,
                   variant: Variant.outline,
                   onPressed: () => setState(
                     () => draft = [

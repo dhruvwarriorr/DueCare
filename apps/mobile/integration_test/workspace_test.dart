@@ -56,6 +56,11 @@ void main() {
 
     // Scroll the target into view first, as a person would on a phone.
     Future<void> tap(String text) async {
+      // A long list builds lazily (more so with large text): scroll back up to find the row.
+      final lists = find.byType(Scrollable);
+      if (find.text(text).evaluate().isEmpty && lists.evaluate().isNotEmpty) {
+        await tester.scrollUntilVisible(find.text(text), -200, scrollable: lists.last);
+      }
       await tester.ensureVisible(find.text(text).last);
       await tester.pumpAndSettle();
       await tester.tap(find.text(text).last);
@@ -251,6 +256,9 @@ void main() {
     await binding.takeScreenshot('16-offline-week');
     await tester.tap(find.text('Tasks').last);
     await settle();
+    await binding.takeScreenshot('16-offline-tasks');
+    final list = find.byWidgetPredicate((w) => w is Scrollable && w.axisDirection == AxisDirection.down);
+    await tester.scrollUntilVisible(find.textContaining('OS write-up'), 200, scrollable: list.first);
     expect(find.textContaining('OS write-up'), findsOneWidget);
 
     client.offline = false;

@@ -5,6 +5,7 @@ import '../core/ist.dart';
 import '../core/models.dart';
 import '../core/query.dart';
 import '../state/services.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'review.dart';
@@ -12,12 +13,12 @@ import 'sources.dart';
 import 'workspace.dart';
 
 const _icons = {
-  'new_task': Icons.add_task_rounded,
-  'revision': Icons.edit_calendar_outlined,
-  'reopened': Icons.replay_rounded,
-  'review': Icons.inbox_outlined,
-  'auto_completed': Icons.task_alt_rounded,
-  'sync_issue': Icons.sync_problem_rounded,
+  'new_task': DueIcons.add,
+  'revision': DueIcons.event,
+  'reopened': DueIcons.reopen,
+  'review': DueIcons.review,
+  'auto_completed': DueIcons.done,
+  'sync_issue': DueIcons.sources,
 };
 
 /// New work, changes and sync issues, newest first.
@@ -73,7 +74,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
           onRefresh: q.refetch,
           actions: [
             if (unread > 0)
-              IconButton(tooltip: 'Mark all as read', icon: const Icon(Icons.done_all_rounded), onPressed: () => _run(() => api.send('POST', '/activity/read-all'))),
+              IconButton(tooltip: 'Mark all as read', icon: const DueIcon(DueIcons.done), onPressed: () => _run(() => api.send('POST', '/activity/read-all'))),
           ],
           children: [
             Wrap(spacing: 8, children: [
@@ -85,7 +86,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
             if (q.isPending)
               const Loading('Loading activity…')
             else if (items.isEmpty)
-              const EmptyState(icon: Icons.notifications_none_rounded, title: 'Nothing here yet', body: 'Updates appear as you add work and sources sync.')
+              const EmptyState(icon: DueIcons.activity, title: 'Nothing here yet', body: 'Updates appear as you add work and sources sync.')
             else
               for (final item in items)
                 Padding(
@@ -118,7 +119,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
                                 width: 40,
                                 height: 40,
                                 decoration: BoxDecoration(color: item.readAt == null ? c.inkTint : c.inkWash, borderRadius: BorderRadius.circular(12)),
-                                child: Icon(_icons[item.json['eventType']] ?? Icons.notifications_none_rounded, color: c.ink, size: 21),
+                                child: glyph(_icons[item.json['eventType']] ?? DueIcons.activity, color: c.ink, size: 21),
                               ),
                               const SizedBox(width: 12),
                               Expanded(

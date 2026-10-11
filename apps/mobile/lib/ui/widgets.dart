@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/deadline.dart';
 import '../core/ist.dart';
+import 'icons.dart';
 import 'theme.dart';
 
 enum Variant { primary, outline, ghost, destructive, tonal }
@@ -22,7 +23,7 @@ class DueButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
   final Variant variant;
-  final IconData? icon;
+  final Object? icon;
   final bool small;
   final bool expand;
 
@@ -31,12 +32,15 @@ class DueButton extends StatelessWidget {
     final c = Palette.of(context);
     final size = small ? const Size(40, 40) : null;
     final pad = small ? const EdgeInsets.symmetric(horizontal: 14) : null;
+    // Long labels wrap rather than lose their ending at large text sizes.
     final text = Text(
       label,
+      maxLines: 2,
+      textAlign: TextAlign.center,
       overflow: TextOverflow.ellipsis,
       style: small ? const TextStyle(fontSize: 13.5) : null,
     );
-    final iconWidget = icon == null ? null : Icon(icon, size: small ? 17 : 19);
+    final iconWidget = icon == null ? null : glyph(icon!, size: small ? 17 : 19);
     final Widget button = switch (variant) {
       Variant.primary || Variant.destructive || Variant.tonal => () {
         final style = FilledButton.styleFrom(
@@ -190,7 +194,7 @@ class Tag extends StatelessWidget {
   const Tag(this.text, {super.key, this.icon});
 
   final String text;
-  final IconData? icon;
+  final Object? icon;
 
   @override
   Widget build(BuildContext context) {
@@ -206,7 +210,7 @@ class Tag extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: 13, color: c.ink),
+            glyph(icon!, size: 14, color: c.ink),
             const SizedBox(width: 4),
           ],
           Flexible(
@@ -461,7 +465,7 @@ class SettingTile extends StatelessWidget {
     this.danger = false,
   });
 
-  final IconData? icon;
+  final Object? icon;
   final String title;
   final String? subtitle;
   final Widget? trailing;
@@ -475,15 +479,11 @@ class SettingTile extends StatelessWidget {
       onTap: onTap,
       leading: icon == null
           ? null
-          : Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: danger ? c.badTint : c.inkWash,
-                borderRadius: BorderRadius.circular(11),
-              ),
-              child: Icon(icon, size: 21, color: danger ? c.bad : c.ink),
+          : SizedBox(
+              width: 28,
+              child: Center(child: glyph(icon!, size: 24, color: danger ? c.bad : c.ink)),
             ),
+      horizontalTitleGap: 14,
       title: Text(title, style: danger ? TextStyle(color: c.bad) : null),
       subtitle: subtitle == null ? null : Text(subtitle!),
       trailing:
@@ -510,7 +510,7 @@ class SwitchTile extends StatelessWidget {
   final String? subtitle;
   final bool value;
   final ValueChanged<bool>? onChanged;
-  final IconData? icon;
+  final Object? icon;
 
   @override
   Widget build(BuildContext context) => SettingTile(
@@ -612,11 +612,7 @@ class ErrorNotice extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            offline ? Icons.cloud_off : Icons.error_outline,
-            color: c.badText,
-            size: 20,
-          ),
+          glyph(offline ? DueIcons.offline : Icons.error_outline, color: c.badText, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -651,7 +647,7 @@ class Notice extends StatelessWidget {
 
   final String text;
   final bool warn;
-  final IconData? icon;
+  final Object? icon;
 
   @override
   Widget build(BuildContext context) {
@@ -667,7 +663,7 @@ class Notice extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
+          glyph(
             icon ?? (warn ? Icons.warning_amber_rounded : Icons.info_outline),
             size: 20,
             color: warn ? c.dueText : c.ink,
@@ -694,7 +690,7 @@ class EmptyState extends StatelessWidget {
     this.action,
   });
 
-  final IconData icon;
+  final Object icon;
   final String title;
   final String body;
   final Widget? action;
@@ -706,12 +702,7 @@ class EmptyState extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 36),
       child: Column(
         children: [
-          Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(color: c.inkWash, shape: BoxShape.circle),
-            child: Icon(icon, size: 32, color: c.ink),
-          ),
+          glyph(icon, size: 44, color: c.inkLine),
           const SizedBox(height: 16),
           Text(title, textAlign: TextAlign.center, style: display(context, 20)),
           const SizedBox(height: 6),
@@ -835,7 +826,7 @@ class SelectField<T> extends StatelessWidget {
   final String placeholder;
   final String? title;
   final bool enabled;
-  final IconData? icon;
+  final Object? icon;
 
   @override
   Widget build(BuildContext context) {
@@ -855,7 +846,7 @@ class SelectField<T> extends StatelessWidget {
             child: Row(
               children: [
                 if (icon != null) ...[
-                  Icon(icon, size: 20, color: c.ink),
+                  glyph(icon!, size: 20, color: c.ink),
                   const SizedBox(width: 12),
                 ],
                 Expanded(
@@ -1002,7 +993,7 @@ class DateField extends StatelessWidget {
         ? placeholder
         : '${weekdayNames[weekdayOf(value) - 1].substring(0, 3)}, ${formatDay(value, withYear: true)}',
     empty: value.isEmpty,
-    icon: Icons.event_outlined,
+    icon: DueIcons.event,
     onClear: value.isEmpty ? null : () => onChanged(''),
     onTap: () async {
       final picked = await pickDate(context, value);
@@ -1043,7 +1034,7 @@ class TimeField extends StatelessWidget {
     child: _PickerBox(
       text: value.isEmpty ? placeholder : value,
       empty: value.isEmpty,
-      icon: Icons.schedule,
+      icon: DueIcons.clock,
       onClear: value.isEmpty || !enabled ? null : () => onChanged(''),
       onTap: !enabled
           ? null
@@ -1081,7 +1072,7 @@ class _PickerBox extends StatelessWidget {
 
   final String text;
   final bool empty;
-  final IconData icon;
+  final Object icon;
   final VoidCallback? onTap;
   final VoidCallback? onClear;
 
@@ -1099,7 +1090,7 @@ class _PickerBox extends StatelessWidget {
           padding: const EdgeInsets.only(left: 16),
           child: Row(
             children: [
-              Icon(icon, size: 20, color: c.ink),
+              glyph(icon, size: 20, color: c.ink),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -1126,7 +1117,8 @@ class _PickerBox extends StatelessWidget {
   }
 }
 
-/// The "bubble heart" mark: a rose diamond with a yellow (due) and a green (done) bubble.
+/// The DueCare mark: an answer bubble with a printed D, half marked in rose, as a student marks
+/// an answer. The same geometry draws the launcher, splash and notification icons.
 class Logo extends StatelessWidget {
   const Logo({super.key, this.size = 28, this.wordmark = true});
 
@@ -1136,50 +1128,68 @@ class Logo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = Palette.of(context);
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        CustomPaint(
-          size: Size.square(size),
-          painter: _MarkPainter(c.ink, c.due, c.good),
+    return Semantics(
+      label: 'DueCare',
+      child: ExcludeSemantics(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CustomPaint(
+              size: Size.square(size * 1.15),
+              painter: MarkPainter(ring: c.ink, mark: c.ink, onMark: c.sheet, letter: c.graphite),
+            ),
+            if (wordmark) ...[SizedBox(width: size * 0.3), Text('DueCare', style: display(context, size * 0.86))],
+          ],
         ),
-        if (wordmark) ...[
-          SizedBox(width: size * 0.32),
-          Text('DueCare', style: display(context, size * 0.9)),
-        ],
-      ],
+      ),
     );
   }
 }
 
-class _MarkPainter extends CustomPainter {
-  _MarkPainter(this.ink, this.due, this.good);
+class MarkPainter extends CustomPainter {
+  MarkPainter({required this.ring, required this.mark, required this.onMark, required this.letter});
 
-  final Color ink, due, good;
+  final Color ring, mark, onMark, letter;
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Drawn in the web mark's own coordinates (apps/web/src/app/icon.svg, viewBox 5 12 70 70).
-    Offset pt(double x, double y) =>
-        Offset((x - 5) / 70 * size.width, (y - 12) / 70 * size.height);
-    Path diamond(List<(double, double)> points) =>
-        Path()..addPolygon([for (final (x, y) in points) pt(x, y)], true);
-    final rose = Paint()..color = ink;
-    canvas.drawPath(diamond([(40, 22), (68, 50), (40, 78), (12, 50)]), rose);
-    canvas.drawOval(
-      Rect.fromPoints(pt(6, 16), pt(46, 56)),
-      Paint()..color = due,
+    canvas.scale(size.width / 100);
+    final inner = RRect.fromLTRBR(11.5, 27.5, 88.5, 72.5, const Radius.circular(22.5));
+    final pencil = Path()
+      ..addPolygon(const [Offset(-10, -10), Offset(64.2, -10), Offset(39.8, 110), Offset(-10, 110)], true);
+    final d = Path()
+      ..fillType = PathFillType.evenOdd
+      ..moveTo(34, 37)
+      ..lineTo(53, 37)
+      ..arcToPoint(const Offset(53, 63), radius: const Radius.circular(13))
+      ..lineTo(34, 63)
+      ..close()
+      ..moveTo(44, 45)
+      ..lineTo(44, 55)
+      ..lineTo(53, 55)
+      ..arcToPoint(const Offset(53, 45), radius: const Radius.circular(5), clockwise: false)
+      ..close();
+    // The D in graphite where the bubble is still empty...
+    canvas.drawPath(d, Paint()..color = letter);
+    // ...and the pencil mark over it, with the D showing through.
+    canvas.save();
+    canvas.clipRRect(inner);
+    canvas.clipPath(pencil);
+    canvas.drawRRect(inner, Paint()..color = mark);
+    canvas.drawPath(d, Paint()..color = onMark);
+    canvas.restore();
+    canvas.drawRRect(
+      RRect.fromLTRBR(8, 24, 92, 76, const Radius.circular(26)),
+      Paint()
+        ..color = ring
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 7,
     );
-    canvas.drawOval(
-      Rect.fromPoints(pt(34, 16), pt(74, 56)),
-      Paint()..color = good,
-    );
-    canvas.drawPath(diamond([(40, 36), (54, 50), (40, 64), (26, 50)]), rose);
   }
 
   @override
-  bool shouldRepaint(_MarkPainter old) =>
-      old.ink != ink || old.due != due || old.good != good;
+  bool shouldRepaint(MarkPainter old) =>
+      old.ring != ring || old.mark != mark || old.onMark != onMark || old.letter != letter;
 }
 
 /// Shown when the server cannot be reached: what is on screen is the saved copy.
@@ -1200,7 +1210,7 @@ class OfflineBanner extends StatelessWidget {
       color: c.band,
       child: Row(
         children: [
-          Icon(Icons.cloud_off, size: 18, color: fg),
+          DueIcon(DueIcons.offline, size: 18, color: fg),
           const SizedBox(width: 10),
           Expanded(
             child: Text(

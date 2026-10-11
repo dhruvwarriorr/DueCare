@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/api.dart';
 import '../state/services.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 
@@ -84,9 +85,9 @@ class _SignInScreenState extends State<SignInScreen> {
                   ),
                   const SizedBox(height: 22),
                   for (final (icon, text) in const [
-                    (Icons.visibility_outlined, 'See what’s due, done and late at a glance'),
-                    (Icons.task_alt_rounded, 'Marked done when you submit'),
-                    (Icons.notifications_active_outlined, 'Reminded before every deadline'),
+                    (DueIcons.week, 'See what’s due, done and late at a glance'),
+                    (DueIcons.done, 'Marked done when you submit'),
+                    (DueIcons.notifications, 'Reminded before every deadline'),
                   ])
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
@@ -95,7 +96,7 @@ class _SignInScreenState extends State<SignInScreen> {
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(color: c.inkWash, borderRadius: BorderRadius.circular(11)),
-                          child: Icon(icon, size: 19, color: c.ink),
+                          child: glyph(icon, size: 19, color: c.ink),
                         ),
                         const SizedBox(width: 12),
                         Expanded(child: Text(text, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
@@ -140,15 +141,14 @@ class _SampleDue extends StatelessWidget {
     final (bg, line) = switch (status) {
       'completed' => (c.goodTint, c.good),
       'missed' => (c.badTint, c.bad),
-      _ => (c.dueTint, c.due),
+      _ => (c.dueTint, c.dueLine),
     };
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(Radii.medium)),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(Radii.medium), border: Border.all(color: line)),
       child: IntrinsicHeight(
         child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Container(width: 5, color: line),
           const SizedBox(width: 12),
           Center(child: Bubble(small: true, fill: status == 'due' ? null : line, stroke: line)),
           const SizedBox(width: 12),

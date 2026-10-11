@@ -7,6 +7,7 @@ import '../core/models.dart';
 import '../core/query.dart';
 import '../state/data.dart';
 import '../state/services.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'subjects.dart';
@@ -33,7 +34,7 @@ class Onboarding extends StatelessWidget {
             },
           ),
           const SizedBox(height: 8),
-          Notice('You can delete your imported data or your whole account at any time from More → Privacy & data.', icon: Icons.lock_outline),
+          Notice('You can delete your imported data or your whole account at any time from More → Privacy & data.', icon: DueIcons.privacy),
         ],
       );
 }
@@ -190,7 +191,7 @@ class _ProfileFormState extends State<ProfileForm> {
                   value: branch.isEmpty ? null : branch,
                   placeholder: 'Choose your branch',
                   title: 'Branch',
-                  icon: Icons.account_tree_outlined,
+                  icon: DueIcons.subjects,
                   options: [for (final b in p.branchOptions) (b.code, '${b.code} · ${b.name}')],
                   onChanged: (v) => setState(() => branch = v),
                 ),
@@ -450,10 +451,10 @@ class _PrivacyControlsState extends State<PrivacyControls> {
                     'reviews; deleted imports stay deleted.',
                 children: [
                   if (cq.isPending) const Loading('Loading sources…'),
-                  if (!cq.isPending && connections.isEmpty) const SettingTile(icon: Icons.inbox_outlined, title: 'No imported sources'),
+                  if (!cq.isPending && connections.isEmpty) const SettingTile(icon: DueIcons.review, title: 'No imported sources'),
                   for (final conn in connections)
                     SettingTile(
-                      icon: conn.service == 'gmail' ? Icons.mail_outline : Icons.school_outlined,
+                      icon: conn.service == 'gmail' ? DueIcons.mail : DueIcons.classroom,
                       title: conn.service == 'gmail' ? 'Gmail' : 'Classroom',
                       subtitle: conn.privacyJobId != null ? 'Privacy operation in progress' : conn.accountEmail,
                       onTap: busy || conn.privacyJobId != null ? null : () => _source(conn),
@@ -466,7 +467,7 @@ class _PrivacyControlsState extends State<PrivacyControls> {
                   children: [
                     for (final j in jobs)
                       SettingTile(
-                        icon: j.status == 'completed' ? Icons.check_circle_outline : Icons.pending_outlined,
+                        icon: j.status == 'completed' ? DueIcons.done : DueIcons.clock,
                         title: j.kind == 'disconnect' ? 'Disconnect' : 'Imported data deletion',
                         subtitle: j.status == 'completed'
                             ? 'Done · ${j.progress['deletedTasks'] ?? 0} tasks removed, ${j.progress['preservedTasks'] ?? 0} kept'
@@ -479,7 +480,7 @@ class _PrivacyControlsState extends State<PrivacyControls> {
                 label: 'Account',
                 children: [
                   SettingTile(
-                    icon: Icons.delete_forever_outlined,
+                    icon: DueIcons.erase,
                     title: 'Delete my account',
                     subtitle: 'Removes your workspace, source access and login. Your Google data stays in Google.',
                     danger: true,

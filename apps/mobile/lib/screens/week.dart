@@ -9,6 +9,7 @@ import '../core/query.dart';
 import '../state/data.dart';
 import '../state/services.dart';
 import '../ui/task_tiles.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'subjects.dart';
@@ -99,13 +100,6 @@ class _WeekScreenState extends State<WeekScreen> with WidgetsBindingObserver {
         selected = mondayOf(today) == monday ? today : monday;
       });
 
-  String get _greeting {
-    final h = ist(DateTime.now()).hour;
-    final part = h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
-    final name = widget.profile.name?.split(' ').first;
-    return name == null || name.isEmpty ? part : '$part, $name';
-  }
-
   @override
   Widget build(BuildContext context) {
     final services = AppScope.of(context);
@@ -115,7 +109,7 @@ class _WeekScreenState extends State<WeekScreen> with WidgetsBindingObserver {
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'add-week',
         onPressed: () => openEditor(context),
-        icon: const Icon(Icons.add_rounded),
+        icon: const DueIcon(DueIcons.add),
         label: const Text('Add task'),
       ),
       body: QueryView(
@@ -144,20 +138,11 @@ class _WeekScreenState extends State<WeekScreen> with WidgetsBindingObserver {
                     floating: true,
                     toolbarHeight: 64,
                     titleSpacing: 20,
-                    title: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(_greeting, style: TextStyle(fontSize: 13.5, color: c.graphite2, fontWeight: FontWeight.w600)),
-                        Text(
-                          '${weekdayNames[weekdayOf(today) - 1]}, ${formatDay(today)}',
-                          style: display(context, 24),
-                        ),
-                      ],
-                    ),
+                    title: Text('${weekdayNames[weekdayOf(today) - 1]}, ${formatDay(today)}', style: display(context, 26)),
                     actions: [
                       IconButton(
                         tooltip: 'Month',
-                        icon: const Icon(Icons.calendar_month_outlined),
+                        icon: const DueIcon(DueIcons.month),
                         onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MonthScreen())),
                       ),
                       const ActivityBell(),
@@ -186,7 +171,7 @@ class _WeekScreenState extends State<WeekScreen> with WidgetsBindingObserver {
                         trailing: Text('${dueOn(day).length}', style: display(context, 15, color: c.graphite2)),
                       ),
                       if (dueOn(day).isEmpty)
-                        _Quiet(week.isPending ? 'Loading…' : 'Nothing due. Enjoy the free time.', icon: Icons.wb_sunny_outlined)
+                        _Quiet(week.isPending ? 'Loading…' : 'Nothing due.', icon: DueIcons.done)
                       else
                         for (final t in dueOn(day)) DueItem(task: t, onOpen: () => openTask(context, t.id)),
                       const SectionLabel('Classes'),
@@ -207,7 +192,7 @@ class _Quiet extends StatelessWidget {
   const _Quiet(this.text, {required this.icon});
 
   final String text;
-  final IconData icon;
+  final Object icon;
 
   @override
   Widget build(BuildContext context) {
@@ -216,7 +201,7 @@ class _Quiet extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       decoration: BoxDecoration(color: c.sheet, borderRadius: BorderRadius.circular(Radii.medium)),
       child: Row(children: [
-        Icon(icon, color: c.graphite2, size: 20),
+        glyph(icon, color: c.graphite2, size: 20),
         const SizedBox(width: 12),
         Expanded(child: Text(text, style: TextStyle(color: c.graphite2))),
       ]),
@@ -303,55 +288,44 @@ class _Stats extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = Palette.of(context);
     final o = overview;
-    if (o == null) return error != null ? ErrorNotice(error, retry: retry) : const SizedBox(height: 74);
+    if (o == null) return error != null ? ErrorNotice(error, retry: retry) : const SizedBox(height: 40);
     final counts = (o['counts'] as Map?) ?? {};
     int n(Object? v) => (v as num? ?? 0).toInt();
+    // The summary counts: "due" always shows; the rest only when there is something to count.
     final items = [
-      ('Due', n(counts['due']), c.due, c.onDue, () => onTasks('due')),
-      ('Missed', n(counts['missed']), c.bad, c.onBad, () => onTasks('missed')),
-      ('No date', n(o['undated']), c.inkTint, c.graphite, () => onTasks('undated')),
-      ('To review', n(o['reviewCount']), c.graphite, c.onGraphite, onReview),
-    ];
-    return Row(
+      ('due', n(counts['due']), c.due, c.onDue, () => onTasks('due')),
+      ('missed', n(counts['missed']), c.bad, c.onBad, () => onTasks('missed')),
+      ('without a date', n(o['undated']), c.inkWash, c.graphite, () => onTasks('undated')),
+      ('to review', n(o['reviewCount']), c.graphite, c.onGraphite, onReview),
+    ].where((i) => i.$1 == 'due' || i.$2 > 0);
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
       children: [
-        for (final (i, (label, value, bg, fg, go)) in items.indexed) ...[
-          if (i > 0) const SizedBox(width: 8),
-          Expanded(
-            child: Material(
-              color: c.sheet,
-              borderRadius: BorderRadius.circular(Radii.medium),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(Radii.medium),
-                onTap: go,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        constraints: const BoxConstraints(minWidth: 30),
-                        height: 30,
-                        padding: const EdgeInsets.symmetric(horizontal: 7),
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: value > 0 || i == 0 ? bg : c.inkWash,
-                          borderRadius: BorderRadius.circular(9),
-                        ),
-                        child: Text('$value', style: display(context, 16, color: value > 0 || i == 0 ? fg : c.graphite2)),
-                      ),
-                      const SizedBox(height: 6),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c.graphite2)),
-                      ),
-                    ],
+        for (final (label, value, bg, fg, go) in items)
+          Material(
+            color: c.sheet,
+            shape: StadiumBorder(side: BorderSide(color: c.inkRule)),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: go,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(5, 5, 14, 5),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Container(
+                    constraints: const BoxConstraints(minWidth: 30),
+                    height: 30,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    alignment: Alignment.center,
+                    decoration: ShapeDecoration(color: bg, shape: const StadiumBorder()),
+                    child: Text('$value', style: display(context, 15, color: fg)),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  Text(label, style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600)),
+                ]),
               ),
             ),
           ),
-        ],
       ],
     );
   }
@@ -494,7 +468,7 @@ class _NewSince extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(children: [
-                  Icon(Icons.auto_awesome_outlined, size: 18, color: c.ink),
+                  DueIcon(DueIcons.fresh, size: 18, color: c.ink),
                   const SizedBox(width: 8),
                   Text('New since your last visit', style: TextStyle(fontWeight: FontWeight.w800, color: c.ink)),
                 ]),
@@ -550,13 +524,13 @@ class _Classes extends StatelessWidget {
               }
             }
             slots.sort((a, b) => a.$1.startTime.compareTo(b.$1.startTime));
-            if (sq.isPending || (tq.isPending && subjects.isNotEmpty)) return const _Quiet('Loading…', icon: Icons.schedule);
+            if (sq.isPending || (tq.isPending && subjects.isNotEmpty)) return const _Quiet('Loading…', icon: DueIcons.clock);
             if (slots.isEmpty) {
               final none = bySubject.values.every((v) => (v as List?)?.isEmpty ?? true);
-              if (!none) return const _Quiet('No classes this day.', icon: Icons.event_available_outlined);
+              if (!none) return const _Quiet('No classes this day.', icon: DueIcons.event);
               return Panel(
                 child: Row(children: [
-                  Icon(Icons.calendar_month_outlined, color: c.ink),
+                  DueIcon(DueIcons.month, color: c.ink),
                   const SizedBox(width: 12),
                   const Expanded(child: Text('Add your timetable to see classes next to your deadlines.')),
                   TextButton(
@@ -619,26 +593,24 @@ class SlotBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = Palette.of(context);
-    final edge = switch (subject.kind) {
-      'lab' => c.ink,
-      'tutorial' => c.inkLine,
-      _ => c.graphite2,
-    };
-    return Container(
+    // The sheet's slot language: theory on white, a lab tinted rose, a tutorial dashed.
+    final tutorial = subject.kind == 'tutorial' && !live;
+    final box = Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: subject.kind == 'lab' ? c.inkWash : c.sheet,
+        color: subject.kind == 'lab' ? c.inkTint : c.sheet,
         borderRadius: BorderRadius.circular(Radii.medium),
-        border: live ? Border.all(color: c.ink, width: 1.6) : null,
+        border: live
+            ? Border.all(color: c.ink, width: 1.6)
+            : (tutorial ? null : Border.all(color: subject.kind == 'lab' ? c.inkLine : c.inkRule)),
       ),
       child: IntrinsicHeight(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(width: 4, color: edge),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                padding: const EdgeInsets.fromLTRB(14, 10, 12, 10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -666,7 +638,31 @@ class SlotBox extends StatelessWidget {
         ),
       ),
     );
+    return tutorial ? CustomPaint(foregroundPainter: _Dashed(c.inkLine), child: box) : box;
   }
+}
+
+class _Dashed extends CustomPainter {
+  _Dashed(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()..addRRect(RRect.fromRectAndRadius((Offset.zero & size).deflate(0.6), const Radius.circular(Radii.medium)));
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    for (final metric in path.computeMetrics()) {
+      for (double d = 0; d < metric.length; d += 9) {
+        canvas.drawPath(metric.extractPath(d, d + 5), paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_Dashed old) => old.color != color;
 }
 
 /// The month: each day's deadlines as dots, and the chosen day's work below.
@@ -752,7 +748,7 @@ class _MonthState extends State<MonthScreen> {
             ),
             SectionLabel('${weekdayNames[weekdayOf(selected) - 1]}, ${formatDay(selected, withYear: true)}'),
             if (on(selected).isEmpty)
-              _Quiet(q.isPending ? 'Loading…' : 'Nothing due this day.', icon: Icons.wb_sunny_outlined)
+              _Quiet(q.isPending ? 'Loading…' : 'Nothing due this day.', icon: DueIcons.done)
             else
               for (final t in on(selected)) DueItem(task: t, onOpen: () => openTask(context, t.id)),
           ],

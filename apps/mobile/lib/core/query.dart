@@ -25,6 +25,8 @@ class Query extends ChangeNotifier {
   bool _stale = true;
   Future<void>? _inflight;
   int _users = 0;
+  // Bumped when the cache is cleared; an answer that started earlier is discarded.
+  int _epoch = 0;
 
   String get root => '${key.first}';
   bool get isPending => data == null && error == null;
@@ -43,16 +45,19 @@ class Query extends ChangeNotifier {
   }
 
   Future<void> _run() async {
+    final epoch = _epoch;
     fetching = true;
     notifyListeners();
     try {
       final result = _pager != null ? await _pager!(null) : await _fetch!();
+      // Signed out (or switched account) while this was loading: never show it.
+      if (epoch != _epoch) return;
       data = result;
       error = null;
       updatedAt = DateTime.now();
       _stale = false;
     } catch (e) {
-      error = e;
+      if (epoch == _epoch) error = e;
     } finally {
       fetching = false;
       notifyListeners();
@@ -66,7 +71,10 @@ class Query extends ChangeNotifier {
     notifyListeners();
     try {
       final current = (data as Map).cast<String, dynamic>();
+      final before = data;
       final next = (await _pager!(current['nextCursor'] as String)) as Map;
+      // A refresh replaced the list meanwhile; appending to the old pages would mix them.
+      if (!identical(data, before)) return;
       data = {
         ...next.cast<String, dynamic>(),
         'items': [...(current['items'] as List), ...(next['items'] as List)],
@@ -164,6 +172,7 @@ class QueryClient {
     _saveTimer?.cancel();
     for (final q in _queries.values) {
       q
+        .._epoch += 1
         ..data = null
         ..error = null
         ..updatedAt = null

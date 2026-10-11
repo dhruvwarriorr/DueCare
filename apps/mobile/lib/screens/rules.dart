@@ -5,6 +5,7 @@ import '../core/models.dart';
 import '../core/query.dart';
 import '../state/data.dart';
 import '../state/services.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 
@@ -339,7 +340,7 @@ class _RulesScreenState extends State<RulesScreen> {
             ),
             IconButton(
               tooltip: 'Delete rule: $text',
-              icon: const Icon(Icons.delete_outline, size: 20),
+              icon: const DueIcon(DueIcons.erase, size: 20),
               onPressed: pending
                   ? null
                   : () => _run(

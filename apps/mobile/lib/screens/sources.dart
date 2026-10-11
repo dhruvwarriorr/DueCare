@@ -7,6 +7,7 @@ import '../core/query.dart';
 import '../state/data.dart';
 import '../state/services.dart';
 import '../state/sync.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 
@@ -143,14 +144,14 @@ class _SourcesScreenState extends State<SourcesScreen> {
                     ),
                     const SizedBox(height: 10),
                     for (final (service, label, icon) in [
-                      ('gmail', 'Gmail', Icons.mail_outline),
-                      ('classroom', 'Google Classroom', Icons.school_outlined),
+                      ('gmail', 'Gmail', DueIcons.mail),
+                      ('classroom', 'Google Classroom', DueIcons.classroom),
                     ])
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         child: Row(
                           children: [
-                            Icon(icon, size: 16, color: c.ink),
+                            glyph(icon, size: 16, color: c.ink),
                             const SizedBox(width: 8),
                             Expanded(child: Text(label)),
                             Text(
@@ -377,10 +378,10 @@ class _ConnectionCardState extends State<_ConnectionCard> {
         children: [
           Row(
             children: [
-              Icon(
+              glyph(
                 conn.service == 'gmail'
-                    ? Icons.mail_outline
-                    : Icons.school_outlined,
+                    ? DueIcons.mail
+                    : DueIcons.classroom,
                 color: p.ink,
               ),
               const SizedBox(width: 10),
@@ -437,7 +438,7 @@ class _ConnectionCardState extends State<_ConnectionCard> {
               if (conn.status == 'active')
                 DueButton(
                   label: 'Sync now',
-                  icon: Icons.sync,
+                  icon: DueIcons.sources,
                   small: true,
                   onPressed:
                       conn.privacyJobId != null ||
@@ -457,7 +458,7 @@ class _ConnectionCardState extends State<_ConnectionCard> {
               if (conn.status == 'active')
                 DueButton(
                   label: 'Reprocess',
-                  icon: Icons.replay,
+                  icon: DueIcons.reopen,
                   small: true,
                   variant: Variant.outline,
                   onPressed: conn.privacyJobId != null || driving || pending
@@ -643,7 +644,7 @@ class _CourseLinksState extends State<_CourseLinks> {
                 const SizedBox(width: 8),
                 DueButton(
                   label: 'Link',
-                  icon: Icons.link,
+                  icon: DueIcons.link,
                   small: true,
                   variant: Variant.outline,
                   onPressed: choice[id] == null || pending
@@ -770,7 +771,7 @@ class _FacultyApprovalState extends State<FacultyApproval> {
                     ] else
                       DueButton(
                         label: 'Approve faculty',
-                        icon: Icons.how_to_reg_outlined,
+                        icon: DueIcons.done,
                         small: true,
                         variant: Variant.outline,
                         onPressed: pending || q.data == null
@@ -924,10 +925,10 @@ class _SenderPreferencesState extends State<_SenderPreferences> {
                       ),
                       child: Row(
                         children: [
-                          Icon(
+                          glyph(
                             pref['action'] == 'block'
                                 ? Icons.block
-                                : Icons.person_add_alt,
+                                : DueIcons.profile,
                             size: 16,
                             color: pref['action'] == 'block'
                                 ? p.bad

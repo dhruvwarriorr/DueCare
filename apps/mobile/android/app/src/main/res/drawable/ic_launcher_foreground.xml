@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The DueCare mark: an answer bubble with a printed D, half marked in rose. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group android:scaleX="0.62" android:scaleY="0.62" android:translateX="23" android:translateY="23">
+        <group>
+            <clip-path android:pathData="M34,27.5 H66 A22.5,22.5 0 0 1 66,72.5 H34 A22.5,22.5 0 0 1 34,27.5 Z" />
+            <path android:fillColor="#C21C58" android:pathData="M-10,-10 H64.2 L39.8,110 H-10 Z" />
+        </group>
+        <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" android:pathData="M34,37 H53 A13,13 0 0 1 53,63 H34 Z M44,45 V55 H53 A5,5 0 0 0 53,45 Z" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="7" android:pathData="M34,24 H66 A26,26 0 0 1 66,76 H34 A26,26 0 0 1 34,24 Z" />
+    </group>
+</vector>

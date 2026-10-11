@@ -9,6 +9,7 @@ import '../core/models.dart';
 import '../core/query.dart';
 import '../state/data.dart';
 import '../state/services.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'workspace.dart';
@@ -21,21 +22,21 @@ const _origins = {
 };
 const _sourceNames = {'manual': 'Added by you', 'gmail': 'Gmail', 'classroom': 'Google Classroom'};
 const _timeLabels = {
-  'submissionOpensAt': ('Submission opens', Icons.lock_open_outlined),
-  'availabilityOpensAt': ('Quiz window opens', Icons.lock_open_outlined),
-  'availabilityClosesAt': ('Quiz window closes', Icons.lock_clock_outlined),
-  'loginByAt': ('Log in by', Icons.login_rounded),
-  'reportingAt': ('Report at', Icons.how_to_reg_outlined),
-  'startsAt': ('Test starts', Icons.play_circle_outline),
-  'endsAt': ('Test ends', Icons.stop_circle_outlined),
+  'submissionOpensAt': ('Submission opens', DueIcons.clock),
+  'availabilityOpensAt': ('Quiz window opens', DueIcons.clock),
+  'availabilityClosesAt': ('Quiz window closes', DueIcons.clock),
+  'loginByAt': ('Log in by', DueIcons.clock),
+  'reportingAt': ('Report at', DueIcons.done),
+  'startsAt': ('Test starts', DueIcons.clock),
+  'endsAt': ('Test ends', DueIcons.clock),
 };
 const _detailLabels = {
-  'assessmentLabel': ('Assessment', Icons.assignment_outlined),
+  'assessmentLabel': ('Assessment', DueIcons.tasks),
   'deliverableLabel': ('Deliverable', Icons.inventory_2_outlined),
   'location': ('Location', Icons.place_outlined),
-  'estimatedEffortMinutes': ('Estimated effort (minutes)', Icons.timer_outlined),
-  'durationMinutes': ('Duration (minutes)', Icons.hourglass_bottom_rounded),
-  'syllabus': ('Syllabus', Icons.menu_book_outlined),
+  'estimatedEffortMinutes': ('Estimated effort (minutes)', DueIcons.clock),
+  'durationMinutes': ('Duration (minutes)', DueIcons.clock),
+  'syllabus': ('Syllabus', DueIcons.subjects),
   'permittedTools': ('Permitted tools', Icons.handyman_outlined),
   'preparationInstructions': ('Preparation', Icons.lightbulb_outline),
 };
@@ -100,14 +101,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             actions: t == null
                 ? null
                 : [
-                    IconButton(tooltip: 'Edit', icon: const Icon(Icons.edit_outlined), onPressed: () => openEditor(context, t)),
+                    IconButton(tooltip: 'Edit', icon: const DueIcon(DueIcons.edit), onPressed: () => openEditor(context, t)),
                     PopupMenuButton<String>(
                       tooltip: 'More',
                       onSelected: (v) => v == 'delete' ? _delete(t) : null,
                       itemBuilder: (_) => [
                         PopupMenuItem(
                           value: 'delete',
-                          child: Row(children: [Icon(Icons.delete_outline, color: c.bad), const SizedBox(width: 12), const Text('Delete task')]),
+                          child: Row(children: [DueIcon(DueIcons.erase, color: c.bad), const SizedBox(width: 12), const Text('Delete task')]),
                         ),
                       ],
                     ),
@@ -127,7 +128,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         foregroundColor: done ? c.graphite : c.onGood,
                       ),
                       onPressed: pending ? null : () => _toggle(t),
-                      icon: Icon(done ? Icons.replay_rounded : Icons.check_rounded),
+                      icon: glyph(done ? DueIcons.reopen : Icons.check_rounded),
                       label: Text(done ? 'Reopen task' : 'Mark as done'),
                     ),
                   ),
@@ -188,8 +189,8 @@ class _Body extends StatelessWidget {
         const SizedBox(height: 12),
         Wrap(spacing: 8, runSpacing: 8, children: [
           StatusPill(t.status),
-          Tag(t.isTest ? 'Test' : 'Assignment', icon: t.isTest ? Icons.quiz_outlined : Icons.assignment_outlined),
-          Tag('${t.priority} priority', icon: Icons.flag_outlined),
+          Tag(t.isTest ? 'Test' : 'Assignment', icon: t.isTest ? DueIcons.event : DueIcons.tasks),
+          Tag('${t.priority} priority', icon: DueIcons.flag),
         ]),
         if (t.hiddenByRule != null)
           Notice('Hidden from your lists by the rule “${t.hiddenByRule!['name'] ?? 'a rule'}”. Turn it off in More → Rules to show it again.', warn: true),
@@ -198,36 +199,37 @@ class _Body extends StatelessWidget {
         Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(color: t.status == 'missed' ? c.badTint : c.sheet, borderRadius: BorderRadius.circular(Radii.card)),
-          child: Row(children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(color: statusColors(context, t.status).bg, borderRadius: BorderRadius.circular(14)),
-              child: Icon(t.dueAt == null ? Icons.event_busy_outlined : Icons.event_rounded, color: statusColors(context, t.status).fg),
-            ),
-            const SizedBox(width: 14),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(d.main, style: display(context, 19)),
                 if (d.note != null) Text(d.note!, style: TextStyle(color: c.graphite2, fontSize: 13)),
-                if (left != null && t.status == 'due' && !left.isNegative)
-                  Text('in ${countdown(left)}', style: TextStyle(color: c.ink, fontWeight: FontWeight.w700, fontSize: 13.5)),
                 if (t.timingTentative?['question'] != null)
                   Text('${t.timingTentative!['question']}', style: TextStyle(color: c.graphite2, fontSize: 12.5)),
               ]),
             ),
+            // The time left, read at a glance as on the week's next-due card.
+            if (left != null && t.status == 'due' && !left.isNegative) ...[
+              const SizedBox(width: 12),
+              Text.rich(
+                TextSpan(children: [
+                  TextSpan(text: 'in ', style: TextStyle(color: c.graphite2, fontSize: 13)),
+                  TextSpan(text: countdown(left), style: display(context, 19, color: c.ink)),
+                ]),
+              ),
+            ],
           ]),
         ),
         GroupCard(
           label: 'Details',
           children: [
             SettingTile(
-              icon: Icons.class_outlined,
+              icon: DueIcons.subjects,
               title: '${t.subjectName ?? 'No subject'}${t.subjectKind != null ? ' · ${t.subjectKind}' : ''}',
               subtitle: subjectNote ?? 'Subject',
             ),
             SettingTile(
-              icon: t.completedAt != null ? Icons.task_alt_rounded : Icons.radio_button_unchecked,
+              icon: t.completedAt != null ? DueIcons.done : Icons.radio_button_unchecked,
               title: t.completedAt != null ? (_origins[t.completionOrigin ?? 'manual'] ?? 'Completed') : 'Not done yet',
               subtitle: [
                 if (t.completedAt != null) formatTime(t.completedAt),
@@ -235,14 +237,14 @@ class _Body extends StatelessWidget {
               ].join(' · ').ifEmpty,
             ),
             SettingTile(
-              icon: Icons.source_outlined,
+              icon: DueIcons.sources,
               title: (t.sources.isEmpty ? ['manual'] : t.sources).map((s) => _sourceNames[s] ?? s).join(', '),
               subtitle: 'Source',
             ),
-            if (t.generalBatch != null) SettingTile(icon: Icons.groups_outlined, title: 'Batch ${t.generalBatch}', subtitle: 'Applies to your batch'),
+            if (t.generalBatch != null) SettingTile(icon: DueIcons.profile, title: 'Batch ${t.generalBatch}', subtitle: 'Applies to your batch'),
             if (t.dateWindowStart != null)
               SettingTile(
-                icon: Icons.date_range_outlined,
+                icon: DueIcons.event,
                 title: formatRange(t.dateWindowStart!, t.dateWindowEnd ?? t.dateWindowStart!),
                 subtitle: dueWindow(t) != null ? 'Date window · exact day not announced' : 'Date window',
               ),
@@ -280,10 +282,10 @@ class _TextCard extends StatelessWidget {
 }
 
 const _kindNames = {
-  'gmail_message': ('Email', Icons.mail_outline),
-  'classroom_announcement': ('Classroom post', Icons.campaign_outlined),
-  'classroom_coursework': ('Classroom assignment', Icons.school_outlined),
-  'classroom_submission': ('Classroom turn-in', Icons.upload_file_outlined),
+  'gmail_message': ('Email', DueIcons.mail),
+  'classroom_announcement': ('Classroom post', DueIcons.classroom),
+  'classroom_coursework': ('Classroom assignment', DueIcons.classroom),
+  'classroom_submission': ('Classroom turn-in', DueIcons.upload),
 };
 
 /// Where the task came from: who posted it, when, and a link back to the original.
@@ -318,14 +320,14 @@ class _Sources extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon((_kindNames[e.sourceKind] ?? ('Source', Icons.source_outlined)).$2, color: c.ink, size: 22),
+                    glyph((_kindNames[e.sourceKind] ?? ('Source', DueIcons.sources)).$2, color: c.ink, size: 22),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '${(_kindNames[e.sourceKind] ?? ('Source', Icons.source_outlined)).$1}'
+                            '${(_kindNames[e.sourceKind] ?? ('Source', DueIcons.sources)).$1}'
                             '${e.sourceKind == 'gmail_message' ? ((e.senderName ?? e.sender) != null ? ' from ${e.senderName ?? e.sender}' : '') : '${e.postedBy != null ? ' by ${e.postedBy}' : ''}${e.courseName != null ? ' in ${e.courseName}' : ''}'}',
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
@@ -381,7 +383,7 @@ class _History extends StatelessWidget {
         decoration: BoxDecoration(color: c.sheet, borderRadius: BorderRadius.circular(Radii.card)),
         clipBehavior: Clip.antiAlias,
         child: ExpansionTile(
-          leading: Icon(Icons.history_rounded, color: c.ink),
+          leading: DueIcon(DueIcons.reopen, color: c.ink),
           title: const Text('Change history', style: TextStyle(fontWeight: FontWeight.w700)),
           childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
           children: [

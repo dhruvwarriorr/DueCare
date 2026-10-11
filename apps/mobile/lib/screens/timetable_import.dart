@@ -11,6 +11,7 @@ import '../core/query.dart';
 import '../core/timetable_draft.dart';
 import '../state/data.dart';
 import '../state/services.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 
@@ -372,7 +373,7 @@ class _TimetableImportScreenState extends State<TimetableImportScreen> {
         buttons = [
           DueButton(
             label: 'Start over',
-            icon: Icons.replay,
+            icon: DueIcons.reopen,
             variant: Variant.ghost,
             onPressed: busy ? null : () => _run(() => _interpret()),
           ),
@@ -431,7 +432,7 @@ class _TimetableImportScreenState extends State<TimetableImportScreen> {
             padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
             decoration: BoxDecoration(color: c.inkWash, border: Border.all(color: c.inkLine, width: 1.5)),
             child: Column(children: [
-              Icon(Icons.upload_file, size: 28, color: c.ink),
+              DueIcon(DueIcons.upload, size: 28, color: c.ink),
               const SizedBox(height: 8),
               const Text('Choose your timetable', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
               Text('The timetable PDF, or up to four scheduler screenshots', style: TextStyle(color: c.graphite2)),
@@ -501,7 +502,7 @@ class _TimetableImportScreenState extends State<TimetableImportScreen> {
             SizedBox(
               width: 20,
               height: 20,
-              child: active ? CircularProgressIndicator(strokeWidth: 2, color: c.ink) : Icon(done ? Icons.check : Icons.circle_outlined, size: 18, color: done ? c.good : c.inkLine),
+              child: active ? CircularProgressIndicator(strokeWidth: 2, color: c.ink) : glyph(done ? Icons.check : Icons.circle_outlined, size: 18, color: done ? c.good : c.inkLine),
             ),
             const SizedBox(width: 12),
             Text(label, style: TextStyle(fontWeight: active ? FontWeight.w700 : FontWeight.w500)),
@@ -616,7 +617,7 @@ class _TimetableImportScreenState extends State<TimetableImportScreen> {
             if (unlinked.any((c) => c.label.trim().isNotEmpty))
               DueButton(
                 label: busy ? 'Creating subjects…' : 'Instant create subjects',
-                icon: Icons.add,
+                icon: DueIcons.add,
                 small: true,
                 onPressed: busy ? null : () => instant(unlinked, byId, subjects),
               ),
@@ -642,7 +643,7 @@ class _TimetableImportScreenState extends State<TimetableImportScreen> {
               ),
             DueButton(
               label: 'Add a missed slot',
-              icon: Icons.add,
+              icon: DueIcons.add,
               small: true,
               variant: Variant.ghost,
               onPressed: () => setState(() {
@@ -818,7 +819,7 @@ class _TimetableImportScreenState extends State<TimetableImportScreen> {
             Expanded(child: Text('${weekdayNames[weekday - 1]} · ${_slotTime('${r['startTime'] ?? ''}')} – ${_slotTime('${r['endTime'] ?? ''}')}')),
             IconButton(
               tooltip: 'Exclude ${weekdayNames[weekday - 1]} ${r['startTime']}',
-              icon: const Icon(Icons.delete_outline, size: 18),
+              icon: const DueIcon(DueIcons.erase, size: 18),
               onPressed: () => update({v.id}, {'include': false, 'exclusionReason': 'Excluded by you'}),
             ),
           ]),
@@ -995,7 +996,7 @@ class _CreateSubjectState extends State<_CreateSubject> {
     if (!open) {
       return Wrap(crossAxisAlignment: WrapCrossAlignment.center, spacing: 8, children: [
         Text('Choose a subject', style: TextStyle(color: c.ink, fontWeight: FontWeight.w600)),
-        DueButton(label: 'Create subject from this', icon: Icons.add, small: true, variant: Variant.ghost, onPressed: () => setState(() => open = true)),
+        DueButton(label: 'Create subject from this', icon: DueIcons.add, small: true, variant: Variant.ghost, onPressed: () => setState(() => open = true)),
       ]);
     }
     // The same name and kind is never created twice; link the existing subject instead.

@@ -74,8 +74,8 @@ class DoneButton extends StatelessWidget {
     final busy = quick.pending(task.id);
     if (task.status == 'completed') {
       return SizedBox(
-        width: compact ? 44 : 48,
-        height: 44,
+        width: 48,
+        height: 48,
         child: Center(child: Bubble(small: compact, fill: c.bg, stroke: c.line, child: Icon(Icons.check, size: compact ? 10 : 12, color: c.fg))),
       );
     }
@@ -86,8 +86,8 @@ class DoneButton extends StatelessWidget {
         onTap: busy ? null : () => quick.complete(context, task),
         customBorder: const CircleBorder(),
         child: SizedBox(
-          width: compact ? 44 : 48,
-          height: 44,
+          width: 48,
+          height: 48,
           child: Center(
             child: Bubble(
               small: compact,

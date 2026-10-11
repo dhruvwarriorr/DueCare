@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../notifications/prefs.dart';
 import '../state/services.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 
@@ -40,7 +41,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _save?.cancel();
+    // Leaving straight after a change still saves it.
+    if (_save?.isActive ?? false) {
+      _save!.cancel();
+      unawaited(_persist(leaving: true));
+    }
     super.dispose();
   }
 
@@ -90,18 +95,20 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
     _save = Timer(const Duration(milliseconds: 500), _persist);
   }
 
-  Future<void> _persist() async {
+  Future<void> _persist({bool leaving = false}) async {
     final chosen = prefs!;
-    setState(() => saving = true);
+    final api = services.api;
+    final notifier = services.notifier;
+    if (!leaving) setState(() => saving = true);
     try {
-      final body = (await services.api.send('PUT', '/notification-settings', body: {'revision': revision, 'settings': chosen.toJson()})) as Map;
+      final body = (await api.send('PUT', '/notification-settings', body: {'revision': revision, 'settings': chosen.toJson()})) as Map;
       revision = body['revision'] as int?;
       await chosen.save();
-      unawaited(services.notifier.refresh(services.api, prefs: chosen));
+      unawaited(notifier.refresh(api, prefs: chosen));
       if (mounted) setState(() => error = null);
     } on ApiError catch (e) {
       if (mounted) setState(() => error = e);
-      if (e.status == 409) await _load();
+      if (e.status == 409 && mounted) await _load();
     }
     if (mounted) setState(() => saving = false);
   }
@@ -148,7 +155,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
           Panel(
             color: c.dueTint,
             child: Row(children: [
-              Icon(Icons.notifications_off_outlined, color: c.dueText),
+              DueIcon(DueIcons.activity, color: c.dueText),
               const SizedBox(width: 12),
               const Expanded(child: Text('Notifications are off for DueCare on this phone.', style: TextStyle(fontWeight: FontWeight.w600))),
               TextButton(onPressed: _turnOn, child: const Text('Turn on')),
@@ -163,7 +170,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
             footer: exact || !p.reminders ? null : 'Reminders may arrive a few minutes late. Allow precise timing for exact times.',
             children: [
               SwitchTile(
-                icon: Icons.alarm_rounded,
+                icon: DueIcons.clock,
                 title: 'Remind me before deadlines',
                 value: p.reminders,
                 onChanged: (v) => change({'reminders': v}),
@@ -203,7 +210,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
                 ),
                 if (!exact)
                   SettingTile(
-                    icon: Icons.timer_outlined,
+                    icon: DueIcons.clock,
                     title: 'Allow precise timing',
                     subtitle: 'Lets reminders arrive exactly on time',
                     onTap: () async {
@@ -218,7 +225,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
             label: 'Daily summary',
             children: [
               SwitchTile(
-                icon: Icons.wb_twilight_rounded,
+                icon: DueIcons.event,
                 title: 'Morning summary',
                 subtitle: 'What’s due that day',
                 value: p.digest,
@@ -226,7 +233,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
               ),
               if (p.digest)
                 SettingTile(
-                  icon: Icons.schedule_rounded,
+                  icon: DueIcons.clock,
                   title: 'At ${p.digestTime}',
                   subtitle: 'IST',
                   onTap: () => _time('digestTime', p.digestTime),
@@ -240,18 +247,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
                 : 'Instant updates aren’t set up for this app yet, so these arrive when you open DueCare.',
             children: [
               SwitchTile(
-                icon: Icons.bolt_rounded,
+                icon: DueIcons.activity,
                 title: 'Instant updates',
                 subtitle: pushReady ? (devices > 0 ? 'On for this phone' : 'Connecting this phone…') : 'Not available yet',
                 value: p.push,
                 onChanged: (v) => change({'push': v}),
               ),
               for (final (key, icon, title, subtitle) in const [
-                ('newWork', Icons.add_task_rounded, 'New work', 'Assignments and tests found in Gmail or Classroom'),
-                ('changes', Icons.edit_calendar_outlined, 'Changes', 'Deadlines or details that changed'),
-                ('review', Icons.inbox_outlined, 'Needs your review', 'Items DueCare couldn’t settle'),
-                ('completed', Icons.task_alt_rounded, 'Marked done for you', 'From your submission or turn-in'),
-                ('syncIssues', Icons.sync_problem_rounded, 'Sync problems', 'When a source needs attention'),
+                ('newWork', DueIcons.add, 'New work', 'Assignments and tests found in Gmail or Classroom'),
+                ('changes', DueIcons.event, 'Changes', 'Deadlines or details that changed'),
+                ('review', DueIcons.review, 'Needs your review', 'Items DueCare couldn’t settle'),
+                ('completed', DueIcons.done, 'Marked done for you', 'From your submission or turn-in'),
+                ('syncIssues', DueIcons.sources, 'Sync problems', 'When a source needs attention'),
               ])
                 SwitchTile(
                   icon: icon,
@@ -266,15 +273,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> with WidgetsB
             label: 'Quiet hours',
             footer: 'Notifications still arrive, silently.',
             children: [
-              SwitchTile(icon: Icons.bedtime_outlined, title: 'Quiet hours', value: p.quietHours, onChanged: (v) => change({'quietHours': v})),
+              SwitchTile(icon: DueIcons.quiet, title: 'Quiet hours', value: p.quietHours, onChanged: (v) => change({'quietHours': v})),
               if (p.quietHours) ...[
-                SettingTile(icon: Icons.nightlight_outlined, title: 'From ${p.quietStart}', subtitle: 'IST', onTap: () => _time('quietStart', p.quietStart)),
-                SettingTile(icon: Icons.light_mode_outlined, title: 'Until ${p.quietEnd}', subtitle: 'IST', onTap: () => _time('quietEnd', p.quietEnd)),
+                SettingTile(icon: DueIcons.quiet, title: 'From ${p.quietStart}', subtitle: 'IST', onTap: () => _time('quietStart', p.quietStart)),
+                SettingTile(icon: DueIcons.clock, title: 'Until ${p.quietEnd}', subtitle: 'IST', onTap: () => _time('quietEnd', p.quietEnd)),
               ],
             ],
           ),
           const SizedBox(height: 20),
-          DueButton(label: 'Send a test notification', icon: Icons.send_rounded, variant: Variant.tonal, expand: true, onPressed: _test),
+          DueButton(label: 'Send a test notification', icon: DueIcons.send, variant: Variant.tonal, expand: true, onPressed: _test),
           if (kDebugMode) ...[
             const SizedBox(height: 8),
             DueButton(

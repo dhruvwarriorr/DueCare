@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/deadline.dart';
 import '../core/models.dart';
 import '../state/quick_complete.dart';
+import 'icons.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -73,7 +74,7 @@ class TaskRow extends StatelessWidget {
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        Icon(t.dueAt == null ? Icons.event_busy_outlined : Icons.schedule_rounded, size: 16, color: c.ink),
+                        glyph(t.dueAt == null ? DueIcons.undated : DueIcons.clock, size: 16, color: c.ink),
                         const SizedBox(width: 6),
                         Flexible(
                           child: Text.rich(
@@ -121,7 +122,7 @@ class DueItem extends StatelessWidget {
     final (bg, line, fg) = switch (t.status) {
       'completed' => (c.goodTint, c.good, c.graphite),
       'missed' => (c.badTint, c.bad, c.badText),
-      _ => (c.dueTint, c.due, c.graphite),
+      _ => (c.dueTint, c.dueLine, c.graphite),
     };
     final word = switch (t.status) {
       'missed' => 'missed',
@@ -130,9 +131,10 @@ class DueItem extends StatelessWidget {
     };
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
+      // Status shows in the tint, the 1px stroke and the bubble: the sheet's due item.
       child: Material(
         color: bg,
-        borderRadius: BorderRadius.circular(Radii.medium),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.medium), side: BorderSide(color: line)),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onOpen,
@@ -140,7 +142,7 @@ class DueItem extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Container(width: 5, color: line),
+                const SizedBox(width: 4),
                 if (t.status == 'completed')
                   SizedBox(
                     width: 44,

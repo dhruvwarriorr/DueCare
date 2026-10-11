@@ -11,6 +11,7 @@ import '../core/query.dart';
 import '../state/data.dart';
 import '../state/services.dart';
 import '../ui/task_tiles.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'workspace.dart';
@@ -179,7 +180,7 @@ class _TasksScreenState extends State<TasksScreen> {
             return Scaffold(
               floatingActionButton: selecting
                   ? null
-                  : FloatingActionButton(heroTag: 'add-tasks', tooltip: 'Add task', onPressed: () => openEditor(context), child: const Icon(Icons.add_rounded)),
+                  : FloatingActionButton(heroTag: 'add-tasks', tooltip: 'Add task', onPressed: () => openEditor(context), child: const DueIcon(DueIcons.add)),
               bottomNavigationBar: selecting ? _bulkBar(subjects) : null,
               body: NotificationListener<ScrollNotification>(
                 onNotification: (n) {
@@ -215,7 +216,7 @@ class _TasksScreenState extends State<TasksScreen> {
                           actions: [
                             IconButton(
                               tooltip: 'Search',
-                              icon: Icon(searching ? Icons.search_off_rounded : Icons.search_rounded),
+                              icon: glyph(searching ? Icons.close : DueIcons.search),
                               onPressed: () => setState(() {
                                 searching = !searching;
                                 if (!searching && q.isNotEmpty) {
@@ -227,11 +228,11 @@ class _TasksScreenState extends State<TasksScreen> {
                             IconButton(
                               tooltip: 'Filters',
                               onPressed: () => _openFilters(subjects),
-                              icon: Badge(isLabelVisible: filters.count > 0, label: Text('${filters.count}'), child: const Icon(Icons.tune_rounded)),
+                              icon: Badge(isLabelVisible: filters.count > 0, label: Text('${filters.count}'), child: const DueIcon(DueIcons.filter)),
                             ),
                             PopupMenuButton<String>(
                               tooltip: 'Sort',
-                              icon: const Icon(Icons.sort_rounded),
+                              icon: const DueIcon(DueIcons.sort),
                               initialValue: sort,
                               onSelected: chooseSort,
                               itemBuilder: (_) => const [
@@ -255,7 +256,7 @@ class _TasksScreenState extends State<TasksScreen> {
                                   textInputAction: TextInputAction.search,
                                   decoration: InputDecoration(
                                     hintText: 'Search tasks and notes',
-                                    prefixIcon: Icon(Icons.search_rounded, color: c.ink),
+                                    prefixIcon: DueIcon(DueIcons.search, color: c.ink),
                                     suffixIcon: search.text.isEmpty
                                         ? null
                                         : IconButton(
@@ -295,7 +296,7 @@ class _TasksScreenState extends State<TasksScreen> {
                               Padding(
                                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
                                 child: Row(children: [
-                                  Icon(Icons.filter_alt_outlined, size: 16, color: c.ink),
+                                  DueIcon(DueIcons.filter, size: 16, color: c.ink),
                                   const SizedBox(width: 6),
                                   Text('${filters.count} ${filters.count == 1 ? 'filter' : 'filters'} on', style: TextStyle(color: c.graphite2, fontWeight: FontWeight.w600)),
                                   const Spacer(),
@@ -311,7 +312,7 @@ class _TasksScreenState extends State<TasksScreen> {
                       else if (items.isEmpty)
                         SliverToBoxAdapter(
                           child: EmptyState(
-                            icon: q.isNotEmpty ? Icons.search_off_rounded : Icons.task_alt_rounded,
+                            icon: q.isNotEmpty ? DueIcons.search : DueIcons.done,
                             title: q.isNotEmpty ? 'No matches' : 'Nothing here',
                             body: q.isNotEmpty ? 'Try other words, or clear the filters.' : 'Try another filter, or add something you need to do.',
                           ),
@@ -370,7 +371,7 @@ class _TasksScreenState extends State<TasksScreen> {
   Widget _bulkBar(List<Subject> subjects) {
     final c = Palette.of(context);
     final none = (selected?.isEmpty ?? true) || bulkPending;
-    Widget action(IconData icon, String label, VoidCallback? onTap, {bool danger = false}) => Expanded(
+    Widget action(Object icon, String label, VoidCallback? onTap, {bool danger = false}) => Expanded(
           child: InkWell(
             onTap: onTap,
             borderRadius: BorderRadius.circular(Radii.medium),
@@ -379,7 +380,7 @@ class _TasksScreenState extends State<TasksScreen> {
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(icon, color: danger ? c.bad : c.graphite),
+                  glyph(icon, color: danger ? c.bad : c.graphite),
                   const SizedBox(height: 4),
                   Text(label, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: danger ? c.bad : c.graphite)),
                 ]),
@@ -394,15 +395,15 @@ class _TasksScreenState extends State<TasksScreen> {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Row(children: [
-            action(Icons.check_circle_outline, 'Done', none ? null : () => _bulk({'action': 'complete'})),
-            action(Icons.replay_rounded, 'Reopen', none ? null : () => _bulk({'action': 'reopen'})),
-            action(Icons.drive_file_move_outline, 'Move', none
+            action(DueIcons.done, 'Done', none ? null : () => _bulk({'action': 'complete'})),
+            action(DueIcons.reopen, 'Reopen', none ? null : () => _bulk({'action': 'reopen'})),
+            action(DueIcons.subjects, 'Move', none
                 ? null
                 : () async {
                     final picked = await pick<String>(context, title: 'Move to subject', options: [for (final s in subjects) (s.id, s.label)]);
                     if (picked != null) await _bulk({'action': 'subject', 'subjectId': picked.$1});
                   }),
-            action(Icons.delete_outline, 'Delete', none
+            action(DueIcons.erase, 'Delete', none
                 ? null
                 : () async {
                     final n = selected!.length;
@@ -433,12 +434,12 @@ class _Swipe extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = Palette.of(context);
     final done = task.status == 'completed';
-    Widget bg(Color color, Color fg, IconData icon, String label, Alignment align) => Container(
+    Widget bg(Color color, Color fg, Object icon, String label, Alignment align) => Container(
           decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(Radii.card)),
           padding: const EdgeInsets.symmetric(horizontal: 24),
           alignment: align,
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, color: fg),
+            glyph(icon, color: fg),
             const SizedBox(width: 8),
             Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.w800)),
           ]),
@@ -446,9 +447,9 @@ class _Swipe extends StatelessWidget {
     return Dismissible(
       key: ValueKey('swipe-${task.id}-${task.revision}'),
       background: done
-          ? bg(c.dueTint, c.dueText, Icons.replay_rounded, 'Reopen', Alignment.centerLeft)
+          ? bg(c.dueTint, c.dueText, DueIcons.reopen, 'Reopen', Alignment.centerLeft)
           : bg(c.good, c.onGood, Icons.check_rounded, 'Done', Alignment.centerLeft),
-      secondaryBackground: bg(c.bad, c.onBad, Icons.delete_outline, 'Delete', Alignment.centerRight),
+      secondaryBackground: bg(c.bad, c.onBad, DueIcons.erase, 'Delete', Alignment.centerRight),
       confirmDismiss: (direction) async {
         if (direction == DismissDirection.startToEnd) {
           onComplete();

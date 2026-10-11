@@ -8,6 +8,7 @@ import '../core/models.dart';
 import '../core/query.dart';
 import '../state/data.dart';
 import '../state/services.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 
@@ -154,7 +155,7 @@ class _TaskEditorScreenState extends State<TaskEditorScreen> {
               label: 'Subject',
               child: SelectField<String>(
                 value: subjectId,
-                icon: Icons.class_outlined,
+                icon: DueIcons.subjects,
                 title: 'Subject',
                 options: [('', 'No subject'), for (final s in subjectsOf(sq)) (s.id, s.label)],
                 onChanged: (v) => setState(() => subjectId = v),

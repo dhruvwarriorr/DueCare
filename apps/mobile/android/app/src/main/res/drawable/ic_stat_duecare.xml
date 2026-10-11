@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The bubble-heart mark as a one-colour silhouette for the status bar. -->
+<!-- The mark as a one-colour status bar icon. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:viewportWidth="24"
-    android:viewportHeight="24">
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M12,3.43L21.6,13.03L12,22.63L2.4,13.03Z M0.34,8.23a6.86,6.86 0,1 0,13.72 0a6.86,6.86 0,1 0,-13.72 0Z M9.94,8.23a6.86,6.86 0,1 0,13.72 0a6.86,6.86 0,1 0,-13.72 0Z" />
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+    <group android:scaleX="1.0" android:scaleY="1.0" android:translateX="0" android:translateY="0">
+        <group>
+            <clip-path android:pathData="M34,27.5 H66 A22.5,22.5 0 0 1 66,72.5 H34 A22.5,22.5 0 0 1 34,27.5 Z" />
+            <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" android:pathData="M-10,-10 H64.2 L39.8,110 H-10 Z M34,37 H53 A13,13 0 0 1 53,63 H34 Z M44,45 V55 H53 A5,5 0 0 0 53,45 Z" />
+        </group>
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="7" android:pathData="M34,24 H66 A26,26 0 0 1 66,76 H34 A26,26 0 0 1 34,24 Z" />
+    </group>
 </vector>

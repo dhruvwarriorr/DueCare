@@ -11,6 +11,7 @@ import '../notifications/planner.dart' as planner;
 import '../notifications/prefs.dart';
 import '../state/data.dart';
 import '../state/services.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'activity.dart';
@@ -223,14 +224,14 @@ class ShellState extends State<Shell> with WidgetsBindingObserver {
               selectedIndex: tab,
               onDestinationSelected: go,
               destinations: [
-                const NavigationDestination(icon: Icon(Icons.view_week_outlined), selectedIcon: Icon(Icons.view_week), label: 'Week'),
-                const NavigationDestination(icon: Icon(Icons.checklist_rounded), selectedIcon: Icon(Icons.checklist_rounded), label: 'Tasks'),
+                const NavigationDestination(icon: DueIcon(DueIcons.week), selectedIcon: DueIcon(DueIcons.week, filled: true), label: 'Week'),
+                const NavigationDestination(icon: DueIcon(DueIcons.tasks), selectedIcon: DueIcon(DueIcons.tasks, filled: true), label: 'Tasks'),
                 NavigationDestination(
-                  icon: Badge(isLabelVisible: review > 0, label: Text('$review'), child: const Icon(Icons.inbox_outlined)),
-                  selectedIcon: Badge(isLabelVisible: review > 0, label: Text('$review'), child: const Icon(Icons.inbox)),
+                  icon: Badge(isLabelVisible: review > 0, label: Text('$review'), child: const DueIcon(DueIcons.review)),
+                  selectedIcon: Badge(isLabelVisible: review > 0, label: Text('$review'), child: const DueIcon(DueIcons.review, filled: true)),
                   label: 'Review',
                 ),
-                const NavigationDestination(icon: Icon(Icons.grid_view_outlined), selectedIcon: Icon(Icons.grid_view_rounded), label: 'More'),
+                const NavigationDestination(icon: DueIcon(DueIcons.more), selectedIcon: DueIcon(DueIcons.more, filled: true), label: 'More'),
               ],
             ),
           );
@@ -255,7 +256,7 @@ class ActivityBell extends StatelessWidget {
         return IconButton(
           tooltip: 'Activity${unread > 0 ? ', $unread unread' : ''}',
           onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ActivityScreen())),
-          icon: Badge(isLabelVisible: unread > 0, label: Text(unread > 99 ? '99+' : '$unread'), child: const Icon(Icons.notifications_none_rounded)),
+          icon: Badge(isLabelVisible: unread > 0, label: Text(unread > 99 ? '99+' : '$unread'), child: const DueIcon(DueIcons.activity)),
         );
       },
     );

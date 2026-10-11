@@ -79,7 +79,9 @@ class Api {
     } on http.ClientException {
       throw ApiError('Can’t reach DueCare. Check your connection and try again', 0, code: 'OFFLINE');
     }
-    return _decode(response, bearer: bearer);
+    // Only a rejected session ends the sign-in: not a refused sign-in step, nor a request
+    // made with another (older) handle.
+    return _decode(response, sessionRejected: handle != null && handle == session.handle);
   }
 
   /// Send files as multipart form data (timetable extraction on a host without upload storage).
@@ -99,7 +101,7 @@ class Api {
     } on Exception {
       throw ApiError('Can’t reach DueCare. Check your connection and try again', 0, code: 'OFFLINE');
     }
-    return _decode(response);
+    return _decode(response, sessionRejected: session.handle != null);
   }
 
   /// Upload a file to a signed storage URL the API handed out (timetable originals).
@@ -115,7 +117,7 @@ class Api {
     if (response.statusCode >= 300) throw ApiError('Could not upload the timetable. Please try again', response.statusCode);
   }
 
-  Future<dynamic> _decode(http.Response response, {String? bearer}) async {
+  Future<dynamic> _decode(http.Response response, {required bool sessionRejected}) async {
     // A proxy, restart or crash can return non-JSON; report it as a normal request error.
     Map<String, dynamic> data = {};
     dynamic parsed;
@@ -129,7 +131,7 @@ class Api {
     if (response.statusCode >= 300) {
       final code = data['code'] as String?;
       if (code == 'ACCOUNT_DELETING') onDeleting?.call();
-      if (response.statusCode == 401 && bearer == null) await session.clear();
+      if (response.statusCode == 401 && sessionRejected) await session.clear();
       final fields = (data['fieldErrors'] as Map?)?.map((k, v) => MapEntry('$k', '$v')) ?? const <String, String>{};
       throw ApiError((data['message'] as String?) ?? 'Please try again', response.statusCode, code: code, fields: fields);
     }

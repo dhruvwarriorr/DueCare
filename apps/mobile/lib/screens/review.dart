@@ -6,6 +6,7 @@ import '../core/models.dart';
 import '../core/query.dart';
 import '../state/data.dart';
 import '../state/services.dart';
+import '../ui/icons.dart';
 import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'sources.dart';
@@ -66,7 +67,7 @@ class ReviewScreen extends StatelessWidget {
                     const Loading('Loading items…')
                   else if (items.isEmpty)
                     const EmptyState(
-                      icon: Icons.inbox_outlined,
+                      icon: DueIcons.review,
                       title: 'All clear',
                       body: 'Questions about imported work will appear here.',
                     )
@@ -166,7 +167,7 @@ class _ReviewCardState extends State<ReviewCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Tag(_titles[item.issueType] ?? item.issueType, icon: Icons.help_outline_rounded),
+          Tag(_titles[item.issueType] ?? item.issueType, icon: DueIcons.review),
           const SizedBox(height: 4),
           Text(
             '${_sourceLabel[item.sourceKind] ?? 'Source'}${item.senderEmail != null ? ' · ${item.senderEmail}' : ''} · ${formatTime(item.createdAt)}',
@@ -187,7 +188,7 @@ class _ReviewCardState extends State<ReviewCard> {
             Container(
               margin: const EdgeInsets.only(top: 10),
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              decoration: BoxDecoration(color: c.sheet, border: Border(left: BorderSide(color: c.ink, width: 3))),
+              decoration: BoxDecoration(color: c.inkWash, borderRadius: BorderRadius.circular(Radii.medium)),
               child: Text(item.excerpt!, style: TextStyle(color: c.graphite2, fontSize: 14)),
             ),
           if (item.issueType == 'confirm_applicability') _Targeting(item: item),
@@ -263,7 +264,7 @@ class _ReviewCardState extends State<ReviewCard> {
                   onPressed: disabled || type.isEmpty ? null : accept,
                 ),
               if (item.issueType == 'possible_duplicate') ...[
-                DueButton(label: 'Same work', icon: Icons.link, onPressed: disabled ? null : () => resolve({'action': 'link'})),
+                DueButton(label: 'Same work', icon: DueIcons.link, onPressed: disabled ? null : () => resolve({'action': 'link'})),
                 DueButton(
                   label: 'Separate task',
                   variant: Variant.outline,
@@ -271,7 +272,7 @@ class _ReviewCardState extends State<ReviewCard> {
                 ),
               ],
               if (item.issueType == 'association')
-                DueButton(label: 'Link', icon: Icons.link, onPressed: disabled || taskId.isEmpty ? null : () => resolve({'action': 'link', 'taskId': taskId})),
+                DueButton(label: 'Link', icon: DueIcons.link, onPressed: disabled || taskId.isEmpty ? null : () => resolve({'action': 'link', 'taskId': taskId})),
               if (item.issueType == 'conflict') ...[
                 DueButton(label: 'Use source values', onPressed: disabled ? null : () => resolve({'action': 'apply_update'})),
                 DueButton(label: 'Keep current', variant: Variant.outline, onPressed: disabled ? null : () => resolve({'action': 'keep_current'})),

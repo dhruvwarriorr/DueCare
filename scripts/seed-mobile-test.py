@@ -3,6 +3,7 @@
 import datetime
 import importlib
 import json
+import os
 import pathlib
 import sys
 import urllib.request
@@ -54,7 +55,8 @@ call(
         "division": "B",
         "generalBatch": "2",
         "rollNumber": "TEST01",
-        "theme": "light",
+        # MOBILE_TEST_THEME=dark checks the dark palette on the device.
+        "theme": os.environ.get("MOBILE_TEST_THEME", "light"),
     },
     "PATCH",
 )

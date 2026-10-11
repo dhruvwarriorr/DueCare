@@ -58,12 +58,23 @@ lib/
   core/                   API client, session, query cache, IST time, models, timetable draft logic
   notifications/          choices, reminder/summary planning, notification display, push handling
   state/                  shared services, sync controller, quick complete
-  ui/                     theme tokens (Palette), shared widgets, task rows and due items
+  ui/                     theme tokens (Palette), DueCare icons, shared widgets, task rows and due items
   screens/                one file per screen
+tool/mark.py              renders the launcher, splash and notification icons from the mark's geometry
 test/                     unit tests (time, deadlines, rules, timetable draft, API, cache) and widget tests
 ```
 
 `core/query.dart` is a small query cache modelled on the web's TanStack Query. It provides keyed queries, invalidation by root key, paging and persistence, so screens follow the same reload rules as their web counterparts.
+
+## Mark and icons
+
+The app's mark is an answer bubble with a printed D, half filled in rose the way a student marks an answer. `Logo` and `MarkPainter` in `lib/ui/widgets.dart` draw it in the app; `tool/mark.py` draws the same 100-unit geometry for the adaptive launcher icon (with a monochrome layer for themed icons), the Android 12 splash and the status-bar notification icon. After changing the geometry, regenerate every asset:
+
+```bash
+uv run --with pillow python tool/mark.py android/app/src/main/res android
+```
+
+In-app icons come from `lib/ui/icons.dart`: one family on a 24-unit grid with a 1.7 rounded stroke, built from the answer sheet (bubbles, ruled lines, pencil, eraser). `filled: true` gives the selected state used in the navigation bar. System controls such as back, close, chevrons and the overflow menu stay Material, so Android behaves as people expect. The web app's logo is unchanged.
 
 ## Setup
 

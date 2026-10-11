@@ -523,16 +523,12 @@ time,
   letter-spacing: -0.015em;
   line-height: 1;
 }
-.logo-mark circle {
-  transform-box: fill-box;
-  transform-origin: center;
+.logo-pencil {
   transition: transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
 }
-.brand:hover .lobe-left {
-  transform: translate(-1.5px, -1.5px);
-}
-.brand:hover .lobe-right {
-  transform: translate(1.5px, -1.5px);
+/* On hover the pencil fills a little more of the bubble. */
+.brand:hover .logo-pencil {
+  transform: translateX(5px);
 }
 
 /* Buttons ---------------------------------------------------------- */

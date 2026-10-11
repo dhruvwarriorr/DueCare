@@ -7,9 +7,9 @@ Environment: Pixel 7 AVD (`duecare`), Android 16 / API 36, ARM64, 1080 × 2400. 
 | Check | Result |
 | --- | --- |
 | Flutter analysis | No issues |
-| Flutter unit/widget suite | 21 passed |
+| Flutter unit/widget suite | 35 passed |
 | API suite | 167 passed |
-| Android integration scenarios | 2 passed: online workspace/task lifecycle and offline cache/recovery |
+| Android integration scenarios | 3 passed in light mode at default text size, and again in dark mode at 1.3× font scale: online workspace/task lifecycle with notifications, and offline cache/recovery |
 | Interactive production Google sign-in | Passed: real Somaiya login, mobile callback exchange, authenticated `/me`, secure-storage readback and sign-in screen dismissal |
 | Debug APK | Built for the synthetic local API |
 | Release APK | Built with `API_URL=https://duecare-xi.vercel.app`; APK signature verified |
@@ -22,6 +22,14 @@ The captured main screens were visually inspected. No Flutter layout exceptions 
 
 Testing also found that cache cleanup returned without awaiting the platform's saved-data removal. `QueryClient.clear()` now awaits that operation, with a regression test confirmed to fail on the previous code and pass with the fix. The restart scenario also lets the previous test instance finish its debounced save before creating another instance, since an actual process restart cannot leave the old process's timer alive.
 
+The redesign pass added the DueCare mark (launcher, themed monochrome icon, Android 12 splash, notification icon) and an in-app icon family. Checked on the emulator: the launcher icon in the app drawer, the splash on a cold start, and every captured screen in light and dark. The large-text run found a long button label being cut off; button labels now wrap to two lines. The pass also fixed these bugs; the first two have regression tests in `test/api_query_test.dart`:
+
+- An answer that arrived after sign-out could fill the next account's cache; a refresh landing while page 2 loaded could append a stale page. Queries now discard answers from an older epoch.
+- A 401 from a sign-in step, or from logging out an older session handle, ended the current session. Only a rejected current session does now.
+- Sign-out failed when the server was unreachable; it now finishes locally. Local notifications cannot be scheduled or shown once signed out.
+- Returning to the app restarted every source sync each time; it now waits 15 minutes, as the web does, and a sync answer after sign-out cannot restart polling.
+- Leaving Notifications within the save delay dropped the last change; it is now saved on exit.
+
 ## Evidence
 
 The repeatable tests are in `apps/mobile/integration_test/workspace_test.dart`, with the screenshot driver in `apps/mobile/test_driver/mobile.dart` and guarded fixture setup in `scripts/seed-mobile-test.py`. Run instructions are in `apps/mobile/README.md`.
@@ -30,7 +38,8 @@ Local evidence, kept out of Git:
 
 - `.local/mobile-qa/integration.log`
 - `.local/mobile-qa/01-week.png` through `12-activity.png`
-- `.local/mobile-qa/13-offline-week.png`, `14-offline-tasks.png`, `15-recovered.png`, `16-signed-out.png`
+- `.local/mobile-qa/13-notifications.png`, `14-notifications-sent.png`, `15-tasks-before-cleanup.png`
+- `.local/mobile-qa/16-offline-week.png`, `16-offline-tasks.png`, `17-recovered.png`, `18-signed-out.png` (the last run was dark mode at 1.3× text; run with `MOBILE_TEST_THEME=dark` to repeat it)
 - `apps/mobile/build/app/outputs/flutter-apk/app-debug.apk`
 - `apps/mobile/build/app/outputs/flutter-apk/app-release.apk`
 
@@ -57,7 +66,7 @@ Two test-tool issues initially confused acceptance: live-test bindings discard m
 ## Remaining checks
 
 - Real Somaiya Google sign-in and consent have now completed on the emulator, including the `duecare://auth/callback` handoff. Physical-device acceptance remains below.
-- Run on a physical Android phone and build/run iOS with Xcode.
+- Run on a physical Android phone. iOS is out of scope for now.
 - Check notification delivery at an actual deadline, tapping a delivered notification, and reminder restoration after reboot. Notification permission was pregranted for emulator automation.
 - Exercise native timetable file selection/upload and the remaining source/rule/privacy editing flows on a device; opening their screens is only a navigation check.
 - Configure the Android upload key before store distribution.
