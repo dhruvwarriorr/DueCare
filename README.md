@@ -4,13 +4,13 @@ Your academic week, in one place. DueCare brings assignments and tests from Gmai
 
 Built for KJSSE BTech students using a verified `@somaiya.edu` Google account.
 
-[Open the web app](https://duecare-xi.vercel.app) · [Android downloads](https://github.com/dhruvwarriorr/DueCare/releases)
+[Open the web app](https://duecare-xi.vercel.app) · [Download Android APK](https://github.com/dhruvwarriorr/DueCare/releases/latest/download/DueCare-1.0.0.apk) · [Release notes](https://github.com/dhruvwarriorr/DueCare/releases/latest)
 
 ## Android app
 
 Download the `DueCare-<version>.apk` asset from a published GitHub release, open it on your Android phone, and allow installation from your browser or file manager if prompted. Sign in with your Somaiya Google account. The app uses the same account and data as the website.
 
-The first release is being prepared as a draft. Draft assets become available to readers after the release is published; a private repository also requires repository access.
+DueCare 1.0.0 is available in GitHub Releases for Android 7.0 or later. Downloads from a private repository require repository access.
 
 ## Features
 
