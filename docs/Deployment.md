@@ -28,6 +28,10 @@ Do not manually configure `API_URL`; Vercel's service binding provides it. Secre
 
 Supabase Auth Site URL must be the production origin. Add the exact `https://duecare-xi.vercel.app/auth/callback` to its redirect allowlist. Google Cloud must retain the Supabase provider callback and also authorize `https://duecare-xi.vercel.app/connections/callback` for source reconnects. Keep localhost callbacks for development. Google consent/testing restrictions and university administrator policies still apply.
 
+## Mobile app
+
+The Flutter app (`apps/mobile`) calls the API directly. `vercel.json` routes `/api/v1/mobile/*`, and any `/api/v1/*` request with an `Authorization: Bearer` header, to the API service. Browser requests carry no bearer token, so they still reach the Next.js gateway. Set `MOBILE_REDIRECT_URL=duecare://auth/callback` in the production environment, and add the same URL to Supabase's Auth redirect allowlist. Build the app with `--dart-define=API_URL=https://duecare-xi.vercel.app` (see `apps/mobile/README.md`). `.vercelignore` keeps the mobile project out of web deployments.
+
 ## Deploy updates
 
 After confirming the CLI is linked to the project above:

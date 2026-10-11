@@ -16,3 +16,4 @@ node_modules/
 docs/reference-files/
 playwright-report/
 test-results/
+apps/mobile/

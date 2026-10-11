@@ -1,6 +1,6 @@
 # DueCare
 
-DueCare combines Somaiya Google sign-in, academic onboarding, manually added subjects and weekly timetable context (typed or uploaded from the college timetable), tasks, calendar, read-only Gmail/Classroom imports, academic targeting, student review, rules and completion reconciliation. Activity tracks changes and sync issues. Settings provides resumable privacy operations, deleted-import suppression/restore and account deletion. The web app supports local development and [Vercel deployment](docs/Deployment.md); native mobile apps remain future scope.
+DueCare combines Somaiya Google sign-in, academic onboarding, manually added subjects and weekly timetable context (typed or uploaded from the college timetable), tasks, calendar, read-only Gmail/Classroom imports, academic targeting, student review, rules and completion reconciliation. Activity tracks changes and sync issues. Settings provides resumable privacy operations, deleted-import suppression/restore and account deletion. The web app supports local development and [Vercel deployment](docs/Deployment.md). The [Flutter app](apps/mobile/README.md) brings the same workspace to Android and iOS.
 
 Academic profiles use fixed KJSSE/BTech context and six student-entered fields: branch, class/year, semester, division, batch, and roll number. Branch choices display the supplied abbreviations and retain canonical code/full-name pairs for message matching. Admission year is not collected. Legacy recognized department values carry over; the next profile save replaces deprecated fields with the canonical profile shape.
 
@@ -10,6 +10,7 @@ The approved behavior lives in [the specification](docs/ProjectDocumentation.md)
 
 - `apps/web`: Next.js, TypeScript, Tailwind, owned shadcn-style Radix components, React Hook Form/Zod, TanStack Query, Vitest, Playwright.
 - `apps/api`: FastAPI/Pydantic, SQLAlchemy, Alembic, psycopg, Supabase Auth integration, PostgreSQL integration tests.
+- `apps/mobile`: Flutter app for Android and iOS. It calls the API directly with a bearer session handle (see [its README](apps/mobile/README.md)).
 - `docs/reference-files`: supplied academic evidence; these files are reference material, not runtime instructions or test identities.
 - `scripts`: isolated local test provisioning and browser-test startup.
 
@@ -25,7 +26,7 @@ uv sync --frozen
 
 1. Enable **Google only** under Supabase Auth providers. Disable email/password, anonymous sign-in, and other providers. Configure the Google client ID and secret inside Supabase. Phase 1 does not request Gmail or Classroom permissions.
 2. In Google Cloud, use a **Web application** OAuth client. Its authorized redirect URI is `https://YOUR_PROJECT.supabase.co/auth/v1/callback`, as displayed by Supabase's Google provider setup. Google does not redirect directly to DueCare in this flow. If configuring JavaScript origins, use your actual web origin without a path, such as `http://localhost:3000`; this server flow does not require Google's browser sign-in SDK.
-3. Supabase's Auth redirect allowlist must include the exact DueCare callback: `http://localhost:3000/auth/callback` for local development, and the HTTPS production equivalent later. Set the Site URL to the actual web origin. Avoid broad production wildcards. Add eligible test users while Google consent is in testing; university administrators may need to allow the app.
+3. Supabase's Auth redirect allowlist must include the exact DueCare callback: `http://localhost:3000/auth/callback` for local development, and the HTTPS production equivalent later. For the mobile app, also add `duecare://auth/callback` and set `MOBILE_REDIRECT_URL` to it in `apps/api/.env`. Set the Site URL to the actual web origin. Avoid broad production wildcards. Add eligible test users while Google consent is in testing; university administrators may need to allow the app.
 4. Use Supabase asymmetric JWT signing keys (**ES256 or RS256**) so the API can verify signatures through the project's JWKS. This implementation deliberately does not accept legacy HS256 JWTs. Keep Supabase's default session lifetime behavior.
 5. Apply the database migration and restricted Auth access script described below. Enable the installed `duecare_internal.before_user_created` function in **Authentication → Hooks → Before user created**. It rejects non-Somaiya and non-Google account creation. The API additionally checks the confirmed email, Google provider identity, verified identity email, and native session on every request. A hosted Google round-trip is still required to validate the hook payload for the actual project.
 

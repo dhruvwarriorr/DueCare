@@ -18,6 +18,12 @@
     { "source": "/health", "destination": { "service": "api" } },
     { "source": "/ready", "destination": { "service": "api" } },
     { "source": "/internal/jobs/advance", "destination": { "service": "api" } },
+    { "source": "/api/v1/mobile/(.*)", "destination": { "service": "api" } },
+    {
+      "source": "/api/v1/(.*)",
+      "has": [{ "type": "header", "key": "authorization", "value": "Bearer .+" }],
+      "destination": { "service": "api" }
+    },
     { "source": "/(.*)", "destination": { "service": "web" } }
   ]
 }

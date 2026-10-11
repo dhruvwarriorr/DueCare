@@ -126,7 +126,9 @@ SOURCE_SCOPES = [
 ]
 
 
-def login_start(consent=False):
+def login_start(consent=False, redirect=None):
+    """Begin Google sign-in. Supabase returns to the web callback, or to `redirect` (the mobile
+    app's deep link). The PKCE verifier stays here, keyed by the one-use state."""
     if not settings().supabase_url or not settings().supabase_publishable_key:
         raise ApiError(503, "AUTH_CONFIGURATION", "Google sign-in is not configured yet")
     state, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(48)
@@ -141,7 +143,7 @@ def login_start(consent=False):
         + urlencode(
             {
                 "provider": "google",
-                "redirect_to": settings().web_origin + "/auth/callback",
+                "redirect_to": redirect or settings().web_origin + "/auth/callback",
                 "code_challenge": challenge,
                 "code_challenge_method": "s256",
                 "hd": "somaiya.edu",
@@ -188,9 +190,18 @@ def login_finish(state, code):
     return handle, identity, google_tokens
 
 
-def current_user(request: Request):
+def session_handle(request: Request):
+    """The opaque session handle. The web gateway sends it with its secret; the mobile app sends
+    it as a bearer token straight to the API. Either way it is the same server-side session."""
+    scheme, _, value = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() == "bearer" and value.strip():
+        return value.strip()
     gateway(request)
-    handle = request.headers.get("x-session", "")
+    return request.headers.get("x-session", "")
+
+
+def current_user(request: Request):
+    handle = session_handle(request)
     with transaction() as db:
         # Durable row lock serializes refresh across requests, tabs and server instances.
         entry = db.scalar(select(WebSession).where(WebSession.id == digest(handle)).with_for_update())
@@ -214,13 +225,9 @@ def current_user(request: Request):
 
 
 def logout(request):
-    gateway(request)
+    handle = session_handle(request)
     with transaction() as db:
-        entry = db.scalar(
-            select(WebSession)
-            .where(WebSession.id == digest(request.headers.get("x-session", "")))
-            .with_for_update()
-        )
+        entry = db.scalar(select(WebSession).where(WebSession.id == digest(handle)).with_for_update())
         if entry:
             tokens = json.loads(crypt().decrypt(entry.tokens.encode()))
             provider.logout(tokens["access_token"])

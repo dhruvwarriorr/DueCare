@@ -15,6 +15,7 @@
     "test:web": "npm run test -w apps/web",
     "test:e2e": "npm run test:e2e -w apps/web",
     "test:api": "cd apps/api && uv run pytest",
+    "test:mobile": "cd apps/mobile && flutter analyze && flutter test",
     "lint": "npm run lint -w apps/web"
   }
 }

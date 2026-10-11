@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     gateway_secret: str = ""
     session_encryption_key: str = ""
     web_origin: str = "http://localhost:3000"
+    # Where Supabase returns the mobile app after Google sign-in (an app deep link). Empty turns
+    # mobile sign-in off. It must also be on Supabase's Auth redirect allowlist.
+    mobile_redirect_url: str = ""
     background_worker_mode: Literal["embedded", "external"] = "embedded"
     worker_dispatch_secret: str = ""
     # Source authorization: one Google OAuth web client, separate from Supabase login.

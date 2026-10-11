@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from . import academic, auth, phase3_api, privacy_api, sources_api, timetable_api
+from . import academic, auth, mobile_api, phase3_api, privacy_api, sources_api, timetable_api
 from .common import User, finish, owned, page, replay, revision, work
 from .config import settings
 from .db import transaction
@@ -833,3 +833,4 @@ app.include_router(phase3_api.router)
 app.include_router(privacy_api.router)
 app.include_router(timetable_api.router)
 app.include_router(privacy_api.internal)
+app.include_router(mobile_api.router)
